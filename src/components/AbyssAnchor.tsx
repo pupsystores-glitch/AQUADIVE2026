@@ -1,28 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  BETTING_WINDOW_SECONDS,
-  EngineDriver,
-  GameEngine,
-  LocalRoundAuthority,
-  createMathRandomRng,
-  type BonusChest,
-  type RoundAuthority,
-} from "@/engine";
+import { BETTING_WINDOW_SECONDS, type BonusChest } from "@/engine";
 import { CASH_FLASH_MS, HISTORY_LIMIT, JACKPOT_FLASH_MS, QUICK_BETS } from "@/game/config";
 import { DEFAULT_BALANCE, DEFAULT_BET } from "@/game/constants";
 import { chainTier, formatMultiplier } from "@/game/presentation";
 import type { HistoryEntry, LastWin } from "@/game/types";
-import { SceneRenderer, type Phase } from "@/rendering/scene-renderer";
+import type { Phase } from "@/rendering/scene-renderer";
+import { gameSession } from "@/ui/session";
 
-// The game session (docs/06_ENGINE_ARCHITECTURE.md §13): the driver+engine
-// pair is owned at module scope, not per component mount — remounting the
-// component resumes the world instead of restarting it. The two engine RNG
-// streams (§11, §16): outcome draws go through the RoundAuthority; world
-// draws (creature rolls, spawn jitter) through the injected `world` stream.
-const worldRng = createMathRandomRng();
-const roundAuthority: RoundAuthority = new LocalRoundAuthority(createMathRandomRng());
-const engine = new GameEngine({ authority: roundAuthority, worldRng });
-const driver = new EngineDriver(engine);
+// The game session (docs/07_UI_ARCHITECTURE.md §8): engine, driver and
+// renderer attachment live in src/ui/session.ts, owned at module scope —
+// remounting the component resumes the world instead of restarting it
+// (docs/06 §13). Mid-migration surface (U1): the settlement listeners and
+// the HUD mirror below are still component-side until U2/U4 move them into
+// session-scope stores.
+const { engine } = gameSession;
 
 // The UI shell (E6): rendering, user input, and event subscriptions only.
 // The simulation, round lifecycle and all projections live in the engine;
@@ -96,7 +87,6 @@ export default function AbyssAnchor() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const renderer = new SceneRenderer(canvas);
 
     // Settlement + display listeners (§3, §12: the settlement layer
     // subscribes to engine events and owns all money math — verbatim; the
@@ -170,28 +160,22 @@ export default function AbyssAnchor() {
       }),
     ];
 
-    // The driver owns the rAF loop and the wall clock (§13); this sink is
-    // the host side: size + render the canvas from the engine's projections
-    // and mirror public state into the HUD each frame (delta D5 — the
-    // 100 ms countdown interval is gone). Equal-value setState calls bail
-    // out, so frames without visible change re-render nothing.
-    driver.attach({
-      frame: (state, time) => {
-        renderer.resize(canvas.clientWidth, canvas.clientHeight, window.devicePixelRatio || 1);
-        renderer.frame(state, time);
-      },
-      sync: (s) => {
-        setPhase(s.phase);
-        setCountdown(s.countdownSeconds);
-        setMultiplier(s.multiplier);
-        setBoost(s.boost);
-      },
+    // Canvas attach (docs/07 §8): the session constructs the renderer and
+    // drives the frame half of the sink; this component supplies only the
+    // per-frame HUD mirror (delta D5 — the 100 ms countdown interval is
+    // gone) until the round store becomes the sync target (U4). Equal-value
+    // setState calls bail out, so frames without visible change re-render
+    // nothing.
+    const detachCanvas = gameSession.attachCanvas(canvas, (s) => {
+      setPhase(s.phase);
+      setCountdown(s.countdownSeconds);
+      setMultiplier(s.multiplier);
+      setBoost(s.boost);
     });
 
     return () => {
-      driver.detach();
+      detachCanvas();
       subscriptions.forEach((unsubscribe) => unsubscribe());
-      renderer.dispose();
     };
   }, []);
 
