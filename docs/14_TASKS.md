@@ -2,7 +2,7 @@
 
 Status:
 
-No task active — Sprint 3 (TASK 006) closed 2026-08-17. Next: Sprint 4 (Phase 6, User Interface per `docs/07_UI_ARCHITECTURE.md`); must not begin without approval
+TASK 007 active — Sprint 4 (Phase 6, User Interface per `docs/07_UI_ARCHITECTURE.md`, approved and binding). U1 completed and committed (`140790f`); next step is Commit U2 (wallet store), whose implementation must not begin without approval
 
 ---
 
@@ -63,6 +63,16 @@ Sprint 3 — Game Engine (Phase 5)
 Status:
 
 Completed (2026-08-17) — Commits 1–8 delivered and approved (blueprint, E1–E6 extraction, bet-basis fix; Commit 8 approved 2026-08-17 after the owner's manual gameplay pass). Engine extraction complete; Phase 5 complete. Close-out summary and retrospective recorded in `docs/15_PROGRESS.md`
+
+---
+
+TASK 007
+
+Sprint 4 — User Interface (Phase 6)
+
+Status:
+
+Active (started 2026-08-17) — Blueprint `docs/07_UI_ARCHITECTURE.md` approved 2026-08-17 (the U0 step; approval made it binding and ratified deltas V1–V5). Commit U1 (session module: `createGameSession` + module singleton, store primitive, `useStore` hook) completed, committed as `140790f` and approved 2026-08-17. Next: Commit U2 (wallet store, delta V1) — preparation audit approved 2026-08-17; implementation awaits approval
 
 ---
 

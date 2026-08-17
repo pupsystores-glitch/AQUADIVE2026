@@ -16,7 +16,31 @@ Rules:
 
 Current Status:
 
-Sprint 3 (Game Engine, TASK 006) COMPLETED — closed 2026-08-17. Commits 1–8 all approved (Commit 8 approved 2026-08-17 after the owner's manual gameplay pass); Phase 5 complete. Next: Sprint 4 (Phase 6, User Interface per `docs/07_UI_ARCHITECTURE.md`) — must not begin without approval.
+Sprint 4 (User Interface, TASK 007) IN PROGRESS — started 2026-08-17. Blueprint `docs/07_UI_ARCHITECTURE.md` approved and binding (U0); Commit U1 delivered and approved (`140790f`). Next: Commit U2 (wallet store, delta V1) — preparation audit approved 2026-08-17; implementation awaits approval. Suite at 93/93 green; engine and renderer frozen for the sprint (docs/07 §20 risk 1).
+
+---
+
+## TASK 007 — Sprint 4: User Interface (IN PROGRESS, started 2026-08-17)
+
+Tracking note (process deviation, recorded for provenance): Commit U1 (`140790f`) landed without the per-commit tracking updates to docs 14/15/16 that every prior sprint's commits carried. The gap was caught by the U2 preparation audit (2026-08-17) and closed by this dedicated documentation catch-up commit; the entries below are recorded retroactively from the commit itself and the audit's verification.
+
+### Commit U0 — UI Architecture approval (no separate code commit)
+
+- Date: 2026-08-17
+- Summary: `docs/07_UI_ARCHITECTURE.md` (drafted at Sprint 3 close-out, status "proposed") approved by the owner — the §17 U0 step. Approval makes the document the binding contract for the UI layer and ratifies the five sanctioned behavior deltas V1–V5 (§7): session-scoped settlement/wallet (V1), centralized notification timing + dev rejection surface (V2), per-slice store subscriptions (V3), bet-input sanitation (V4), responsive desktop layout (V5). The document predates the restored baseline commit, so no separate commit carries it; its status header was updated to "Approved and binding" in this catch-up.
+- Files modified: none at approval time (`docs/07_UI_ARCHITECTURE.md` status header updated in this catch-up commit).
+- Architectural decisions: as recorded in the document itself — four-layer `src/ui/` (session → stores → components → strings), hand-rolled store primitive (no state-management dependency), wallet store as the Phase 8 settlement seam, extraction order U1–U7.
+- Risks: none to the running game (documentation approval only).
+
+### Commit U1 — Session module + store primitive + useStore hook
+
+- Date: 2026-08-17 (committed as `140790f`; approved by the owner the same day)
+- Summary: §17 step U1. `src/ui/session.ts` is the composition root (§8): `createGameSession(deps)` factory (injectable authority, world Rng, and renderer factory — the test seam) plus the production module singleton preserving the SSR-safe module-scope semantics; construction is inert (no DOM, no rAF, no clock — driver starts only on canvas attach). `attachCanvas(canvas, sync)` constructs the per-mount `SceneRenderer`, attaches the driver with frame = resize + render (verbatim from the shell's sink) and sync = the host's public-state mirror, and returns the detach (pauses driver, disposes renderer; everything else survives — docs/06 §13). `src/ui/store/store.ts` is the §9 `createStore` primitive (synchronous snapshot reads, Object.is bailout, subscribe/unsubscribe); `src/ui/hooks/use-store.ts` binds React via `useSyncExternalStore` with selector-level subscription. `AbyssAnchor.tsx` consumes the session (engine/driver/renderer construction and the module-scope singletons left the component); mid-migration seams explicitly documented in-file: settlement listeners and the per-frame HUD mirror remain component-side until U2/U4, and `attachCanvas`'s sync-callback parameter is the transitional seam U4 replaces with the round-store write. No sanctioned delta lands in U1.
+- Files modified: new — `src/ui/session.ts`, `src/ui/session.test.ts`, `src/ui/store/store.ts`, `src/ui/store/store.test.ts`, `src/ui/hooks/use-store.ts`, `src/ui/README.md`; modified — `src/components/AbyssAnchor.tsx` (consumes `gameSession`; construction code deleted).
+- Architectural decisions: per §8/§9 as specified — factory + module singleton so tests construct deterministic sessions while production initialization order is unchanged (§20 risk 5); the renderer factory is injectable because `SceneRenderer` needs a real 2D context; `attachCanvas` accepts the host sync callback as a documented U1→U4 seam.
+- Risks: none open. Validation (per the commit and re-verified by the 2026-08-17 U2 audit): `tsc --noEmit` clean; **93/93 tests green** (10 new: 6 store-primitive semantics — set/subscribe/Object.is bailout incl. NaN, unsubscribe isolation; 4 session tests — inert construction, attach drives resize/frame/sync, optional sync, detach/re-attach remount semantics with engine state surviving); engine/renderer freeze check clean (`140790f` touches only `src/components` and `src/ui`); working tree clean after commit. Manual gameplay pass: owner approved 2026-08-17.
+
+---
 
 Completed Tasks:
 

@@ -1,6 +1,6 @@
 # UI ARCHITECTURE
 
-Status: Proposed design (Sprint 4, Commit 1 candidate — becomes binding on approval)
+Status: **Approved and binding** (approved 2026-08-17 as Sprint 4's Commit 1 / U0 step; approval ratified the five §7 sanctioned deltas V1–V5)
 Scope: The UI layer only (Phase 6 — User Interface). This document changes no code.
 Goal: The single source of truth for the Sprint 4 UI extraction. Every UI commit is a mechanical execution step that consults this document; no UI commit should ever need to make an architectural decision.
 
