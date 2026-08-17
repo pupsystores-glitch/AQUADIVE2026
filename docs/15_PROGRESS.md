@@ -16,13 +16,40 @@ Rules:
 
 Current Status:
 
-Sprint 3 (Game Engine, TASK 006) ACTIVE — Commits 1 (blueprint), 2 (E1), 3 (E2), 4 (E3), 5 (E4) and 6 (E5) approved; Commit 7 (E6, driver + projections + snapshots — the final extraction step) delivered, awaiting approval; engine extraction code-complete
+Sprint 3 (Game Engine, TASK 006) COMPLETED — closed 2026-08-17. Commits 1–8 all approved (Commit 8 approved 2026-08-17 after the owner's manual gameplay pass); Phase 5 complete. Next: Sprint 4 (Phase 6, User Interface per `docs/07_UI_ARCHITECTURE.md`) — must not begin without approval.
 
 Completed Tasks:
 
 ---
 
-## TASK 006 — Sprint 3: Game Engine (In Progress)
+## TASK 006 — Sprint 3: Game Engine (Completed 2026-08-17)
+
+### Sprint 3 Close-Out Summary
+
+Eight commits over 2026-07-18 → 2026-07-19, each approved individually (Commit 8's approval on 2026-08-17, after the interruption noted below):
+
+1. Commit 1 — `docs/06_ENGINE_ARCHITECTURE.md` blueprint (21 sections, the binding engine contract); sanctioned behavior deltas D1–D5 ratified with its approval.
+2. Commit 2 — E1: vitest harness + 26 characterization tests pinning the pure math, outcome distributions and tuning constants before any code moved.
+3. Commit 3 — E2: domain consolidation (`src/engine/domain/`, `Rng` service, `RoundAuthority` seam; §4 constants ownership resolved; `src/lib/abyss-game.ts` dissolved).
+4. Commit 4 — E3: engine skeleton — fixed 60 Hz tick accumulator + typed EventBus (delta D2).
+5. Commit 5 — E4: round state machine, all lifecycle timers as whole-tick counts on the simulation clock (deltas D1 + D3).
+6. Commit 6 — E5: simulation systems + tick-boundary command queue (delta D4).
+7. Commit 7 — E6: EngineDriver + projections + snapshots (delta D5) — extraction complete; `AbyssAnchor.tsx` a UI shell.
+8. Commit 8 — bug fix: bet basis divergence (settlement locks the bet at acceptance) — surfaced by this close-out's own review.
+
+Result: `src/engine` implements docs/06 in full — a deterministic fixed-tick engine behind the `GameEngine`/`EngineDriver` facade, `RoundAuthority` + injected RNG as the entire Phase 8 seam, snapshot/restore, typed events, tick-boundary commands; the renderer contract (docs/05 §4 `RenderState`) stayed byte-compatible throughout. Test suite 0 → 83; lint baseline 33+7 → 9+6; `AbyssAnchor.tsx` 1,415 (pre-Sprint-2) → 419 lines. Phase 5 of the roadmap is complete. Owner's manual gameplay pass (2026-08-17) verified countdown, betting, dive, multiplier growth, cash out, crash, round restart and multi-round stability, including Commit 8's bet-basis behavior.
+
+Provenance note: Windows was reinstalled on the development machine between Commit 8's delivery (2026-07-19) and its approval (2026-08-17). The working tree survived intact; the local Git history did not — the repository was restored as a single baseline commit (`b4c56a2`, remote `pupsystores-glitch/AQUADIVE2026`, branch `develop`). Per-commit provenance for Sprints 1–3 is preserved narratively in this document. A recovery audit (2026-08-17) re-verified the tree against the docs: tsc clean, 83/83 tests green, production build passing, lint at the 9+6 baseline (modulo a CRLF working-tree artifact of the reinstall — normalization pending separate approval).
+
+### Sprint 3 Retrospective
+
+**Accomplished:** the entire §21 extraction plan (E1–E6) plus one exploit fix, every commit individually approved, behavior-preserving modulo the five ratified deltas — each of D1–D5 landing in exactly one identified commit, as planned in the blueprint. The engine is deterministic (full-snapshot determinism checks), React-independent (module-scope driver+engine pair; remounts resume rather than restart), and multiplayer-shaped (RoundAuthority seam, commands as future protocol messages, authority-view snapshots). The game stayed playable after every commit.
+
+**Lessons learned:** (1) Characterization-first paid for itself twice — E1's pins made "verbatim" provable through five extraction commits, and replaying settlement from event payloads alone is precisely what exposed the bet-basis exploit in the close-out review. (2) Enumerating sanctioned deltas up front and ratifying them with the blueprint turned "behavior-preserving" from a hope into a checkable contract: every observed difference was either on the list or a bug. (3) Verbatim extraction preserves bugs by design — close-out reviews must actively hunt for preserved flaws (the bet-basis divergence predated the engine); budget one fix commit per sprint for what they find. (4) The intermittent vitest worker crash was documented as environment flake rather than chased — correctly; it stayed non-reproducible and never affected a gate.
+
+**Technical debt intentionally deferred (all recorded where cited):** jackpot RTP economics flaw preserved on purpose (TASK 001; rebalance is its own approved task); float money math → integer minor units (roadmapped); RNG streams remain unseeded `Math.random` and snapshot RNG positions absent until Phase 8 seeded streams (docs/06 §11/§14); creature `switch` → registry (docs/05 §10); lint baseline 9+6 (pre-existing findings concentrated in the UI shell and ui kit — most dissolve with Sprint 4's extraction); post-restore recovery items awaiting separate approval (CRLF normalization + `.gitattributes`, stable `main` branch on the remote, stale `bun.lock`/`bunfig.toml`/Lovable references).
+
+**Sprint 4 readiness:** READY. The extraction subject is exactly the remaining `AbyssAnchor.tsx` UI shell (session construction, settlement listeners, per-frame HUD mirroring, input → commands, markup); the blueprint `docs/07_UI_ARCHITECTURE.md` is drafted (status: proposed) and its review/approval is Sprint 4's Commit 1; the engine and renderer are read-only contracts for the whole sprint (docs/07 §20 risk 1); 83 tests guard behavior. Risks to plan around: settlement money math still lives in React effects and must move verbatim; the five state+ref mirror pairs invite drift during decomposition; the responsive desktop layout (§15) is the one sanctioned visual change and must land alone.
 
 ### Commit 8 — Bug Fix: Bet Basis Divergence (settlement locks the bet at acceptance)
 

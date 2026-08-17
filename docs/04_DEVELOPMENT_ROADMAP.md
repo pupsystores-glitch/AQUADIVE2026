@@ -22,7 +22,8 @@ Sprints are the execution units of this roadmap; each sprint delivers into one o
 
 - **Sprint 1 — Foundation Improvements (TASK 004): ✅ COMPLETED** (2026-07-17). Config/constants/types extraction, folder structure, shared utilities — feeds Phase 3. (Deferred: `sampleJackpot` move, scheduled as its own commit.)
 - **Sprint 2 — Rendering Architecture (TASK 005): ✅ COMPLETED** (2026-07-18). `docs/05_RENDERING_ARCHITECTURE.md` blueprint (Phase 2 rendering deliverable) + extraction commits R1–R5 — delivers Phase 4 in full and advances Phase 3.
-- **Sprint 3 — next: Phase 5 (Game Engine) per `docs/05_RENDERING_ARCHITECTURE.md` §19; requires close-out approval before starting.**
+- **Sprint 3 — Game Engine (TASK 006): ✅ COMPLETED** (closed 2026-08-17; commits delivered 2026-07-18 → 2026-07-19). `docs/06_ENGINE_ARCHITECTURE.md` blueprint + extraction commits E1–E6 + bet-basis fix — delivers Phase 5 in full and advances Phase 3.
+- **Sprint 4 — next: Phase 6 (User Interface) per `docs/07_UI_ARCHITECTURE.md` (status: proposed; its review/approval is Sprint 4's Commit 1); requires approval before starting.**
 
 ---
 
@@ -65,7 +66,7 @@ Complete Architecture Blueprint.
 
 # PHASE 3 — CORE REFACTOR
 
-Status: 🔄 In Progress (advanced by Sprints 1–2; the game component now holds simulation + UI only — the remaining split is the Phase 5 engine extraction)
+Status: 🔄 In Progress (advanced by Sprints 1–3; the game component is now a UI shell — the remaining split is the Phase 6 UI extraction)
 
 Objectives
 
@@ -102,7 +103,9 @@ Professional rendering system.
 
 # PHASE 5 — GAME ENGINE
 
-Status: Pending
+Status: ✅ Completed (Sprint 3, TASK 006 — commits E1–E6 + bet-basis fix, closed 2026-08-17)
+
+All objectives delivered per `docs/06_ENGINE_ARCHITECTURE.md`: fixed 60 Hz tick GameEngine facade, RoundStateMachine, DiveSimulation, typed EventBus, tick-boundary command queue, EngineDriver, snapshot/restore, RNG + RoundAuthority seams.
 
 Objectives
 
