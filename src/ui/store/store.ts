@@ -23,6 +23,13 @@ export interface Store<T> {
   subscribe(listener: () => void): () => void;
 }
 
+/**
+ * The read half of a store — what a store with a single private writer
+ * exposes (e.g. the wallet store, whose only writer is engine settlement
+ * events, §9). Everything React needs to bind (useStore).
+ */
+export type ReadableStore<T> = Pick<Store<T>, "get" | "subscribe">;
+
 export function createStore<T>(initial: T): Store<T> {
   let snapshot = initial;
   const listeners = new Set<() => void>();

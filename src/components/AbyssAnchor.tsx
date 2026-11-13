@@ -1,162 +1,100 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BETTING_WINDOW_SECONDS, type BonusChest } from "@/engine";
-import { CASH_FLASH_MS, HISTORY_LIMIT, JACKPOT_FLASH_MS, QUICK_BETS } from "@/game/config";
-import { DEFAULT_BALANCE, DEFAULT_BET } from "@/game/constants";
+import { CASH_FLASH_MS, JACKPOT_FLASH_MS, QUICK_BETS } from "@/game/config";
+import { DEFAULT_BET } from "@/game/constants";
 import { chainTier, formatMultiplier } from "@/game/presentation";
-import type { HistoryEntry, LastWin } from "@/game/types";
 import type { Phase } from "@/rendering/scene-renderer";
+import { useStore } from "@/ui/hooks/use-store";
 import { gameSession } from "@/ui/session";
+import type { FlashKind } from "@/ui/store/wallet-store";
 
-// The game session (docs/07_UI_ARCHITECTURE.md §8): engine, driver and
-// renderer attachment live in src/ui/session.ts, owned at module scope —
-// remounting the component resumes the world instead of restarting it
-// (docs/06 §13). Mid-migration surface (U1): the settlement listeners and
-// the HUD mirror below are still component-side until U2/U4 move them into
-// session-scope stores.
-const { engine } = gameSession;
+// The game session (docs/07_UI_ARCHITECTURE.md §8): engine, driver, the
+// wallet store and renderer attachment live in src/ui/session.ts, owned at
+// module scope — remounting the component resumes the world AND the wallet
+// instead of restarting them (docs/06 §13; delta V1). Mid-migration surface
+// (U2): the HUD mirror and display-only state (win flash, chests, chosen
+// chest) are still component-side until U4's round and notification stores.
+const { engine, wallet } = gameSession;
 
-// The UI shell (E6): rendering, user input, and event subscriptions only.
+// Win-flash durations per trigger kind. Display timing stays component-side
+// until the notification store owns it (U4, delta V2); values unchanged.
+const FLASH_MS: Record<FlashKind, number> = {
+  cashFlash: CASH_FLASH_MS,
+  jackpotFlash: JACKPOT_FLASH_MS,
+};
+
+// The UI shell (E6): rendering, user input, and display subscriptions only.
 // The simulation, round lifecycle and all projections live in the engine;
-// this component mirrors engine public state per frame (delta D5), settles
-// money at the event edge (§3 — the engine never sees the wallet), and
-// submits typed commands (§13).
+// all money state and math live in the session's wallet store (U2). This
+// component mirrors engine public state per frame (delta D5), renders
+// wallet state via useStore, and submits typed commands through the
+// session (§8).
 export default function AbyssAnchor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const [balance, setBalance] = useState(DEFAULT_BALANCE);
+  // Settlement state (§10): one owner, the wallet store; read-only here.
+  // roundBet is this round's locked bet (the betPlaced amount the wallet
+  // was debited with), so the shown potential always matches the payout.
+  const balance = useStore(wallet, (w) => w.balance);
+  const lastWin = useStore(wallet, (w) => w.lastWin);
+  const history = useStore(wallet, (w) => w.history);
+  const hasCashed = useStore(wallet, (w) => w.hasCashed);
+  const participating = useStore(wallet, (w) => w.participating);
+  const roundBet = useStore(wallet, (w) => w.roundBet);
+
   const [bet, setBet] = useState(DEFAULT_BET);
   const [phase, setPhase] = useState<Phase>("idle");
   const [multiplier, setMultiplier] = useState(1);
-  const [lastWin, setLastWin] = useState<LastWin | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [chests, setChests] = useState<[BonusChest, BonusChest, BonusChest] | null>(null);
   const [chosenChest, setChosenChest] = useState<BonusChest | null>(null);
   const [boost, setBoost] = useState(0); // 0..1 short boost when goldfish
-  const [hasCashed, setHasCashed] = useState(false);
   const [cashFlash, setCashFlash] = useState(false);
-  const [participating, setParticipating] = useState(false);
   const [countdown, setCountdown] = useState(BETTING_WINDOW_SECONDS);
-  // This round's locked bet, for display (potential win / CASH OUT label).
-  // Locked at betPlaced — the exact amount the wallet was debited with —
-  // so the shown potential always matches what settlement will pay.
-  const [roundBet, setRoundBet] = useState(0);
 
-  // Settlement-side bookkeeping (§3): the round's locked bet (set at
-  // betPlaced from the accepted amount — never re-read from the bet input;
-  // 0 when spectating), the jackpot base for chest delta credits, and the
-  // cashed-out flag the settlement listeners read synchronously.
-  const roundBetRef = useRef(0);
-  const hasCashedRef = useRef(false);
-  const participatingRef = useRef(false);
-  const betRef = useRef(DEFAULT_BET);
-  const jackpotMultRef = useRef(1);
-
-  useEffect(() => { participatingRef.current = participating; }, [participating]);
-  useEffect(() => { betRef.current = bet; }, [bet]);
-
-  // ----- user input → engine commands (§13) -----
+  // ----- user input → session commands (§8) -----
   // The engine validates every command against round state at the tick it
-  // applies (D4) and rejects invalid ones; the only check that belongs
-  // here is the wallet question (§3): can the player afford the bet?
+  // applies (D4) and rejects invalid ones; the wallet question (§3: can the
+  // player afford the bet?) is answered on the session's submit path.
   const placeBet = useCallback(() => {
-    const b = betRef.current;
-    if (b <= 0 || b > balance) return;
-    engine.submit({ type: "placeBet", amount: b });
-  }, [balance]);
+    gameSession.submit({ type: "placeBet", amount: bet });
+  }, [bet]);
 
   const cashOut = useCallback(() => {
-    engine.submit({ type: "cashOut" });
+    gameSession.submit({ type: "cashOut" });
   }, []);
 
   const pickChest = useCallback((id: 0 | 1 | 2) => {
-    engine.submit({ type: "pickChest", chestId: id });
+    gameSession.submit({ type: "pickChest", chestId: id });
   }, []);
 
-  // reset per-round flags whenever we return to the betting window
-  useEffect(() => {
-    if (phase !== "idle") return;
-    setParticipating(false);
-    roundBetRef.current = 0; // no bet locked for the new round (yet)
-    setRoundBet(0);
-    hasCashedRef.current = false;
-    setHasCashed(false);
-    setCashFlash(false);
-  }, [phase]);
-
-  // ----- session attach: canvas + event subscriptions -----
+  // ----- session attach: canvas + display subscriptions -----
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Settlement + display listeners (§3, §12: the settlement layer
-    // subscribes to engine events and owns all money math — verbatim; the
-    // engine computes outcomes, never balances). UI flash timings
-    // (CASH/JACKPOT_FLASH_MS) stay here per §8.
+    // Display-only listeners (mid-migration, U2 → U4). Settlement is not
+    // here: the wallet store subscribed at session construction, so its
+    // listeners have already run when these do. The wallet decides when a
+    // win flash is due; this component owns only the flash's display timer.
     const subscriptions = [
-      engine.events.on("betPlaced", ({ amount }) => {
-        // Bet basis lock (bug fix): the round bet is fixed HERE, at the
-        // accepted amount the wallet is debited with — the same value the
-        // engine locked into participant.betAmount. It is never re-read
-        // from the bet input, so changing the input during the locked
-        // countdown can no longer move the settlement basis.
-        roundBetRef.current = amount;
-        setRoundBet(amount);
-        setBalance((prev) => +(prev - amount).toFixed(2));
-        setParticipating(true);
+      wallet.onFlash((kind) => {
+        setCashFlash(true);
+        setTimeout(() => setCashFlash(false), FLASH_MS[kind]);
+      }),
+      engine.events.on("bettingOpened", () => {
+        setCashFlash(false);
       }),
       engine.events.on("diveStarted", () => {
         setChests(null);
         setChosenChest(null);
-        hasCashedRef.current = false;
-        setHasCashed(false);
         setCashFlash(false);
-      }),
-      engine.events.on("cashedOut", ({ multiplier: m }) => {
-        const win = +(roundBetRef.current * m).toFixed(2);
-        setBalance((b) => +(b + win).toFixed(2));
-        setLastWin({ amount: win, mult: m });
-        setHistory((h) => [{ mult: m, crashed: false }, ...h].slice(0, HISTORY_LIMIT));
-        hasCashedRef.current = true;
-        setHasCashed(true);
-        setCashFlash(true);
-        setTimeout(() => setCashFlash(false), CASH_FLASH_MS);
-      }),
-      engine.events.on("crashed", ({ multiplier: m }) => {
-        if (!hasCashedRef.current) {
-          setHistory((h) => [{ mult: m, crashed: true }, ...h].slice(0, HISTORY_LIMIT));
-        }
-      }),
-      engine.events.on("shipImpact", ({ jackpotMultiplier: jackpot }) => {
-        jackpotMultRef.current = jackpot;
-        if (participatingRef.current && !hasCashedRef.current) {
-          const win = +(roundBetRef.current * jackpot).toFixed(2);
-          setBalance((b) => +(b + win).toFixed(2));
-          setLastWin({ amount: win, mult: jackpot });
-          hasCashedRef.current = true;
-          setHasCashed(true);
-          setCashFlash(true);
-          setTimeout(() => setCashFlash(false), JACKPOT_FLASH_MS);
-        }
-        setHistory((h) => [{ mult: jackpot, crashed: false }, ...h].slice(0, HISTORY_LIMIT));
       }),
       engine.events.on("chestsRevealed", ({ chests: revealed }) => {
         setChests(revealed);
         setChosenChest(null);
       }),
-      engine.events.on("chestPicked", ({ chestId, chestMultiplier, finalMultiplier }) => {
+      engine.events.on("chestPicked", ({ chestId, chestMultiplier }) => {
         setChosenChest({ id: chestId, multiplier: chestMultiplier, opened: true });
-        if (participatingRef.current) {
-          // The previous jackpot win was already credited; add the delta from multiplying it.
-          const jackpot = jackpotMultRef.current;
-          const prevWin = +(roundBetRef.current * jackpot).toFixed(2);
-          const totalWin = +(roundBetRef.current * finalMultiplier).toFixed(2);
-          const delta = +(totalWin - prevWin).toFixed(2);
-          setBalance((b) => +(b + delta).toFixed(2));
-          setLastWin({ amount: totalWin, mult: finalMultiplier });
-        }
-        setHistory((h) =>
-          [{ mult: finalMultiplier, crashed: false }, ...h].slice(0, HISTORY_LIMIT),
-        );
       }),
     ];
 

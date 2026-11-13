@@ -10,9 +10,9 @@
 // would defeat the equality bailout and re-render on every store write.
 
 import { useSyncExternalStore } from "react";
-import type { Store } from "@/ui/store/store";
+import type { ReadableStore } from "@/ui/store/store";
 
-export function useStore<T, S>(store: Store<T>, selector: (snapshot: T) => S): S {
+export function useStore<T, S>(store: ReadableStore<T>, selector: (snapshot: T) => S): S {
   return useSyncExternalStore(
     store.subscribe,
     () => selector(store.get()),

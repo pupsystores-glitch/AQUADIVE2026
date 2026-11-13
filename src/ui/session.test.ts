@@ -6,11 +6,12 @@
 // host is stubbed exactly as in the driver's own tests: fire(ts) drives
 // frames with explicit timestamps.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { RoundAuthority } from "@/engine";
+import type { EngineEventMap, EngineStateName, GameEngine, RoundAuthority } from "@/engine";
+import { DEFAULT_BALANCE } from "@/game/constants";
 import { createGameSession, type CanvasRenderer } from "./session";
 
-const stubAuthority = (): RoundAuthority => ({
-  sampleCrashPoint: () => 2,
+const stubAuthority = (crashPoint = 2): RoundAuthority => ({
+  sampleCrashPoint: () => crashPoint,
   sampleJackpot: () => 100,
   rollBonusChests: () => [
     { id: 0, multiplier: 2, opened: false },
@@ -65,10 +66,10 @@ interface RendererRecord {
   disposed: boolean;
 }
 
-const makeHarness = () => {
+const makeHarness = (crashPoint?: number) => {
   const renderers: RendererRecord[] = [];
   const session = createGameSession({
-    authority: stubAuthority(),
+    authority: stubAuthority(crashPoint),
     worldRng: { next: () => 0.5 },
     createRenderer: () => {
       const record: RendererRecord = {
@@ -152,5 +153,177 @@ describe("createGameSession — remount semantics (§8, §20 risk 5)", () => {
     expect(session.engine.tickCount).toBe(ticksBeforeDetach);
     fire(9100);
     expect(session.engine.tickCount).toBeGreaterThan(ticksBeforeDetach);
+  });
+});
+
+// ----- U2: the wallet store at session scope (docs/07 §8, §10; delta V1) -----
+
+/** One simulated 60 Hz frame of wall time. */
+const FRAME_SECONDS = 1 / 60;
+/** Crash point that is never reached — forces the sea-floor (jackpot) path. */
+const NEVER_CRASH = 1e9;
+
+/** Advance the engine frame by frame until it reaches `state` (cap guards runaway loops). */
+const advanceUntilState = (engine: GameEngine, state: EngineStateName, cap = 20000) => {
+  for (let i = 0; i < cap && engine.state !== state; i++) engine.advance(FRAME_SECONDS);
+  expect(engine.state).toBe(state);
+};
+const advanceFrames = (engine: GameEngine, n: number) => {
+  for (let i = 0; i < n; i++) engine.advance(FRAME_SECONDS);
+};
+
+/** Record the engine events a test cares about (stands in for nothing component-side). */
+const recordEvents = (engine: GameEngine, names: Array<keyof EngineEventMap>) => {
+  const log: Array<{ name: keyof EngineEventMap; payload: unknown }> = [];
+  for (const name of names) engine.events.on(name, (payload) => log.push({ name, payload }));
+  return log;
+};
+
+describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
+  it("the wallet is constructed with the session and settles with no component and no canvas attached", () => {
+    const { session } = makeHarness();
+    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
+
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceFrames(session.engine, 1);
+    expect(session.wallet.get()).toMatchObject({
+      balance: 990,
+      roundBet: 10,
+      participating: true,
+    });
+  });
+
+  it("submit drops a placeBet the wallet cannot afford — it never reaches the engine", () => {
+    const { session } = makeHarness();
+    const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
+
+    session.submit({ type: "placeBet", amount: DEFAULT_BALANCE + 0.01 });
+    session.submit({ type: "placeBet", amount: 0 });
+    advanceFrames(session.engine, 1);
+    expect(log).toEqual([]); // not rejected by the engine: never submitted
+    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
+
+    session.submit({ type: "placeBet", amount: DEFAULT_BALANCE }); // exactly affordable
+    advanceFrames(session.engine, 1);
+    expect(log).toEqual([{ name: "betPlaced", payload: { roundId: 1, amount: DEFAULT_BALANCE } }]);
+    expect(session.wallet.get().balance).toBe(0);
+  });
+
+  it("submit forwards every other command unchanged; the engine validates round state (D4)", () => {
+    const { session } = makeHarness();
+    const log = recordEvents(session.engine, ["commandRejected"]);
+    session.submit({ type: "cashOut" });
+    session.submit({ type: "pickChest", chestId: 1 });
+    advanceFrames(session.engine, 1);
+    expect(log.map((e) => (e.payload as { reason: string }).reason)).toEqual([
+      "not-diving",
+      "not-in-bonus",
+    ]);
+  });
+
+  it("bet-basis lock through the real command path: a later, larger affordable bet cannot move the basis", () => {
+    const { session } = makeHarness(NEVER_CRASH);
+    const log = recordEvents(session.engine, ["commandRejected"]);
+
+    session.submit({ type: "placeBet", amount: 5 });
+    advanceFrames(session.engine, 1);
+    session.submit({ type: "placeBet", amount: 100 }); // affordable → reaches the engine → rejected
+    advanceFrames(session.engine, 1);
+    expect(log.map((e) => (e.payload as { reason: string }).reason)).toEqual([
+      "already-participating",
+    ]);
+    expect(session.wallet.get()).toMatchObject({ balance: 995, roundBet: 5 });
+
+    advanceUntilState(session.engine, "diving");
+    advanceFrames(session.engine, 30);
+    const m = session.engine.getPublicState().multiplier; // tick-authoritative cashout value (D4)
+    session.submit({ type: "cashOut" });
+    advanceFrames(session.engine, 1);
+
+    const win = +(5 * m).toFixed(2);
+    expect(session.wallet.get().lastWin).toEqual({ amount: win, mult: m }); // 5 × m, never 100 × m
+    expect(session.wallet.get().balance).toBe(+(995 + win).toFixed(2));
+  });
+
+  it("full jackpot round end to end: debit, auto-credit at impact, chest delta, reset at bettingOpened", () => {
+    const { session } = makeHarness(NEVER_CRASH);
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "impact");
+    expect(session.wallet.get()).toMatchObject({ balance: 1990, hasCashed: true }); // 990 + 10 × 100
+    advanceUntilState(session.engine, "bonus");
+    session.submit({ type: "pickChest", chestId: 1 }); // 100 × 6.5 = 650
+    advanceFrames(session.engine, 1);
+    expect(session.wallet.get().balance).toBe(7490); // + (6500 − 1000)
+    expect(session.wallet.get().lastWin).toEqual({ amount: 6500, mult: 650 });
+
+    advanceUntilState(session.engine, "betting");
+    expect(session.wallet.get()).toMatchObject({
+      balance: 7490,
+      roundBet: 0,
+      participating: false,
+      hasCashed: false,
+      history: [
+        { mult: 650, crashed: false },
+        { mult: 100, crashed: false },
+      ],
+    });
+  });
+});
+
+describe("createGameSession — wallet survives remount mid-round (V1, §21 tier 1)", () => {
+  it("unmount during the dive, remount, then cash out: the credit uses the locked bet and nothing reset", () => {
+    // Pre-U2 failure mode: a remount re-ran useState/useRef initializers —
+    // balance back to the default, roundBetRef 0, participating false — so
+    // the round in flight settled against a zero basis.
+    const { session, renderers, canvas } = makeHarness(NEVER_CRASH);
+
+    // Mount 1: canvas attached (the component's mount effect).
+    const detach = session.attachCanvas(canvas);
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "diving");
+    const mid = session.wallet.get();
+    expect(mid).toMatchObject({ balance: 990, roundBet: 10, participating: true });
+
+    // Unmount mid-dive.
+    detach();
+    expect(renderers[0].disposed).toBe(true);
+    expect(session.wallet.get()).toBe(mid); // untouched by the unmount
+
+    // Remount: a new canvas mount; the wallet is the same, nothing re-initialized.
+    session.attachCanvas(canvas);
+    expect(renderers).toHaveLength(2);
+    expect(session.wallet.get()).toBe(mid);
+
+    advanceFrames(session.engine, 20);
+    const m = session.engine.getPublicState().multiplier;
+    session.submit({ type: "cashOut" });
+    advanceFrames(session.engine, 1);
+    expect(session.wallet.get().balance).toBe(+(990 + +(10 * m).toFixed(2)).toFixed(2));
+    expect(session.wallet.get().hasCashed).toBe(true);
+  });
+
+  it("events that occur while no component is mounted are still settled", () => {
+    const { session, canvas } = makeHarness(NEVER_CRASH);
+    // A component-side listener, as the shell's display subscriptions are.
+    let componentSawImpact = 0;
+    const unsubscribeComponent = session.engine.events.on("shipImpact", () => {
+      componentSawImpact++;
+    });
+    const detach = session.attachCanvas(canvas);
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "diving");
+
+    // Unmount: the component's subscriptions and the canvas go away...
+    unsubscribeComponent();
+    detach();
+
+    // ...while the round keeps producing settlement events (simulated detach).
+    advanceUntilState(session.engine, "impact");
+    expect(componentSawImpact).toBe(0);
+    expect(session.wallet.get()).toMatchObject({
+      balance: 1990, // the jackpot auto-credit was applied with no component mounted
+      hasCashed: true,
+      lastWin: { amount: 1000, mult: 100 },
+    });
   });
 });

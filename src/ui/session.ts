@@ -9,22 +9,29 @@
 // canvas attaches — so importing this module on the server is safe, and
 // remounting a component never restarts the world (docs/06 §13).
 //
-// Mid-migration status (U1, §17): the settlement listeners and the
-// per-frame HUD mirror are still component-side. attachCanvas therefore
-// accepts the host's sync callback; U4 replaces it with the round-store
-// write (§11) and U2 moves the settlement subscriptions here (§10), after
-// which the component consumes stores and submit() only.
+// Since U2 the session also owns the wallet store (§10): its settlement
+// subscriptions are wired once, here at construction — the session's
+// lifetime, never a component mount's (delta V1) — and submit() is the
+// command edge, routing placeBet through the wallet's affordability check.
+//
+// Mid-migration status (U2, §17): the per-frame HUD mirror and display-only
+// state (win flash, chests, chosen chest) are still component-side.
+// attachCanvas therefore accepts the host's sync callback, and the engine
+// stays exposed for the component's display subscriptions; U4 replaces both
+// with the round and notification stores (§11, §12).
 
 import {
   EngineDriver,
   GameEngine,
   LocalRoundAuthority,
   createMathRandomRng,
+  type EngineCommand,
   type EnginePublicState,
   type Rng,
   type RoundAuthority,
 } from "@/engine";
 import { SceneRenderer } from "@/rendering/scene-renderer";
+import { createWalletStore, type WalletStore } from "@/ui/store/wallet-store";
 
 /**
  * Per-frame public-state sync (docs/06 delta D5). Transitional seam: the
@@ -44,8 +51,10 @@ export interface GameSessionDeps {
 }
 
 export interface GameSession {
-  /** The engine facade (docs/06 §13). Mid-migration surface: components still subscribe to events and submit commands directly; U2 narrows this to submit(). */
+  /** The engine facade (docs/06 §13). Mid-migration surface: the component shell still subscribes to display-only events until U4; commands go through submit(). */
   readonly engine: GameEngine;
+  /** The settlement layer (§10): session-scoped, subscribed at construction. */
+  readonly wallet: WalletStore;
   /** The rAF/wall-clock owner. Exposed for tests; production code attaches only via attachCanvas. */
   readonly driver: EngineDriver;
   /**
@@ -57,6 +66,13 @@ export interface GameSession {
    * context); the session is not.
    */
   attachCanvas(canvas: HTMLCanvasElement, sync?: PublicStateSync): () => void;
+  /**
+   * The single command edge for components (§8). placeBet is dropped unless
+   * the wallet can afford it (§6 — the one wallet question); everything is
+   * otherwise forwarded unchanged. The engine remains the validator of all
+   * round-state questions (D4).
+   */
+  submit(command: EngineCommand): void;
 }
 
 /**
@@ -67,13 +83,22 @@ export interface GameSession {
  */
 export function createGameSession(deps: GameSessionDeps): GameSession {
   const engine = new GameEngine({ authority: deps.authority, worldRng: deps.worldRng });
+  // Settlement subscribes first and for the session's lifetime (V1): its
+  // listeners precede any component listener on every event, and nothing
+  // ever unsubscribes them.
+  const wallet = createWalletStore(engine.events);
   const driver = new EngineDriver(engine);
   const createRenderer =
     deps.createRenderer ?? ((canvas: HTMLCanvasElement) => new SceneRenderer(canvas));
 
   return {
     engine,
+    wallet,
     driver,
+    submit: (command) => {
+      if (command.type === "placeBet" && !wallet.canAfford(command.amount)) return;
+      engine.submit(command);
+    },
     attachCanvas: (canvas, sync) => {
       const renderer = createRenderer(canvas);
       driver.attach({
