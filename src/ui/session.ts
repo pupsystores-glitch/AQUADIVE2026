@@ -19,9 +19,10 @@
 // lifetime (delta V2), plus the dev-only rejection diagnostics.
 //
 // Since U4b the session also owns the round store (§11): seeded here from one
-// engine public-state read, written only by the driver's per-frame sync,
-// which attachCanvas supplies itself (the host sync-callback parameter is
-// retired). It has no event subscriptions and no timers. Components read
+// engine public-state read and written by two paths only: the driver's
+// per-frame sync (which attachCanvas supplies itself; the host sync-callback
+// parameter is retired) and one immediate write inside attachCanvas. It has
+// no event subscriptions and no timers. Components read
 // round and bonus presentation state from it and no longer subscribe to the
 // engine; the engine stays exposed for tests and diagnostics only.
 
@@ -68,7 +69,7 @@ export interface GameSession {
   readonly wallet: WalletStore;
   /** Win flashes + dev rejection diagnostics (§12): session-scoped, subscribed at construction. */
   readonly notifications: NotificationStore;
-  /** The engine public-state mirror (§11): read-only; its one writer is the driver's sync. */
+  /** The engine public-state mirror (§11): read-only; written only by the session (driver per-frame sync, plus one write on attach). */
   readonly round: RoundStore;
   /** The rAF/wall-clock owner. Exposed for tests; production code attaches only via attachCanvas. */
   readonly driver: EngineDriver;
@@ -80,7 +81,7 @@ export interface GameSession {
    * survives, exactly as the driver guarantees (docs/06 §13). The renderer
    * is per-canvas-mount (it holds the 2D context); the session and its
    * stores are not. Re-attaching replaces the driver's sink, so there is
-   * never more than one writer.
+   * never more than one per-frame writer.
    */
   attachCanvas(canvas: HTMLCanvasElement): () => void;
   /**
@@ -112,9 +113,9 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     { clock: deps.notificationClock, diagnostics: deps.diagnostics, log: deps.diagnosticsLog },
   );
   // The round store last (§11): seeded from a pure engine read (no DOM, no
-  // timers — SSR-safe). It subscribes to no events; only the driver's sync
-  // below writes it, after the frame's events have reached the wallet and
-  // the notification store.
+  // timers — SSR-safe). It subscribes to no events; written by the driver's per-frame sync
+  // (after the frame's events have reached the wallet and
+  // the notification store) and once, immediately, inside attachCanvas.
   const round = createRoundStore(engine.getPublicState());
   const driver = new EngineDriver(engine);
   const createRenderer =
