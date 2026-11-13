@@ -61,6 +61,8 @@ describe("wallet store — initial state", () => {
       roundBet: 0,
       participating: false,
       hasCashed: false,
+      settledBy: null,
+      chestSettled: false,
       lastWin: null,
       history: [],
       jackpotMultiplier: 1,
@@ -211,6 +213,8 @@ describe("wallet store — per-round resets", () => {
       roundBet: 0,
       participating: false,
       hasCashed: false,
+      settledBy: null,
+      chestSettled: false,
       lastWin: { amount: 1200, mult: 120 },
       history: [{ mult: 120, crashed: false }],
       jackpotMultiplier: 120,
@@ -281,6 +285,138 @@ describe("wallet store — multi-round golden ledger", () => {
       [1.2, true],
       [1.15, false],
     ]);
+  });
+});
+
+describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabed → chest)", () => {
+  it("manual cashout, then seabed and a chest pick: the cashout stands alone — no jackpot or chest credit", () => {
+    bet(10); // 990
+    dive();
+    cashOut(2); // +20 → 1010
+    impact(120);
+    reveal();
+    pick(1, 6.5, 780);
+    expect(wallet.get()).toMatchObject({
+      balance: 1010,
+      lastWin: { amount: 20, mult: 2 },
+      settledBy: "cashout",
+      chestSettled: true,
+      history: [
+        { mult: 780, crashed: false },
+        { mult: 120, crashed: false },
+        { mult: 2, crashed: false },
+      ],
+    });
+    expect(flashes).toEqual(["cashFlash"]);
+  });
+
+  it("manual cashout, then seabed with no chest pick: balance and lastWin unchanged", () => {
+    bet(10);
+    dive();
+    cashOut(2);
+    impact(120);
+    reveal();
+    expect(wallet.get()).toMatchObject({
+      balance: 1010,
+      lastWin: { amount: 20, mult: 2 },
+      settledBy: "cashout",
+      chestSettled: false,
+    });
+    expect(flashes).toEqual(["cashFlash"]);
+  });
+
+  it("no manual cashout: jackpot auto-credit and chest delta are unchanged", () => {
+    bet(10);
+    dive();
+    impact(120);
+    expect(wallet.get().settledBy).toBe("jackpot");
+    reveal();
+    pick(1, 6.5, 780);
+    expect(wallet.get()).toMatchObject({
+      balance: 8790, // the existing golden pin: 990 + 1200 + 6600
+      lastWin: { amount: 7800, mult: 780 },
+      settledBy: "jackpot",
+      chestSettled: true,
+    });
+    expect(flashes).toEqual(["jackpotFlash"]);
+  });
+
+  it("duplicate cashedOut events credit once", () => {
+    bet(10);
+    dive();
+    cashOut(2);
+    cashOut(2);
+    cashOut(3);
+    expect(wallet.get()).toMatchObject({
+      balance: 1010,
+      lastWin: { amount: 20, mult: 2 },
+      settledBy: "cashout",
+      history: [{ mult: 2, crashed: false }],
+    });
+    expect(flashes).toEqual(["cashFlash"]);
+  });
+
+  it("duplicate chestPicked events after a jackpot credit the delta once", () => {
+    bet(10);
+    dive();
+    impact(120);
+    reveal();
+    pick(1, 6.5, 780);
+    pick(1, 6.5, 780);
+    pick(2, 30, 3600);
+    expect(wallet.get()).toMatchObject({
+      balance: 8790,
+      lastWin: { amount: 7800, mult: 780 },
+      history: [
+        { mult: 780, crashed: false },
+        { mult: 120, crashed: false },
+      ],
+    });
+  });
+
+  it("spectator: never settled, no credit on cashout/jackpot/chest events", () => {
+    dive();
+    cashOut(2); // never emitted for a spectator by the engine; must still not credit
+    impact(77.7);
+    reveal();
+    pick(0, 2, 155.4);
+    expect(wallet.get()).toMatchObject({
+      balance: DEFAULT_BALANCE,
+      participating: false,
+      hasCashed: false,
+      settledBy: null,
+      lastWin: null,
+      history: [
+        { mult: 155.4, crashed: false },
+        { mult: 77.7, crashed: false },
+      ],
+    });
+    expect(flashes).toEqual([]);
+  });
+
+  it("settlement state resets per round: a cashout round does not block the next round's jackpot + chest", () => {
+    bet(10); // 990
+    dive();
+    cashOut(2); // 1010
+    impact(120);
+    reveal();
+    pick(1, 6.5, 780); // history only
+    openBetting();
+    expect(wallet.get()).toMatchObject({ settledBy: null, chestSettled: false, hasCashed: false });
+
+    bet(10); // 1000
+    dive();
+    expect(wallet.get()).toMatchObject({ settledBy: null, chestSettled: false });
+    impact(120); // +1200 → 2200
+    reveal();
+    pick(1, 6.5, 780); // +6600 → 8800
+    expect(wallet.get()).toMatchObject({
+      balance: 8800,
+      lastWin: { amount: 7800, mult: 780 },
+      settledBy: "jackpot",
+      chestSettled: true,
+    });
+    expect(flashes).toEqual(["cashFlash", "jackpotFlash"]);
   });
 });
 

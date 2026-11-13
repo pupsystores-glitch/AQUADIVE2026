@@ -20,6 +20,14 @@
 // - Phase 8 shape: every mutation is a response to an engine event carrying
 //   the authoritative values; swapping to server wallet events replaces the
 //   listener bodies, not the read surface.
+// - Settlement exclusivity (U2 bug fix): one participation settles through
+//   exactly one path. `settledBy` records which payout was actually applied;
+//   a manual cashout excludes the jackpot and chest credits of that round,
+//   and the chest delta is paid only on top of this wallet's own jackpot
+//   auto-credit, at most once per round. Enforced here, in the settlement
+//   layer, independent of the chest picker's visibility — the engine still
+//   needs a pick to leave `bonus`, so spectators and cashed-out players can
+//   pick; their pick records history only.
 //
 // Flash triggers (§10: "flash triggers delegate to the notification
 // store"): the wallet decides WHEN a win flash is due — the jackpot flash
@@ -42,6 +50,10 @@ export interface WalletState {
   readonly participating: boolean;
   /** The round's win is settled (manual cashout or jackpot auto-cash). */
   readonly hasCashed: boolean;
+  /** Which payout settled this round's participation; null until one is applied (always null for spectators). */
+  readonly settledBy: "cashout" | "jackpot" | null;
+  /** This round's chest result has been applied (credit if eligible, history either way) — the per-round idempotency guard. */
+  readonly chestSettled: boolean;
   /** Most recent win (manual cashout, jackpot, or chest total). */
   readonly lastWin: LastWin | null;
   /** Round results, newest first, capped at HISTORY_LIMIT. */
@@ -68,6 +80,8 @@ const INITIAL_WALLET: WalletState = {
   roundBet: 0,
   participating: false,
   hasCashed: false,
+  settledBy: null,
+  chestSettled: false,
   lastWin: null,
   history: [],
   jackpotMultiplier: 1,
@@ -99,7 +113,13 @@ export function createWalletStore(events: WalletEventSource): WalletStore {
   // event-driven (§10). Clears the per-round flags only — balance, history,
   // lastWin and the jackpot base carry over, exactly as before.
   events.on("bettingOpened", () => {
-    update({ participating: false, roundBet: 0, hasCashed: false });
+    update({
+      participating: false,
+      roundBet: 0,
+      hasCashed: false,
+      settledBy: null,
+      chestSettled: false,
+    });
   });
 
   events.on("betPlaced", ({ amount }) => {
@@ -115,17 +135,22 @@ export function createWalletStore(events: WalletEventSource): WalletStore {
   });
 
   events.on("diveStarted", () => {
-    update({ hasCashed: false });
+    update({ hasCashed: false, settledBy: null, chestSettled: false });
   });
 
   events.on("cashedOut", ({ multiplier: m }) => {
     const w = store.get();
+    // Idempotent: only an unsettled participation can cash out. The engine
+    // already rejects duplicate and spectator cashouts; this guard keeps the
+    // ledger correct even if such an event reached the wallet.
+    if (!w.participating || w.settledBy !== null) return;
     const win = +(w.roundBet * m).toFixed(2);
     update({
       balance: +(w.balance + win).toFixed(2),
       lastWin: { amount: win, mult: m },
       history: pushHistory(w.history, { mult: m, crashed: false }),
       hasCashed: true,
+      settledBy: "cashout",
     });
     flash("cashFlash");
   });
@@ -139,13 +164,14 @@ export function createWalletStore(events: WalletEventSource): WalletStore {
 
   events.on("shipImpact", ({ jackpotMultiplier: jackpot }) => {
     const w = store.get();
-    if (w.participating && !w.hasCashed) {
+    if (w.participating && !w.hasCashed && w.settledBy === null) {
       const win = +(w.roundBet * jackpot).toFixed(2);
       update({
         jackpotMultiplier: jackpot,
         balance: +(w.balance + win).toFixed(2),
         lastWin: { amount: win, mult: jackpot },
         hasCashed: true,
+        settledBy: "jackpot",
         history: pushHistory(w.history, { mult: jackpot, crashed: false }),
       });
       flash("jackpotFlash");
@@ -159,7 +185,12 @@ export function createWalletStore(events: WalletEventSource): WalletStore {
 
   events.on("chestPicked", ({ finalMultiplier }) => {
     const w = store.get();
-    if (w.participating) {
+    // Per-round guard: the round's first chest result is applied; a repeat
+    // is ignored entirely (no second credit, no second history entry).
+    if (w.chestSettled) return;
+    // Eligible only when this wallet settled the participation through the
+    // jackpot path — a manual cashout or a spectator gets history only.
+    if (w.participating && w.settledBy === "jackpot") {
       // The previous jackpot win was already credited; add the delta from multiplying it.
       const jackpot = w.jackpotMultiplier;
       const prevWin = +(w.roundBet * jackpot).toFixed(2);
@@ -169,9 +200,13 @@ export function createWalletStore(events: WalletEventSource): WalletStore {
         balance: +(w.balance + delta).toFixed(2),
         lastWin: { amount: totalWin, mult: finalMultiplier },
         history: pushHistory(w.history, { mult: finalMultiplier, crashed: false }),
+        chestSettled: true,
       });
     } else {
-      update({ history: pushHistory(w.history, { mult: finalMultiplier, crashed: false }) });
+      update({
+        history: pushHistory(w.history, { mult: finalMultiplier, crashed: false }),
+        chestSettled: true,
+      });
     }
   });
 

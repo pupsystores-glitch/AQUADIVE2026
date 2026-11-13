@@ -268,6 +268,58 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
       ],
     });
   });
+
+  it("real engine: cashout → seabed → bonus → chest pick settles the cashout only; the round still completes", () => {
+    const { session } = makeHarness(NEVER_CRASH);
+    const log = recordEvents(session.engine, ["chestPicked", "roundEnded"]);
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "diving");
+    advanceFrames(session.engine, 30);
+    const m = session.engine.getPublicState().multiplier; // tick-authoritative cashout value (D4)
+    session.submit({ type: "cashOut" });
+    advanceFrames(session.engine, 1);
+    const afterCashout = +(990 + +(10 * m).toFixed(2)).toFixed(2);
+    expect(session.wallet.get()).toMatchObject({ balance: afterCashout, settledBy: "cashout" });
+
+    advanceUntilState(session.engine, "impact");
+    expect(session.wallet.get().balance).toBe(afterCashout);
+    advanceUntilState(session.engine, "bonus");
+    session.submit({ type: "pickChest", chestId: 2 }); // 100 × 30 — must not be credited
+    advanceFrames(session.engine, 1);
+    expect(log.filter((e) => e.name === "chestPicked")).toHaveLength(1); // the pick is still accepted
+    expect(session.wallet.get()).toMatchObject({
+      balance: afterCashout,
+      lastWin: { amount: +(10 * m).toFixed(2), mult: m },
+    });
+
+    advanceUntilState(session.engine, "betting"); // bonus is left: no stuck round
+    expect(log.filter((e) => e.name === "roundEnded")).toEqual([
+      { name: "roundEnded", payload: { roundId: 1, outcome: "jackpot" } },
+    ]);
+    expect(session.wallet.get()).toMatchObject({
+      balance: afterCashout,
+      settledBy: null,
+      chestSettled: false,
+    });
+  });
+
+  it("real engine: spectator → bonus → chest pick: no credit; the round still completes", () => {
+    const { session } = makeHarness(NEVER_CRASH);
+    const log = recordEvents(session.engine, ["chestPicked", "roundEnded"]);
+    advanceUntilState(session.engine, "bonus");
+    session.submit({ type: "pickChest", chestId: 2 });
+    advanceFrames(session.engine, 1);
+    expect(log.filter((e) => e.name === "chestPicked")).toHaveLength(1);
+    expect(session.wallet.get()).toMatchObject({
+      balance: DEFAULT_BALANCE,
+      participating: false,
+      settledBy: null,
+      lastWin: null,
+    });
+    advanceUntilState(session.engine, "betting");
+    expect(log.filter((e) => e.name === "roundEnded")).toHaveLength(1);
+    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
+  });
 });
 
 describe("createGameSession — wallet survives remount mid-round (V1, §21 tier 1)", () => {
