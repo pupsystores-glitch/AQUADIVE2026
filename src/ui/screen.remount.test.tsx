@@ -17,8 +17,12 @@ import { describe, expect, it } from "vitest";
 import { screen } from "@testing-library/react";
 import { bootScreen } from "@/ui/test/dom-harness";
 
-/** The component's display subscriptions: wallet.onFlash + four engine events (AbyssAnchor mount effect). */
-const DISPLAY_SUBSCRIPTIONS = 5;
+/**
+ * The component's display subscriptions (AbyssAnchor mount effect): the three
+ * chest-display engine events. U4a moved wallet.onFlash and the flash-only
+ * bettingOpened listener into the session-owned notification store (was 5).
+ */
+const DISPLAY_SUBSCRIPTIONS = 3;
 
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
 const balanceText = () => screen.getByText("Balance").nextSibling?.textContent;

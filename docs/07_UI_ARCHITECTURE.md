@@ -147,8 +147,8 @@ The four stores and their single writers:
 | Store | Writer | Contents |
 |---|---|---|
 | `wallet-store` | Engine settlement events only (§10) | `balance`, `roundBet` (locked basis), `participating`, `hasCashed`, `lastWin`, `history`, jackpot base |
-| `round-store` | Driver `sync` callback only (§11) | Mirror of `EnginePublicState`: `phase`, `countdownSeconds`, `multiplier`, `boost`, `chests`, `chosenChestId` |
-| `notification-store` | Engine events + its own timers (§12) | Active banners/flashes with kind + payload + expiry |
+| `round-store` | Driver `sync` callback only (§11) | Mirror of `EnginePublicState`: `phase`, `countdownSeconds`, `multiplier`, `boost`, `chests`, `chosenChestId`, `participant` (whose `bonusEligible` gates the picker since E-X1) |
+| `notification-store` | The wallet's flash trigger (`onFlash`), the round-transition events `bettingOpened`/`diveStarted`, its own timer; dev only: `commandRejected` (§12) | The active flash (kind + start + expiry; the amount is the wallet's `lastWin`), dev-only bounded rejection history |
 | `bet-input-store` | Betting-panel components only | The bet input value (survives remount like everything else; halve/double/quick-set logic lives here, verbatim) |
 
 ## 10. The Wallet Store (Settlement Layer)
@@ -169,14 +169,16 @@ The four stores and their single writers:
 - Snapshot = `EnginePublicState`, stored as received, once per frame while attached. No transformation, no interpretation — the projection map already speaks the UI's vocabulary (docs/06 §13).
 - Derived reads live here as selectors: `potentialWin` (wallet `roundBet` × round `multiplier`, the two locked sources — computed in the screen from both stores, keeping stores independent), `canBet` (phase, countdown vs. `BET_CUTOFF_SECONDS`, participation, affordability — the action-matrix input, §13.3).
 - When detached (no canvas), the mirror simply stops updating — identical to today, where the sink is the only writer.
+- Lands in **U4b** (§17). Owner decision 2026-11-13: because the store mirrors `EnginePublicState` (whose `chests`, `chosenChestId` and `participant.bonusEligible` are engine state, not event history), the eligible chest picker **must be restored after a React component remount during `bonus`**. The component-side `chests`/`chosenChest` state and its three chest listeners are deleted in the same commit, and the U3 pin `PINNED UNTIL U4` in `src/ui/screen.remount.test.tsx` is updated there (its sanctioned step).
 
 ## 12. Notification System
 
 `src/ui/store/notification-store.ts` + banner components — Phase 6's "Notifications" objective, sized to what the game actually shows. Not a toast library: the game's notifications are bespoke full-stage overlays and flashes, already designed; sonner (present in dependencies for shadcn) stays out of the game surface.
 
-- Model: `Notification = { kind: "cashFlash" | "jackpotFlash"; payload; expiresAt }` plus derived banner visibility (`crashBanner` and `chestPicker` remain pure phase deriveds from the round store — they are *state*, not notifications, and get no timers).
-- Writers: `cashedOut` → cash flash (duration `CASH_FLASH_MS`), `shipImpact` auto-cash → jackpot flash (`JACKPOT_FLASH_MS`) — timers owned by the store (session lifetime, V2), values unchanged. One `setTimeout` per active flash, cleared on supersede; the wall clock is sanctioned here per §6.
-- `commandRejected` → dev-only surface (`import.meta.env.DEV`): console.warn with command + reason, and a small dismissible dev banner. Compiled out of production like the renderer's frame meter (docs/05 R5 precedent). Production-facing rejection UX is deliberately deferred — today's UI disables invalid actions before submit, so a user-visible rejection is a bug indicator, not a UX state.
+- Model: `flash: { kind: "cashFlash" | "jackpotFlash"; seq; startedAt; expiresAt } | null` plus derived banner visibility (`crashBanner` and `chestPicker` remain pure phase deriveds from the round store — they are *state*, not notifications, and get no timers). *(Correction C1, U4a: the flash carries no money payload — the banner's amount is the wallet's `lastWin`, so money keeps exactly one owner, §6.)*
+- Writers: the wallet's flash trigger — `cashedOut` → cash flash (duration `CASH_FLASH_MS`), `shipImpact` auto-cash → jackpot flash (`JACKPOT_FLASH_MS`). The wallet decides *when* (the jackpot flash depends on pre-credit settlement state, §10) and announces via `wallet.onFlash`; the store owns duration and timer (session lifetime, V2), values unchanged. At most one pending `setTimeout`: a new trigger cancels the previous timer and supersedes the flash. The round-transition events `bettingOpened` and `diveStarted` — the two events on which the shell cleared its flash — clear the flash **and cancel its timer** (C2). The clock (`now`/`setTimeout`/`clearTimeout`) is injectable for deterministic tests; production reads the globals at call time. The wall clock is sanctioned here per §6.
+- Lifetime: an active flash survives a component unmount/remount and expires on its original deadline (wall clock keeps running while unmounted, as the shell's timer did).
+- `commandRejected` → dev-only diagnostics, gated by `import.meta.env.DEV` **and** the session's opt-in (the production singleton passes `import.meta.env.DEV`; `createGameSession` defaults to off, so tests opt in explicitly): `console.warn` with command + reason, plus a bounded rejection history (`REJECTION_HISTORY_LIMIT` = 20, newest first) in the store snapshot. Compiled out of production like the renderer's frame meter (docs/05 R5 precedent). **The small dismissible dev banner is deferred to U6** (owner decision 2026-11-13, C3): it is markup, and lands with the components that render the history. Production-facing rejection UX is deliberately deferred — today's UI disables invalid actions before submit, so a user-visible rejection is a bug indicator, not a UX state.
 - Extensible by construction for Phase 7/8 consumers (audio cues, "player X cashed out" feeds) — new kinds, same store; recorded, not built.
 
 ## 13. Component Decomposition
@@ -278,12 +280,32 @@ Same discipline as Sprints 2–3: one step per commit, behavior-preserving (modu
 | U1 | Session module: `createGameSession` factory + module singleton in `src/ui/session.ts`; store primitive + `useStore` hook; engine/driver/renderer wiring and `attachCanvas` move out of the component (component consumes the session; listeners still component-side) | — |
 | U2 | Wallet store: the seven settlement listeners + all money state move to `wallet-store.ts`, subscribed at session scope; component reads via `useStore`; state+ref mirrors deleted; replay/ledger test suite | V1 |
 | U3 | UI test harness: jsdom + Testing Library devDependencies (**needs approval**, §20 risk 4); characterization tests pinning the current DOM per phase/participation state against a scripted session — the pins that protect U4–U7 | — |
-| U4 | Notification store: flash timers move (durations verbatim), `commandRejected` dev surface added; round store lands as the driver's sync target (component still renders everything) | V2 |
+| U4a | Notification store (§12): flash trigger consumption via `wallet.onFlash`, timer + durations verbatim, supersede, round-transition clears, session-scoped; `commandRejected` dev log + bounded history (no banner); component reads the flash via `useStore` and loses its flash state, timer and the `onFlash`/`bettingOpened` subscriptions | V2 |
+| U4b | Round store (§11) as the driver's sync target; component-side HUD mirror and `chests`/`chosenChest` deleted; `attachCanvas` sync parameter retired; eligible chest picker restored after a remount during `bonus` (component still renders everything) | — |
 | U5 | Bet-input store + `action-state.ts` derivation, exhaustively tested; input sanitation + `BET_CUTOFF_SECONDS` | V4 |
-| U6 | Componentization: `GameScreen` + all §13 components extracted with byte-identical markup; strings module; `formatMoney` consolidation; route flips to `GameScreen`; `AbyssAnchor.tsx` deleted; per-slice subscriptions land | V3 |
+| U6 | Componentization: `GameScreen` + all §13 components extracted with byte-identical markup; strings module; `formatMoney` consolidation; route flips to `GameScreen`; `AbyssAnchor.tsx` deleted; per-slice subscriptions land; the dev rejection banner (§12, deferred from U4) | V3 |
 | U7 | Responsive layout: desktop breakpoint composition per §15; screenshot matrix approval | V5 |
 
 U6 is the largest step; if review size demands, it splits mechanically (HUD+overlays, then betting panel+screen flip) — step boundaries may be re-cut when reality demands, recorded in CURRENT_TASK the moment it happens (Sprint 2 precedent, R5).
+
+**Re-cut (owner-approved 2026-11-13): U4 → U4a + U4b**, each with its own validation and approval gate. U4a (notification store) lands first; U4b (round store) may not start before U4a is approved. State ownership after each step:
+
+| State | After U4a | After U4b |
+|---|---|---|
+| Active flash + timer | notification store | notification store |
+| Dev rejection log + history | notification store (dev only) | notification store (dev only) |
+| `phase`, `countdownSeconds`, `multiplier`, `boost`, `participant.bonusEligible` | component (`sync` callback mirror) | round store |
+| `chests`, `chosenChest` | component (`diveStarted`/`chestsRevealed`/`chestPicked` listeners) | round store (`chests`, `chosenChestId`) |
+| Money (`balance`, `lastWin`, …) | wallet store (unchanged) | wallet store (unchanged) |
+| Bet input | component (U5) | component (U5) |
+
+Sanctioned corrections recorded with the re-cut (the binding contracts are otherwise unchanged; V2's values and scope are unchanged):
+
+- **C1** (§12): the flash model carries no money payload; the amount displayed is the wallet's `lastWin`.
+- **C2** (§12): `bettingOpened`/`diveStarted` cancel the pending flash timer, not only hide the flash, so a stale timer can never clear a later flash. Unobservable on today's timeline (both events follow any flash by more than its duration) — a leak fix within V2.
+- **C3** (§12, §17): the dismissible dev rejection banner moves from U4 to U6; U4a lands the dev log and the bounded history only.
+- **C4** (§13.2 consequence of V2): an active flash now survives a component remount (it was component state, lost on remount). Not a pinned behavior; covered by U4a's DOM tests.
+- **C5** (U3 harness constant, not a pin): the remount tests' `DISPLAY_SUBSCRIPTIONS` drops from 5 to 3 in U4a, because the flash subscriptions are session-owned. The 20 characterization pins are unchanged.
 
 ## 18. Multiplayer and Platform Readiness
 

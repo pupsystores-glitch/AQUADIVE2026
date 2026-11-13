@@ -1,27 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BETTING_WINDOW_SECONDS, type BonusChest } from "@/engine";
-import { CASH_FLASH_MS, JACKPOT_FLASH_MS, QUICK_BETS } from "@/game/config";
+import { QUICK_BETS } from "@/game/config";
 import { DEFAULT_BET } from "@/game/constants";
 import { chainTier, formatMultiplier } from "@/game/presentation";
 import type { Phase } from "@/rendering/scene-renderer";
 import { useStore } from "@/ui/hooks/use-store";
 import { gameSession } from "@/ui/session";
-import type { FlashKind } from "@/ui/store/wallet-store";
 
 // The game session (docs/07_UI_ARCHITECTURE.md §8): engine, driver, the
-// wallet store and renderer attachment live in src/ui/session.ts, owned at
-// module scope — remounting the component resumes the world AND the wallet
-// instead of restarting them (docs/06 §13; delta V1). Mid-migration surface
-// (U2): the HUD mirror and display-only state (win flash, chests, chosen
-// chest) are still component-side until U4's round and notification stores.
-const { engine, wallet } = gameSession;
-
-// Win-flash durations per trigger kind. Display timing stays component-side
-// until the notification store owns it (U4, delta V2); values unchanged.
-const FLASH_MS: Record<FlashKind, number> = {
-  cashFlash: CASH_FLASH_MS,
-  jackpotFlash: JACKPOT_FLASH_MS,
-};
+// wallet and notification stores and renderer attachment live in
+// src/ui/session.ts, owned at module scope — remounting the component
+// resumes the world, the wallet and an active win flash instead of
+// restarting them (docs/06 §13; deltas V1, V2). Mid-migration surface
+// (U4a): the HUD mirror and display-only chest state (chests, chosen chest)
+// are still component-side until U4b's round store.
+const { engine, wallet, notifications } = gameSession;
 
 // The UI shell (E6): rendering, user input, and display subscriptions only.
 // The simulation, round lifecycle and all projections live in the engine;
@@ -41,6 +34,9 @@ export default function AbyssAnchor() {
   const hasCashed = useStore(wallet, (w) => w.hasCashed);
   const participating = useStore(wallet, (w) => w.participating);
   const roundBet = useStore(wallet, (w) => w.roundBet);
+  // Win flash (§12): owned by the notification store — trigger, duration,
+  // supersede and round-transition clears all live there (V2).
+  const cashFlash = useStore(notifications, (n) => n.flash !== null);
 
   const [bet, setBet] = useState(DEFAULT_BET);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -49,7 +45,6 @@ export default function AbyssAnchor() {
   const [chosenChest, setChosenChest] = useState<BonusChest | null>(null);
   const [bonusEligible, setBonusEligible] = useState(false);
   const [boost, setBoost] = useState(0); // 0..1 short boost when goldfish
-  const [cashFlash, setCashFlash] = useState(false);
   const [countdown, setCountdown] = useState(BETTING_WINDOW_SECONDS);
 
   // ----- user input → session commands (§8) -----
@@ -73,22 +68,14 @@ export default function AbyssAnchor() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Display-only listeners (mid-migration, U2 → U4). Settlement is not
-    // here: the wallet store subscribed at session construction, so its
-    // listeners have already run when these do. The wallet decides when a
-    // win flash is due; this component owns only the flash's display timer.
+    // Display-only chest listeners (mid-migration, U4a → U4b). Settlement
+    // and the win flash are not here: the wallet and notification stores
+    // subscribed at session construction, so their listeners have already
+    // run when these do.
     const subscriptions = [
-      wallet.onFlash((kind) => {
-        setCashFlash(true);
-        setTimeout(() => setCashFlash(false), FLASH_MS[kind]);
-      }),
-      engine.events.on("bettingOpened", () => {
-        setCashFlash(false);
-      }),
       engine.events.on("diveStarted", () => {
         setChests(null);
         setChosenChest(null);
-        setCashFlash(false);
       }),
       engine.events.on("chestsRevealed", ({ chests: revealed }) => {
         setChests(revealed);

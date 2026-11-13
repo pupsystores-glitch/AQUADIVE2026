@@ -14,11 +14,15 @@
 // lifetime, never a component mount's (delta V1) — and submit() is the
 // command edge, routing placeBet through the wallet's affordability check.
 //
-// Mid-migration status (U2, §17): the per-frame HUD mirror and display-only
-// state (win flash, chests, chosen chest) are still component-side.
+// Since U4a the session also owns the notification store (§12): the win
+// flash and its timer, subscribed here at construction for the session's
+// lifetime (delta V2), plus the dev-only rejection diagnostics.
+//
+// Mid-migration status (U4a, §17): the per-frame HUD mirror and display-only
+// chest state (chests, chosen chest) are still component-side.
 // attachCanvas therefore accepts the host's sync callback, and the engine
-// stays exposed for the component's display subscriptions; U4 replaces both
-// with the round and notification stores (§11, §12).
+// stays exposed for the component's display subscriptions; U4b replaces
+// both with the round store (§11).
 
 import {
   EngineDriver,
@@ -31,6 +35,12 @@ import {
   type RoundAuthority,
 } from "@/engine";
 import { SceneRenderer } from "@/rendering/scene-renderer";
+import {
+  createNotificationStore,
+  type NotificationClock,
+  type NotificationStore,
+  type RejectionLogger,
+} from "@/ui/store/notification-store";
 import { createWalletStore, type WalletStore } from "@/ui/store/wallet-store";
 
 /**
@@ -48,6 +58,12 @@ export interface GameSessionDeps {
   worldRng: Rng;
   /** Test seam only — production omits it and gets the real SceneRenderer. */
   createRenderer?: (canvas: HTMLCanvasElement) => CanvasRenderer;
+  /** Notification timing clock (§12). Default: the system clock. */
+  notificationClock?: NotificationClock;
+  /** Dev rejection diagnostics (§12). Default off; effective only in DEV builds. The production singleton passes import.meta.env.DEV. */
+  diagnostics?: boolean;
+  /** Diagnostics sink. Default console.warn. */
+  diagnosticsLog?: RejectionLogger;
 }
 
 export interface GameSession {
@@ -55,6 +71,8 @@ export interface GameSession {
   readonly engine: GameEngine;
   /** The settlement layer (§10): session-scoped, subscribed at construction. */
   readonly wallet: WalletStore;
+  /** Win flashes + dev rejection diagnostics (§12): session-scoped, subscribed at construction. */
+  readonly notifications: NotificationStore;
   /** The rAF/wall-clock owner. Exposed for tests; production code attaches only via attachCanvas. */
   readonly driver: EngineDriver;
   /**
@@ -87,6 +105,13 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   // listeners precede any component listener on every event, and nothing
   // ever unsubscribes them.
   const wallet = createWalletStore(engine.events);
+  // Notifications subscribe second, also for the session's lifetime (V2):
+  // flash triggers come from the wallet (after its snapshot is written);
+  // the round-transition clears run after the wallet's per-round resets.
+  const notifications = createNotificationStore(
+    { flashes: wallet, events: engine.events },
+    { clock: deps.notificationClock, diagnostics: deps.diagnostics, log: deps.diagnosticsLog },
+  );
   const driver = new EngineDriver(engine);
   const createRenderer =
     deps.createRenderer ?? ((canvas: HTMLCanvasElement) => new SceneRenderer(canvas));
@@ -94,6 +119,7 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   return {
     engine,
     wallet,
+    notifications,
     driver,
     submit: (command) => {
       if (command.type === "placeBet" && !wallet.canAfford(command.amount)) return;
@@ -122,4 +148,5 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
 export const gameSession: GameSession = createGameSession({
   authority: new LocalRoundAuthority(createMathRandomRng()),
   worldRng: createMathRandomRng(),
+  diagnostics: import.meta.env.DEV,
 });

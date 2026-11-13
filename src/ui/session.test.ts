@@ -5,10 +5,12 @@
 // a real 2D context, so headless tests inject the renderer seam). The rAF
 // host is stubbed exactly as in the driver's own tests: fire(ts) drives
 // frames with explicit timestamps.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineEventMap, EngineStateName, GameEngine, RoundAuthority } from "@/engine";
+import { CASH_FLASH_MS, JACKPOT_FLASH_MS } from "@/game/config";
 import { DEFAULT_BALANCE } from "@/game/constants";
-import { createGameSession, type CanvasRenderer } from "./session";
+import { createGameSession, type CanvasRenderer, type GameSessionDeps } from "./session";
+import type { NotificationClock } from "./store/notification-store";
 
 const stubAuthority = (crashPoint = 2): RoundAuthority => ({
   sampleCrashPoint: () => crashPoint,
@@ -66,9 +68,10 @@ interface RendererRecord {
   disposed: boolean;
 }
 
-const makeHarness = (crashPoint?: number) => {
+const makeHarness = (crashPoint?: number, extra: Partial<GameSessionDeps> = {}) => {
   const renderers: RendererRecord[] = [];
   const session = createGameSession({
+    ...extra,
     authority: stubAuthority(crashPoint),
     worldRng: { next: () => 0.5 },
     createRenderer: () => {
@@ -453,5 +456,134 @@ describe("createGameSession — wallet survives remount mid-round (V1, §21 tier
       hasCashed: true,
       lastWin: { amount: 1000, mult: 100 },
     });
+  });
+});
+
+// ----- U4a: the notification store at session scope (docs/07 §8, §12; delta V2) -----
+
+/** A frozen clock: time never moves, timers fire only when a test says so. */
+const frozenClock = () => {
+  let nextId = 1;
+  const timers = new Map<number, { ms: number; cb: () => void }>();
+  const clock: NotificationClock & {
+    pending(): Array<number>;
+    fireAll(): void;
+  } = {
+    now: () => 0,
+    setTimeout: (cb, ms) => {
+      const id = nextId++;
+      timers.set(id, { ms, cb });
+      return id;
+    },
+    clearTimeout: (handle) => {
+      timers.delete(handle as number);
+    },
+    pending: () => [...timers.values()].map((t) => t.ms),
+    fireAll: () => {
+      const due = [...timers.values()];
+      timers.clear();
+      for (const t of due) t.cb();
+    },
+  };
+  return clock;
+};
+
+describe("createGameSession — notification wiring (U4a, §8/§12)", () => {
+  it("construction is inert: no flash, no timer", () => {
+    const clock = frozenClock();
+    const { session } = makeHarness(undefined, { notificationClock: clock });
+    expect(session.notifications.get()).toEqual({ flash: null, rejections: [] });
+    expect(clock.pending()).toEqual([]);
+  });
+
+  it("cashout: the wallet credits, the cash flash starts with CASH_FLASH_MS; it survives detach/re-attach; bettingOpened clears it and cancels the timer", () => {
+    const clock = frozenClock();
+    const { session, canvas } = makeHarness(3, { notificationClock: clock });
+    const detach = session.attachCanvas(canvas);
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "diving");
+    advanceFrames(session.engine, 30);
+    const m = session.engine.getPublicState().multiplier;
+    session.submit({ type: "cashOut" });
+    advanceFrames(session.engine, 1);
+
+    expect(session.wallet.get()).toMatchObject({
+      balance: +(990 + +(10 * m).toFixed(2)).toFixed(2),
+      lastWin: { amount: +(10 * m).toFixed(2), mult: m },
+      settledBy: "cashout",
+    });
+    const flash = session.notifications.get().flash;
+    expect(flash).toMatchObject({ kind: "cashFlash", expiresAt: CASH_FLASH_MS });
+    expect(clock.pending()).toEqual([CASH_FLASH_MS]);
+
+    // Remount: the flash belongs to the session, not the mount.
+    detach();
+    session.attachCanvas(canvas);
+    expect(session.notifications.get().flash).toBe(flash);
+    expect(clock.pending()).toEqual([CASH_FLASH_MS]);
+
+    // The frozen clock never expires it; the next round's betting window does.
+    advanceUntilState(session.engine, "crashed");
+    expect(session.notifications.get().flash).toBe(flash);
+    advanceUntilState(session.engine, "betting");
+    expect(session.notifications.get().flash).toBeNull();
+    expect(clock.pending()).toEqual([]);
+  });
+
+  it("jackpot: the jackpot flash starts with JACKPOT_FLASH_MS and outlives the chest reveal and pick; the ledger is unchanged", () => {
+    const clock = frozenClock();
+    const { session } = makeHarness(NEVER_CRASH, { notificationClock: clock });
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "impact");
+    expect(session.wallet.get().balance).toBe(1990);
+    expect(session.notifications.get().flash).toMatchObject({ kind: "jackpotFlash" });
+    expect(clock.pending()).toEqual([JACKPOT_FLASH_MS]);
+
+    advanceUntilState(session.engine, "bonus");
+    session.submit({ type: "pickChest", chestId: 1 });
+    advanceFrames(session.engine, 1);
+    expect(session.wallet.get().balance).toBe(7490);
+    expect(session.notifications.get().flash).toMatchObject({ kind: "jackpotFlash" });
+
+    advanceUntilState(session.engine, "betting");
+    expect(session.notifications.get().flash).toBeNull();
+    expect(clock.pending()).toEqual([]);
+  });
+
+  it("an expired flash stays expired; settlement never waits on the timer", () => {
+    const clock = frozenClock();
+    const { session } = makeHarness(NEVER_CRASH, { notificationClock: clock });
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "impact");
+    clock.fireAll();
+    expect(session.notifications.get().flash).toBeNull();
+    advanceUntilState(session.engine, "betting");
+    expect(session.wallet.get().balance).toBe(2990); // auto-pick chest 0: 1990 + (2000 − 1000)
+  });
+
+  it("diagnostics opted in: each engine rejection is logged once and recorded", () => {
+    const log = vi.fn();
+    const { session } = makeHarness(undefined, {
+      notificationClock: frozenClock(),
+      diagnostics: true,
+      diagnosticsLog: log,
+    });
+    session.submit({ type: "cashOut" });
+    session.submit({ type: "placeBet", amount: DEFAULT_BALANCE + 1 }); // dropped by submit: never rejected by the engine
+    advanceFrames(session.engine, 1);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(session.notifications.get().rejections).toEqual([
+      { roundId: 1, command: { type: "cashOut" }, reason: "not-diving", at: 0 },
+    ]);
+  });
+
+  it("diagnostics default off in the factory: no log, no history", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { session } = makeHarness();
+    session.submit({ type: "cashOut" });
+    advanceFrames(session.engine, 1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(session.notifications.get().rejections).toEqual([]);
+    warn.mockRestore();
   });
 });
