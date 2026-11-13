@@ -14,16 +14,18 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 | U1 — session module + store primitive + `useStore` | Done — committed `140790f`, approved 2026-08-17 (validation: tsc clean, 93/93 tests green, freeze check clean) |
 | U2 — wallet store (delta V1) | **Done — committed `ad30d7a` + fix `39f5a9f` (settlement exclusivity), pushed; approved by the owner 2026-11-13.** SSR smoke passed; owner manual gameplay and browser console checks passed with no errors; 151/151 tests green. Limitation accepted at approval: remount verified by automated session-level tests only — no browser-level React remount was manually tested |
 | E-X1 — engine freeze exception: bonus eligibility + deterministic completion | **Committed `897c5be`, pushed to `origin/develop` (2026-11-13).** All automated gates green (tsc clean, 151/151 tests, lint at baseline 7 + 6, build passes, `diff --check` clean, freeze check within the exception); owner manual browser QA passed, 4/4 scenarios |
-| U3 — UI test harness + DOM characterization pins | **NOT STARTED.** Implementation plan prepared 2026-11-13 and awaiting owner review (below). Needs explicit approval of new devDependencies (docs/07 §20 risk 4) before any code |
+| U3 — UI test harness + DOM characterization pins | **Implemented and validated 2026-11-13; not committed — awaiting owner review.** 180/180 tests green (29 new DOM tests); production source unchanged. Details in `docs/15_PROGRESS.md` |
 | U4–U7 | Pending, per docs/07 §17 |
 
-## Current: U3 — plan awaiting owner review
+## Current: U3 — implemented, awaiting owner review
 
-U3 has not started; no U3 code exists. Before implementation, the owner must:
+The owner approved the U3 plan and its devDependencies on 2026-11-13. U3 is implemented and validated; **its commit and push are not authorized yet**.
 
-1. review and approve the U3 plan, including the vitest config change it needs (`*.test.tsx` include);
-2. explicitly approve the new devDependencies: `jsdom`, `@testing-library/react`, `@testing-library/dom` (a required peer of `@testing-library/react` 16, not named in docs/07 §20 risk 4), and `@testing-library/user-event`. Exact versions are pinned at install and recorded in the commit;
-3. decide the open plan questions (how the test session is injected; whether a React-level remount pin is in scope).
+- Delivered (uncommitted): the jsdom + Testing Library devDependencies (exact pins), a two-project Vitest config (`node` for `*.test.ts`, `dom` for `*.test.tsx`), the DOM harness in `src/ui/test/`, 20 characterization pins (`src/ui/screen.characterization.test.tsx`) and 9 remount + StrictMode tests (`src/ui/screen.remount.test.tsx`).
+- Validation: tsc clean, 180/180 tests, lint at the 7 + 6 baseline, build, SSR smoke, freeze check empty, `src/routeTree.gen.ts` byte-identical.
+- U2's remount limitation is now covered by an automated real-component remount in jsdom; a manual browser remount has still not been run.
+- Run tests from a `C:\` (uppercase) working directory: a lowercase drive letter makes Vitest fail every file (pre-existing environment issue).
+- Next: owner review → U3 commit authorization → U4.
 
 ## U2 closure (approved 2026-11-13)
 
@@ -83,7 +85,7 @@ E-X1 (details in `docs/15_PROGRESS.md`, rules in docs/06 §5): only a participan
 
 Gate 7 coverage: the owner's E-X1 browser QA (4/4 scenarios passed) covered bonus-path gameplay. The owner's later manual gameplay checks (2026-11-13) found no errors and are the recorded gate 7 pass. The remount mid-round focus item rests on automated coverage only (limitation above).
 
-**Next task: U3** (docs/07 §17). Not started; its plan awaits owner review (see "Current" above).
+**Next:** owner review of U3 (see "Current" above), then U4 (docs/07 §17).
 
 Delivered in `ad30d7a` (details in `docs/15_PROGRESS.md`): `src/ui/store/wallet-store.ts` (settlement listeners, money state, `canAfford`, `onFlash`; read-only surface), session-owned and subscribed at construction (V1); `session.submit(command)` with the affordability check; component reads via `useStore`, state+ref mirrors deleted; 32 new tests (25 wallet ledger/replay, 7 session wiring + remount). Named U2 → U4 seams: flash timer/`cashFlash`, `chests` and `chosenChest` stay component-side via display subscriptions on `session.engine.events`; `attachCanvas` keeps the sync callback.
 
