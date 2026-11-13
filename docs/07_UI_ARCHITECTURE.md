@@ -66,7 +66,7 @@ Defects and structural debts this sprint resolves (each maps to a delta in §7 o
 4. **Flash timers leak.** `setTimeout(setCashFlash, …)` in listeners fires after unmount and dies with the component; timing state is not owned anywhere. (V2)
 5. **`commandRejected` is dropped.** The engine reports every rejected command (docs/06 §12, "UI dev-visible"); the UI subscribes to nothing — silent failures during development. (V2)
 6. **Monolithic render.** Every per-frame `multiplier` change re-renders the entire shell — top bar, history, betting panel included. Correct (React bails on equal values) but structurally wasteful and about to get worse with more components. (V3)
-7. **Bet input is unsanitized.** `+e.target.value` yields `NaN` on an empty field (`Math.max(0, NaN) = NaN`), which then renders and disables betting until overtyped; the betting cutoff is a magic `0.2` inline. (V4)
+7. **Bet input sanitation is implicit.** The handler `Math.max(0, +e.target.value)` clamps negatives but does not reject a non-finite number, and the affordability guard (`!(b <= 0 || b > balance)`) lets `NaN` through to the engine; the betting cutoff is a magic `0.2` inline. (V4) *(Correction C8, U5 — owner decision D3: this item originally claimed that an empty field yields `NaN`. It does not: `+""` is `0`, so a cleared field shows 0 and disables PLACE BET — pinned by U3 and kept by U5, D1. A number input also sanitizes non-finite text such as `1e309` to `""` before `onChange` sees it, so through the field a non-finite value never reached the handler.)*
 8. **Not responsive.** `max-w-md` centered column regardless of viewport; desktop shows a phone-shaped strip. (V5)
 9. **One file, many responsibilities** — the Master Rules violation the sprint exists to fix.
 
@@ -120,7 +120,7 @@ The only intended behavior changes of the entire sprint. Approval of this docume
 | V1 | Settlement + wallet become session-scoped | Listeners detach on unmount (missable events); balance/history/lastWin reset on remount | Wallet subscribes for the session lifetime; money display survives remount and can never miss an event | Fixes a wallet-drift defect (§4.1–2); the engine-side twin landed in E6 |
 | V2 | Notification timing centralized; rejections surfaced | Flash `setTimeout`s live in listeners and die with the component; `commandRejected` ignored | Notification store owns durations (values unchanged: `CASH_FLASH_MS`, `JACKPOT_FLASH_MS`); rejections logged/shown in dev builds only | Fixes timer leaks; makes the engine's error reporting visible (docs/06 §12) |
 | V3 | Per-frame sync targets stores, components subscribe to slices | One component re-renders wholesale each frame | Only components whose slice changed re-render (equal-value bailout preserved) | Pure perf/structure; identical pixels |
-| V4 | Bet input sanitation | Empty field → `NaN` propagates; cutoff is a magic `0.2` | Non-numeric input → 0; cutoff named `BET_CUTOFF_SECONDS` with the same value | Fixes a real input bug; no honest-path change |
+| V4 | Bet input sanitation | Negatives clamped to 0, non-finite numbers not rejected; a cleared field is 0 (not `NaN` — C8); `canAfford(NaN)` true; cutoff is a magic `0.2` | Every bet-input write sanitized: non-finite → 0, negative → 0, cleared field still 0; one affordability predicate (non-finite → false) shared by `canAfford` and the action state; cutoff named `BET_CUTOFF_SECONDS` with the same value, UI-only (U5, D1–D11) | Defense in depth on a money input; no honest-path change |
 | V5 | Responsive desktop layout | `max-w-md` phone strip at all widths | ≥ `lg` breakpoint: stage + side panel layout (§15); mobile byte-identical | The Phase 6 "Responsive Layout" objective — the sprint's one visual change |
 
 ## 8. The Game Session Module
@@ -149,7 +149,7 @@ The four stores and their single writers:
 | `wallet-store` | Engine settlement events only (§10) | `balance`, `roundBet` (locked basis), `participating`, `hasCashed`, `lastWin`, `history`, jackpot base |
 | `round-store` | The session's round-store write only, by two paths: the driver's per-frame `sync` and the immediate write when `attachCanvas` attaches (§11) | Mirror of `EnginePublicState`: `phase`, `countdownSeconds`, `multiplier`, `boost`, `chests`, `chosenChestId`, `participant` (whose `bonusEligible` gates the picker since E-X1) |
 | `notification-store` | The wallet's flash trigger (`onFlash`), the round-transition events `bettingOpened`/`diveStarted`, its own timer; dev only: `commandRejected` (§12) | The active flash (kind + start + expiry; the amount is the wallet's `lastWin`), dev-only bounded rejection history |
-| `bet-input-store` | Betting-panel components only | The bet input value (survives remount like everything else; halve/double/quick-set logic lives here, verbatim) |
+| `bet-input-store` | Betting-panel handlers only (−, +, the field, quick bets); no event or store subscription | The bet input value, always finite and ≥ 0 (session-owned since U5, starts at `DEFAULT_BET`, survives remount like everything else; halve/double/quick-set logic lives here, verbatim; `double` takes the balance as an argument at click time) |
 
 ## 10. The Wallet Store (Settlement Layer)
 
@@ -168,7 +168,7 @@ The four stores and their single writers:
 
 - Snapshot = `EnginePublicState`, **projected and normalized on write** (correction C6, U4b), once per frame while attached. No interpretation — the projection map already speaks the UI's vocabulary (docs/06 §13) — but three normalizations: `participant` is copied field by field (the engine mutates its own participant object in place, so a stored reference would change under the snapshot); chests are a frozen defensive copy, made only when their contents change (the engine never mutates its chest array in place, but the array comes from the injectable `RoundAuthority` and is handed by reference to every `chestsRevealed` listener); and a write whose fields are all unchanged keeps the previous snapshot by reference, so quiet frames notify nobody (§9), while unchanged sub-objects keep their identity across a changed write. Stored objects are frozen.
 - Synchronization (owner-approved with the U4b plan): seeded once at session construction from `engine.getPublicState()` (a pure read, SSR-safe), then written from `engine.getPublicState()` by exactly two paths. (1) **Driver synchronization during frames:** the driver's `sync`, which the session supplies itself (`attachCanvas(canvas)` no longer takes a host sync callback), runs once per rAF frame while attached, after that frame's `engine.advance()` and event dispatch, so the wallet and notification stores have already seen the frame's events. (2) **Immediate synchronization when attaching the canvas:** `attachCanvas` writes once synchronously, before `driver.attach`, so a remount never shows a stale snapshot if the engine advanced while detached; in production it is a no-op that notifies nobody (the engine advances only inside driver frames, each followed by a sync), and it consumes no tick. No event subscriptions, no timers, no other writer. A pick that the engine applied while the component was unmounted shows as revealed after the remount.
-- Derived reads live here as selectors: `potentialWin` (wallet `roundBet` × round `multiplier`, the two locked sources — computed in the screen from both stores, keeping stores independent), `canBet` (phase, countdown vs. `BET_CUTOFF_SECONDS`, participation, affordability — the action-matrix input, §13.3).
+- Derived reads live here as selectors: `potentialWin` (wallet `roundBet` × round `multiplier`, the two locked sources — computed in the screen from both stores, keeping stores independent). *(Correction C9, U5 — owner decision D6: `canBet` is not a round-store selector. It reads three stores — phase and countdown, participation and balance, the bet input — so it lives in the pure `canPlaceBet`/`actionStateFor` derivation, `src/ui/components/action-state.ts`, §13.3; the stores stay independent.)*
 - When detached (no canvas), the mirror simply stops updating — identical to today, where the sink is the only writer.
 - Lands in **U4b** (§17). Owner decision 2026-11-13: because the store mirrors `EnginePublicState` (whose `chests`, `chosenChestId` and `participant.bonusEligible` are engine state, not event history), the eligible chest picker **must be restored after a React component remount during `bonus`**. The component-side `chests`/`chosenChest` state and its three chest listeners are deleted in the same commit, and the U3 pin `PINNED UNTIL U4` in `src/ui/screen.remount.test.tsx` is updated there (its sanctioned step).
 
@@ -214,6 +214,8 @@ All markup moves verbatim (class strings byte-identical, mobile) into `src/ui/co
 | `ActionButton` | The five-state action | derived action state (below) |
 
 The five-branch conditional becomes a typed derivation — `actionStateFor(round, wallet, betInput): ActionState` — a pure function in `src/ui/components/action-state.ts` returning a discriminated union (`placeBet | betLocked | cashOut | secured | spectating | waiting`), unit-tested exhaustively (§21). The component maps state → markup; the decision logic leaves JSX.
+
+As landed in U5: `actionStateFor({ phase, countdownSeconds }, { balance, participating, hasCashed }, bet)`. Only `placeBet` carries a flag (`enabled`, from `canPlaceBet`: betting window, not participating, `isAffordable(bet, balance)`, countdown strictly above `BET_CUTOFF_SECONDS`); `cashOut` is always enabled, the other four always disabled. The `cashed` (impact), `crashed` and `bonus` phases map to `waiting` with the bet controls still enabled, as before (D10). The bet controls are disabled during `diving` only. The derivation computes no money: label amounts stay display reads. It is proven equal to a verbatim transcription of the pre-U5 JSX over the full input cross product (`action-state.test.ts`).
 
 Icons (`AnchorIcon`, `ChestIcon`) move to `src/ui/components/icons.tsx` unchanged.
 
@@ -283,7 +285,7 @@ Same discipline as Sprints 2–3: one step per commit, behavior-preserving (modu
 | U3 | UI test harness: jsdom + Testing Library devDependencies (**needs approval**, §20 risk 4); characterization tests pinning the current DOM per phase/participation state against a scripted session — the pins that protect U4–U7 | — |
 | U4a | Notification store (§12): flash trigger consumption via `wallet.onFlash`, timer + durations verbatim, supersede, round-transition clears, session-scoped; `commandRejected` dev log + bounded history (no banner); component reads the flash via `useStore` and loses its flash state, timer and the `onFlash`/`bettingOpened` subscriptions | V2 |
 | U4b | Round store (§11) as the driver's sync target; component-side HUD mirror and `chests`/`chosenChest` deleted; `attachCanvas` sync parameter retired; eligible chest picker restored after a remount during `bonus` (component still renders everything) | — |
-| U5 | Bet-input store + `action-state.ts` derivation, exhaustively tested; input sanitation + `BET_CUTOFF_SECONDS` | V4 |
+| U5 | Bet-input store + `action-state.ts` derivation, exhaustively tested; input sanitation + `BET_CUTOFF_SECONDS` (decisions D1–D12 below) | V4 |
 | U6 | Componentization: `GameScreen` + all §13 components extracted with byte-identical markup; strings module; `formatMoney` consolidation; route flips to `GameScreen`; `AbyssAnchor.tsx` deleted; per-slice subscriptions land; the dev rejection banner (§12, deferred from U4) | V3 |
 | U7 | Responsive layout: desktop breakpoint composition per §15; screenshot matrix approval | V5 |
 
@@ -298,7 +300,7 @@ U6 is the largest step; if review size demands, it splits mechanically (HUD+over
 | `phase`, `countdownSeconds`, `multiplier`, `boost`, `participant.bonusEligible` | component (`sync` callback mirror) | round store |
 | `chests`, `chosenChest` | component (`diveStarted`/`chestsRevealed`/`chestPicked` listeners) | round store (`chests`, `chosenChestId`) |
 | Money (`balance`, `lastWin`, …) | wallet store (unchanged) | wallet store (unchanged) |
-| Bet input | component (U5) | component (U5) |
+| Bet input | component (U5) | component (U5) — session bet-input store after U5 |
 
 Sanctioned corrections recorded with the re-cut (the binding contracts are otherwise unchanged; V2's values and scope are unchanged):
 
@@ -309,6 +311,16 @@ Sanctioned corrections recorded with the re-cut (the binding contracts are other
 - **C5** (U3 harness constant, not a pin): the remount tests' `DISPLAY_SUBSCRIPTIONS` drops from 5 to 3 in U4a, because the flash subscriptions are session-owned. The 20 characterization pins are unchanged.
 - **C6** (§11, U4b): "stored as received" becomes "projected and normalized on write" — participant copied, chests defensively copied, unchanged writes keep the snapshot by reference (details in §11).
 - **C7** (U3 harness constants, not pins, U4b): `DISPLAY_SUBSCRIPTIONS` and the notification tests' subscription constants drop from 3 to 0, because the component no longer subscribes to engine events. The StrictMode "2× added" check, empty at 0, is replaced by sink assertions: one live renderer, one draw and one round-store write per rAF frame.
+
+**U5 decisions (owner-authorized 2026-11-13).** U5 lands V4 with these decisions; values, markup, button order and valid gameplay are unchanged:
+
+- **D1** A cleared field still shows 0 (pre-U5 behavior, pinned by U3). **D2** Non-finite numbers (`NaN`, `±Infinity`) are sanitized to 0 on every bet-input write; the negative clamp is kept. **D3** §4.7's claim that an empty field yields `NaN` was wrong and is corrected (C8).
+- **D4** The bet input is session-owned (`session.betInput`), starts at `DEFAULT_BET` and survives React remounts and StrictMode double-mounts. The U3 remount pin `PINNED UNTIL U5` is updated in U5, its sanctioned step.
+- **D5** `BET_CUTOFF_SECONDS = 0.2` in `src/game/config.ts`. **D9** The cutoff stays a UI-only restriction: no new session or engine validation.
+- **D6** The action state is derived by the pure `actionStateFor`, not by a store (C9). Stores stay independent.
+- **D7** One affordability predicate, `isAffordable(amount, balance)` in `wallet-store.ts`, used by both `wallet.canAfford` and the action state. Identical to the old guard for finite amounts; non-finite → false (before U5, `canAfford(NaN)` was true and the engine rejected the bet as `invalid-amount`). Settlement arithmetic and engine rules are unchanged.
+- **D8** No pending-submit guard: a repeated click submits again and the engine rejects it (`already-participating`, `already-cashed-out`) — one debit, one credit. **D10** `cashed`/impact keeps mapping to WAITING… with bet controls enabled. **D11** No new decimal rounding or precision rule. **D12** U4b and U5 manual browser QA remain pending.
+- **C8** (§4.7, §7 V4 row): the `NaN`-on-empty claim corrected (D3). **C9** (§11): `canBet` moved from "round-store selector" to the pure action-state derivation (D6).
 
 ## 18. Multiplayer and Platform Readiness
 

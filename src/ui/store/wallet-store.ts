@@ -89,6 +89,22 @@ const INITIAL_WALLET: WalletState = {
   jackpotMultiplier: 1,
 };
 
+/**
+ * The affordability predicate (docs/06 §3) — the one bet validation that is
+ * a wallet question, and the single definition behind both `canAfford` (the
+ * session's submit edge) and the betting panel's enable state (U5,
+ * `actionStateFor`), so the button and the submit path can never disagree.
+ *
+ * For finite amounts it is the shell's original guard, verbatim
+ * (`!(amount <= 0 || amount > balance)`: accepted iff 0 < amount ≤ balance).
+ * U5 (D7) adds one restriction: a non-finite amount is never affordable.
+ * Before U5, NaN slipped through the original guard (every comparison with
+ * NaN is false) and was only rejected by the engine ("invalid-amount");
+ * ±Infinity was already rejected. Pure: no settlement arithmetic here.
+ */
+export const isAffordable = (amount: number, balance: number): boolean =>
+  Number.isFinite(amount) && !(amount <= 0 || amount > balance);
+
 const pushHistory = (
   history: readonly HistoryEntry[],
   entry: HistoryEntry,
@@ -212,10 +228,9 @@ export function createWalletStore(events: WalletEventSource): WalletStore {
   return {
     get: store.get,
     subscribe: store.subscribe,
-    // Verbatim predicate from the shell's placeBet guard (`b <= 0 || b > balance`
-    // → reject). A NaN amount passes it exactly as before and is rejected by
-    // the engine ("invalid-amount"); input sanitation is delta V4 (U5).
-    canAfford: (amount) => !(amount <= 0 || amount > store.get().balance),
+    // The shared predicate above (U5, D7): the shell's guard for finite
+    // amounts, plus non-finite → false.
+    canAfford: (amount) => isAffordable(amount, store.get().balance),
     onFlash: (listener) => {
       flashListeners.add(listener);
       return () => {

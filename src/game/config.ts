@@ -12,6 +12,15 @@
 /** Quick-select bet amounts shown under the bet input. */
 export const QUICK_BETS = [1, 5, 10, 25, 100] as const;
 
+/**
+ * UI-only betting cutoff (seconds): PLACE BET is offered only while the
+ * betting countdown is strictly above this value (U5, delta V4 — formerly
+ * the inline `0.2` in the shell). A presentation restriction, not a round
+ * rule: the engine accepts a bet until betting closes (docs/06 §5), and
+ * neither the session nor the engine enforces this cutoff.
+ */
+export const BET_CUTOFF_SECONDS = 0.2;
+
 // ----- Round history -----
 
 /** Max number of past-round results kept in the history strip. */

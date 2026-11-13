@@ -127,7 +127,12 @@ describe("component remount over the same session", () => {
     expect(button(/^CASH OUT · /).hasAttribute("disabled")).toBe(false);
   });
 
-  it("PINNED UNTIL U5: the bet input is component state and resets to the default on remount; the locked bet is unaffected", async () => {
+  // Updated in U5 — the sanctioned step for this pin (docs/07 §9, §17; D4).
+  // Was "PINNED UNTIL U5: the bet input is component state and resets to the
+  // default on remount": a remount re-ran useState(DEFAULT_BET). Now the
+  // amount lives in the session's bet-input store and survives the remount;
+  // the locked bet was never read from the input and is still unaffected.
+  it("the bet input survives a remount (session-owned since U5); the locked bet is unaffected", async () => {
     const h = await bootScreen();
     const first = h.mount();
     await h.user.click(button("25"));
@@ -138,9 +143,33 @@ describe("component remount over the same session", () => {
     first.unmount();
     h.mount();
     h.frames(1);
-    expect(betInput().value).toBe("5"); // DEFAULT_BET again
+    expect(betInput().value).toBe("25"); // the typed amount, not DEFAULT_BET
+    expect(h.session.betInput.get()).toBe(25);
     const m = h.session.engine.getPublicState().multiplier;
     expect(button(`CASH OUT · ${(+(25 * m).toFixed(2)).toFixed(2)}`)).toBeTruthy(); // still the locked 25
+  });
+
+  it("a bet changed after the bet locked survives a remount without moving the locked basis", async () => {
+    const h = await bootScreen({ crashPoint: 3 });
+    const first = h.mount();
+    await h.user.click(button("10"));
+    await h.user.click(button(/^PLACE BET/));
+    h.tick();
+    await h.user.click(button("100")); // controls stay enabled while betting; the input changes
+    expect(betInput().value).toBe("100");
+
+    first.unmount();
+    h.mount();
+    expect(betInput().value).toBe("100");
+    h.untilState("diving");
+    h.frames(30);
+    const m = h.session.engine.getPublicState().multiplier;
+    expect(button(`CASH OUT · ${(+(10 * m).toFixed(2)).toFixed(2)}`)).toBeTruthy(); // the locked 10
+    await h.user.click(button(/^CASH OUT · /));
+    h.tick();
+    const { lastWin, balance } = h.session.wallet.get();
+    expect(lastWin!.amount).toBe(+(10 * lastWin!.mult).toFixed(2));
+    expect(balance).toBe(+(990 + lastWin!.amount).toFixed(2));
   });
 
   // Updated in U4b — the sanctioned step for this pin (docs/07 §11, §17).
@@ -188,6 +217,21 @@ describe("component remount over the same session", () => {
 });
 
 describe("React.StrictMode (development double-mount)", () => {
+  it("the bet input survives the StrictMode double-mount and a StrictMode remount (U5)", async () => {
+    const h = await bootScreen();
+    const first = h.mount({ strict: true });
+    expect(betInput().value).toBe("5"); // DEFAULT_BET — the double-mount did not re-initialize anything
+    await h.user.click(button("+"));
+    await h.user.click(button("+"));
+    expect(betInput().value).toBe("20");
+    expect(h.session.betInput.get()).toBe(20); // one write per click, not two
+
+    first.unmount();
+    h.mount({ strict: true });
+    expect(betInput().value).toBe("20");
+    expect(button(/^PLACE BET · /).hasAttribute("disabled")).toBe(false);
+  });
+
   it("the double-mount leaves exactly one renderer, one rAF loop and one sink: one draw and one round-store write per frame", async () => {
     const h = await bootScreen();
     h.mount({ strict: true });

@@ -25,6 +25,12 @@
 // no event subscriptions and no timers. Components read
 // round and bonus presentation state from it and no longer subscribe to the
 // engine; the engine stays exposed for tests and diagnostics only.
+//
+// Since U5 the session also owns the bet-input store (§9, delta V4): created
+// at construction at DEFAULT_BET, so the typed amount survives remounts. It
+// subscribes to nothing; its only writers are the betting-panel handlers.
+// submit() is unchanged: placeBet still goes through wallet.canAfford, which
+// shares its predicate with the panel's action state (D7).
 
 import {
   EngineDriver,
@@ -35,7 +41,9 @@ import {
   type Rng,
   type RoundAuthority,
 } from "@/engine";
+import { DEFAULT_BET } from "@/game/constants";
 import { SceneRenderer } from "@/rendering/scene-renderer";
+import { createBetInputStore, type BetInputStore } from "@/ui/store/bet-input-store";
 import {
   createNotificationStore,
   type NotificationClock,
@@ -71,6 +79,8 @@ export interface GameSession {
   readonly notifications: NotificationStore;
   /** The engine public-state mirror (§11): read-only; written only by the session (driver per-frame sync, plus one write on attach). */
   readonly round: RoundStore;
+  /** The betting panel's amount field (§9, V4): session-scoped, starts at DEFAULT_BET, independent of every other store. */
+  readonly betInput: BetInputStore;
   /** The rAF/wall-clock owner. Exposed for tests; production code attaches only via attachCanvas. */
   readonly driver: EngineDriver;
   /**
@@ -117,6 +127,8 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   // (after the frame's events have reached the wallet and
   // the notification store) and once, immediately, inside attachCanvas.
   const round = createRoundStore(engine.getPublicState());
+  // The bet input (§9, U5): plain state, no subscriptions — nothing to wire.
+  const betInput = createBetInputStore(DEFAULT_BET);
   const driver = new EngineDriver(engine);
   const createRenderer =
     deps.createRenderer ?? ((canvas: HTMLCanvasElement) => new SceneRenderer(canvas));
@@ -126,6 +138,7 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     wallet,
     notifications,
     round: round.store,
+    betInput,
     driver,
     submit: (command) => {
       if (command.type === "placeBet" && !wallet.canAfford(command.amount)) return;

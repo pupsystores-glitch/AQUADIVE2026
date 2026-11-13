@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { EventBus, type BonusChest, type EngineEventMap } from "@/engine";
 import { HISTORY_LIMIT } from "@/game/config";
 import { DEFAULT_BALANCE } from "@/game/constants";
-import { createWalletStore, type FlashKind, type WalletStore } from "./wallet-store";
+import { createWalletStore, isAffordable, type FlashKind, type WalletStore } from "./wallet-store";
 
 const CHESTS: [BonusChest, BonusChest, BonusChest] = [
   { id: 0, multiplier: 2, opened: false },
@@ -551,16 +551,28 @@ describe("wallet store — read surface and affordability", () => {
     expect(Object.keys(wallet).sort()).toEqual(["canAfford", "get", "onFlash", "subscribe"]);
   });
 
-  it("canAfford: verbatim pre-U2 predicate — (0, balance] accepted, NaN passes through (engine rejects it)", () => {
+  it("canAfford: the pre-U2 predicate for finite amounts — (0, balance] accepted", () => {
     expect(wallet.canAfford(5)).toBe(true);
     expect(wallet.canAfford(DEFAULT_BALANCE)).toBe(true);
     expect(wallet.canAfford(DEFAULT_BALANCE + 0.01)).toBe(false);
     expect(wallet.canAfford(0)).toBe(false);
     expect(wallet.canAfford(-1)).toBe(false);
-    // Pinned pre-existing behavior: `NaN <= 0 || NaN > balance` is false, so
-    // the old guard let NaN through to the engine ("invalid-amount"). Input
-    // sanitation is delta V4 (U5), not this commit.
-    expect(wallet.canAfford(Number.NaN)).toBe(true);
+  });
+
+  it("canAfford (U5, D7): non-finite amounts are never affordable", () => {
+    // Updated in U5, the sanctioned step: the U2 pin recorded that the old
+    // guard let NaN through (`NaN <= 0 || NaN > balance` is false) to be
+    // rejected by the engine ("invalid-amount"). ±Infinity was already false.
+    expect(wallet.canAfford(Number.NaN)).toBe(false);
+    expect(wallet.canAfford(Number.POSITIVE_INFINITY)).toBe(false);
+    expect(wallet.canAfford(Number.NEGATIVE_INFINITY)).toBe(false);
+  });
+
+  it("canAfford delegates to the shared isAffordable predicate with the live balance", () => {
+    bet(600);
+    for (const amount of [Number.NaN, -1, 0, 0.01, 399.99, 400, 400.01, Infinity]) {
+      expect(wallet.canAfford(amount)).toBe(isAffordable(amount, 400));
+    }
   });
 
   it("canAfford tracks the live balance", () => {
@@ -598,5 +610,65 @@ describe("wallet store — read surface and affordability", () => {
     }
     expect(wallet.get().balance).toBe(1010);
     expect(wallet.get().hasCashed).toBe(true);
+  });
+});
+
+// ----- U5 (D7): the shared affordability predicate -----
+
+describe("isAffordable — one predicate for canAfford and the action state (U5, D7)", () => {
+  /** The shell's original guard, transcribed verbatim (pre-U5 canAfford / canBet terms). */
+  const original = (amount: number, balance: number) => !(amount <= 0 || amount > balance);
+
+  it("matches the original guard on every finite amount, including float and boundary values", () => {
+    const amounts = [
+      -1000,
+      -1,
+      -0.01,
+      -Number.MIN_VALUE,
+      -0,
+      0,
+      Number.MIN_VALUE,
+      0.01,
+      0.1,
+      0.3,
+      1,
+      2.5,
+      1.25,
+      5,
+      99.99,
+      100,
+      100.01,
+      999.99,
+      1000,
+      1000.0000000000001,
+      1000.01,
+      1e6,
+      Number.MAX_VALUE,
+      0.1 + 0.2,
+    ];
+    const balances = [0, 0.3, 1, 100, 999.99, 1000, 7490, 30990];
+    for (const balance of balances) {
+      for (const amount of amounts) {
+        expect(isAffordable(amount, balance), `${amount} vs ${balance}`).toBe(
+          original(amount, balance),
+        );
+      }
+    }
+  });
+
+  it("rejects every non-finite amount — the one sanctioned difference (NaN was accepted before)", () => {
+    for (const balance of [0, 5, 1000, Number.MAX_VALUE]) {
+      expect(isAffordable(Number.NaN, balance)).toBe(false);
+      expect(isAffordable(Number.POSITIVE_INFINITY, balance)).toBe(false);
+      expect(isAffordable(Number.NEGATIVE_INFINITY, balance)).toBe(false);
+    }
+    expect(original(Number.NaN, 1000)).toBe(true); // the pre-U5 gap this closes
+  });
+
+  it("is pure: does not touch any wallet state", () => {
+    const before = wallet.get();
+    isAffordable(5, 0);
+    isAffordable(Number.NaN, 1000);
+    expect(wallet.get()).toBe(before);
   });
 });

@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineEventMap, EngineStateName, GameEngine, RoundAuthority } from "@/engine";
 import { CASH_FLASH_MS, JACKPOT_FLASH_MS } from "@/game/config";
-import { DEFAULT_BALANCE } from "@/game/constants";
+import { DEFAULT_BALANCE, DEFAULT_BET } from "@/game/constants";
 import { createGameSession, type CanvasRenderer, type GameSessionDeps } from "./session";
 import type { NotificationClock } from "./store/notification-store";
 
@@ -880,5 +880,114 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
         expect(b.session.round.get().chosenChestId).toBeNull();
       },
     );
+  });
+});
+
+// ----- U5: the bet-input store at session scope (docs/07 §8, §9; delta V4) -----
+
+describe("createGameSession — bet-input ownership (U5, §8/§9)", () => {
+  it("is constructed with the session at DEFAULT_BET; construction stays inert", () => {
+    const { session, renderers } = makeHarness();
+    expect(session.betInput.get()).toBe(DEFAULT_BET);
+    expect(DEFAULT_BET).toBe(5);
+    expect(renderers).toHaveLength(0);
+    expect(pending.size).toBe(0);
+    expect(session.engine.tickCount).toBe(0);
+  });
+
+  it("each session owns its own bet input (isolation)", () => {
+    const a = makeHarness().session;
+    const b = makeHarness().session;
+    expect(a.betInput).not.toBe(b.betInput);
+    a.betInput.set(100);
+    expect(b.betInput.get()).toBe(DEFAULT_BET);
+  });
+
+  it("is independent: a full round of engine events and frames never writes it, and its writes touch no other store", () => {
+    const { session, canvas } = makeHarness(NEVER_CRASH);
+    const clock = frameClock();
+    session.attachCanvas(canvas);
+    const notify = vi.fn();
+    session.betInput.subscribe(notify);
+    session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clock, () => session.engine.state === "bonus");
+    stepUntil(clock, () => session.engine.state === "betting");
+    expect(notify).not.toHaveBeenCalled();
+    expect(session.betInput.get()).toBe(DEFAULT_BET);
+
+    const wallet = session.wallet.get();
+    const round = session.round.get();
+    const notifications = session.notifications.get();
+    session.betInput.set(25);
+    session.betInput.halve();
+    session.betInput.double(wallet.balance);
+    session.betInput.input("");
+    expect(notify).toHaveBeenCalledTimes(4);
+    expect(session.wallet.get()).toBe(wallet);
+    expect(session.round.get()).toBe(round);
+    expect(session.notifications.get()).toBe(notifications);
+  });
+
+  it("survives detach and re-attach (the remount path) unchanged", () => {
+    const { session, canvas } = makeHarness();
+    const detach = session.attachCanvas(canvas);
+    session.betInput.set(25);
+    detach();
+    session.attachCanvas(canvas);
+    expect(session.betInput.get()).toBe(25);
+  });
+});
+
+describe("createGameSession — submit edge after U5 (D7, D8, D9)", () => {
+  it("D7: a non-finite placeBet is dropped at submit (before U5, NaN reached the engine as invalid-amount)", () => {
+    const { session } = makeHarness();
+    const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
+    session.submit({ type: "placeBet", amount: Number.NaN });
+    session.submit({ type: "placeBet", amount: Number.POSITIVE_INFINITY });
+    session.submit({ type: "placeBet", amount: Number.NEGATIVE_INFINITY });
+    advanceFrames(session.engine, 1);
+    expect(log).toEqual([]);
+    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
+  });
+
+  it("D8: two placeBet submits before the tick → one debit; the engine rejects the second as before", () => {
+    const { session } = makeHarness();
+    const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
+    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceFrames(session.engine, 1);
+    expect(log.map((e) => e.name)).toEqual(["betPlaced", "commandRejected"]);
+    expect((log[1].payload as { reason: string }).reason).toBe("already-participating");
+    expect(session.wallet.get()).toMatchObject({ balance: 990, roundBet: 10 });
+  });
+
+  it("D8: two cashOut submits before the tick → one credit, one history entry", () => {
+    const { session } = makeHarness(NEVER_CRASH);
+    const log = recordEvents(session.engine, ["cashedOut", "commandRejected"]);
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "diving");
+    advanceFrames(session.engine, 30);
+    const m = session.engine.getPublicState().multiplier;
+    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut" });
+    advanceFrames(session.engine, 1);
+    expect(log.map((e) => e.name)).toEqual(["cashedOut", "commandRejected"]);
+    expect((log[1].payload as { reason: string }).reason).toBe("already-cashed-out");
+    const win = +(10 * m).toFixed(2);
+    expect(session.wallet.get()).toMatchObject({
+      balance: +(990 + win).toFixed(2),
+      history: [{ mult: m, crashed: false }],
+    });
+  });
+
+  it("D9: the cutoff is UI-only — a bet submitted at or below BET_CUTOFF_SECONDS is still accepted by the session and the engine", () => {
+    const { session } = makeHarness();
+    const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
+    while (session.engine.getPublicState().countdownSeconds > 0.1) advanceFrames(session.engine, 1);
+    expect(session.engine.state).toBe("betting");
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceFrames(session.engine, 1);
+    expect(log.map((e) => e.name)).toEqual(["betPlaced"]);
+    expect(session.wallet.get().balance).toBe(990);
   });
 });

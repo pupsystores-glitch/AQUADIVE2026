@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { QUICK_BETS } from "@/game/config";
-import { DEFAULT_BET } from "@/game/constants";
 import { chainTier, formatMultiplier } from "@/game/presentation";
+import { actionStateFor } from "@/ui/components/action-state";
 import { useStore } from "@/ui/hooks/use-store";
 import { gameSession } from "@/ui/session";
 
 // The game session (docs/07_UI_ARCHITECTURE.md §8): engine, driver, the
-// wallet, notification and round stores and renderer attachment live in
-// src/ui/session.ts, owned at module scope — remounting the component
-// resumes the world, the wallet, an active win flash and the round/bonus
-// presentation (including the chest picker) instead of restarting them
-// (docs/06 §13; deltas V1, V2; U4b).
-const { wallet, notifications, round } = gameSession;
+// wallet, notification, round and bet-input stores and renderer attachment
+// live in src/ui/session.ts, owned at module scope — remounting the
+// component resumes the world, the wallet, an active win flash, the
+// round/bonus presentation (including the chest picker) and the typed bet
+// instead of restarting them (docs/06 §13; deltas V1, V2, V4; U4b, U5).
+const { wallet, notifications, round, betInput } = gameSession;
 
 // The UI shell (E6): rendering and user input only. The simulation, round
 // lifecycle and all projections live in the engine; all money state and
@@ -50,16 +50,19 @@ export default function AbyssAnchor() {
   // a remount after a pick shows it revealed again.
   const chosenChest = chests !== null && chosenChestId !== null ? chests[chosenChestId] : null;
 
-  // Bet input: component state until U5's bet-input store.
-  const [bet, setBet] = useState(DEFAULT_BET);
+  // Bet input (§9, U5): one owner, the session's bet-input store — sanitized
+  // on every write (V4), halve/double/quick-set arithmetic verbatim there.
+  const bet = useStore(betInput, (b) => b);
 
   // ----- user input → session commands (§8) -----
   // The engine validates every command against round state at the tick it
   // applies (D4) and rejects invalid ones; the wallet question (§3: can the
-  // player afford the bet?) is answered on the session's submit path.
+  // player afford the bet?) is answered on the session's submit path. No
+  // pending-submit guard (D8): a repeated click submits again and the
+  // engine rejects it, exactly as before.
   const placeBet = useCallback(() => {
-    gameSession.submit({ type: "placeBet", amount: bet });
-  }, [bet]);
+    gameSession.submit({ type: "placeBet", amount: betInput.get() });
+  }, []);
 
   const cashOut = useCallback(() => {
     gameSession.submit({ type: "cashOut" });
@@ -89,7 +92,13 @@ export default function AbyssAnchor() {
   // jackpot) sees and can use the picker; manual-cashout players and
   // spectators never do — the engine completes their bonus phase itself.
   const showChestPicker = showBonus && bonusEligible;
-  const canBet = isIdle && !participating && bet > 0 && bet <= balance && countdown > 0.2;
+  // The action matrix (§13.3): a pure derivation from the three stores'
+  // values — the five-branch decision and the old inline canBet left JSX.
+  const action = actionStateFor(
+    { phase, countdownSeconds: countdown },
+    { balance, participating, hasCashed },
+    bet,
+  );
 
   // Displayed only while participating in a dive; based on the LOCKED bet
   // (the settlement basis), not the live input — display and payout agree.
@@ -218,7 +227,7 @@ export default function AbyssAnchor() {
       <div className="z-20 border-t border-border bg-card/80 px-4 pt-3 pb-4 backdrop-blur">
         <div className="mb-3 flex items-center gap-2">
           <button
-            onClick={() => setBet((b) => Math.max(1, +(b / 2).toFixed(2)))}
+            onClick={() => betInput.halve()}
             className="h-10 w-10 rounded-md border border-border bg-secondary text-lg font-bold text-foreground active:scale-95 disabled:opacity-50"
             disabled={inDive}
           >−</button>
@@ -227,13 +236,13 @@ export default function AbyssAnchor() {
             <input
               type="number"
               value={bet}
-              onChange={(e) => setBet(Math.max(0, +e.target.value))}
+              onChange={(e) => betInput.input(e.target.value)}
               disabled={inDive}
               className="w-full bg-transparent text-center text-lg font-bold tabular-nums text-gold outline-none"
             />
           </div>
           <button
-            onClick={() => setBet((b) => Math.min(balance, +(b * 2).toFixed(2)))}
+            onClick={() => betInput.double(balance)}
             className="h-10 w-10 rounded-md border border-border bg-secondary text-lg font-bold text-foreground active:scale-95 disabled:opacity-50"
             disabled={inDive}
           >+</button>
@@ -242,7 +251,7 @@ export default function AbyssAnchor() {
           {QUICK_BETS.map((v) => (
             <button
               key={v}
-              onClick={() => setBet(v)}
+              onClick={() => betInput.set(v)}
               disabled={inDive}
               className={`rounded-md border py-1.5 text-xs font-semibold tabular-nums transition ${
                 bet === v
@@ -255,28 +264,28 @@ export default function AbyssAnchor() {
           ))}
         </div>
 
-        {inDive && participating && !hasCashed ? (
+        {action.kind === "cashOut" ? (
           <button
             onClick={cashOut}
             className="w-full rounded-xl border border-success/40 bg-gradient-to-b from-success to-success/70 py-4 text-lg font-black tracking-wider text-background shadow-[0_0_30px_-8px] shadow-success active:scale-[0.98]"
           >
             CASH OUT · {potentialWin.toFixed(2)}
           </button>
-        ) : inDive && participating && hasCashed ? (
+        ) : action.kind === "secured" ? (
           <button
             disabled
             className="w-full cursor-not-allowed rounded-xl border border-success/30 bg-success/10 py-4 text-sm font-bold tracking-widest text-success"
           >
             SECURED +{lastWin?.amount.toFixed(2)} · WATCHING DIVE…
           </button>
-        ) : inDive && !participating ? (
+        ) : action.kind === "spectating" ? (
           <button
             disabled
             className="w-full cursor-not-allowed rounded-xl border border-border bg-secondary py-4 text-sm font-bold tracking-widest text-muted-foreground"
           >
             SPECTATING · NEXT ROUND SOON
           </button>
-        ) : isIdle && participating ? (
+        ) : action.kind === "betLocked" ? (
           <button
             disabled
             className="w-full cursor-not-allowed rounded-xl border border-gold/30 bg-gold/10 py-4 text-sm font-bold tracking-widest text-gold"
@@ -286,10 +295,10 @@ export default function AbyssAnchor() {
         ) : (
           <button
             onClick={placeBet}
-            disabled={!canBet || showBonus || showCrash}
+            disabled={action.kind !== "placeBet" || !action.enabled}
             className="w-full rounded-xl border border-gold/40 bg-gradient-to-b from-gold to-gold-deep py-4 text-lg font-black tracking-wider text-background shadow-[0_0_30px_-8px] shadow-gold disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
           >
-            {isIdle ? `PLACE BET · ${countdown.toFixed(1)}s` : "WAITING…"}
+            {action.kind === "placeBet" ? `PLACE BET · ${countdown.toFixed(1)}s` : "WAITING…"}
           </button>
         )}
       </div>

@@ -145,7 +145,9 @@ describe("betting phase", () => {
     expect(button("PLACE BET · 5.0s").hasAttribute("disabled")).toBe(true);
   });
 
-  it("PINNED UNTIL U5 (V4): clearing the field makes the bet 0 — the field shows 0, tier rope, PLACE BET disabled", async () => {
+  // Was "PINNED UNTIL U5 (V4)". U5 kept this behavior by owner decision (D1):
+  // a cleared field is 0, not NaN (the pre-U5 docs were wrong, D3). Assertions unchanged.
+  it("V4 (D1, kept in U5): clearing the field makes the bet 0 — the field shows 0, tier rope, PLACE BET disabled", async () => {
     const h = await bootScreen();
     h.mount();
     await h.user.clear(betInput());
@@ -154,7 +156,9 @@ describe("betting phase", () => {
     expect(button("PLACE BET · 5.0s").hasAttribute("disabled")).toBe(true);
   });
 
-  it("PINNED UNTIL U5 (V4, BET_CUTOFF_SECONDS): PLACE BET disables once the countdown is at or below 0.2 s", async () => {
+  // Was "PINNED UNTIL U5". U5 named the literal BET_CUTOFF_SECONDS (D5) with
+  // the same value; the assertions keep the literal 0.2 on purpose.
+  it("V4 (BET_CUTOFF_SECONDS, U5): PLACE BET disables once the countdown is at or below 0.2 s", async () => {
     const h = await bootScreen();
     h.mount();
     const countdown = () => h.session.engine.getPublicState().countdownSeconds;
