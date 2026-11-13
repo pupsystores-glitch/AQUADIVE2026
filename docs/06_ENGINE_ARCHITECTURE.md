@@ -43,8 +43,8 @@ The engine owns, exclusively:
 
 | Concern | Owner | Notes |
 |---|---|---|
-| Wallet / balance / win math | Settlement layer (UI store now, Wallet Service in Phase 8) | Subscribes to engine events; computes `bet × multiplier` and mutates balance. The float-`toFixed(2)` math moves there verbatim; the integer-minor-units migration is a separate roadmapped task at this boundary and never enters the engine. |
-| Bet-vs-balance check | Settlement layer / UI | The engine validates a bet against *round state* (phase, already participating); whether the player can afford it is a wallet question answered before the command is submitted. |
+| Wallet / balance / win math | Settlement layer (UI store now, Wallet Service in Phase 8) | Subscribes to engine events; computes `bet × multiplier` and mutates balance. The float-`toFixed(2)` math moves there verbatim; the integer-minor-units migration is a separate roadmapped task at this boundary and never enters the engine. *(2026-11-13, M1-D8: for payouts, "verbatim" is superseded. Wins are to be rounded down to the cent with exact integer arithmetic in the settlement layer (docs/07 §23.13). The engine is unaffected: it computes no payouts, and its events carry multipliers only.)* |
+| Bet-vs-balance check | Settlement layer / UI | The engine validates a bet against *round state* (phase, already participating); whether the player can afford it is a wallet question answered before the command is submitted. *(2026-11-13: stake validity — a well-formed amount, independent of any balance — is proposed as an engine-side check under E-X2, §13.1; proposed, not approved. Affordability stays here.)* *(2026-11-14: E-X2 approved by the owner and implemented, uncommitted; the engine now rejects a stake that is not a valid stake. Affordability still stays here.)* |
 | Rendering | `src/rendering` | Pure consumer of `RenderState` per `docs/05`. |
 | UI / HUD / banners / history strip | React shell | Derives everything from engine events + public state. The engine emits no user-facing strings — a hard rule that keeps localization (roadmap) entirely outside. |
 | Network transport | `src/network` | Protocol messages in/out; no game logic (existing README contract). |
@@ -282,6 +282,92 @@ class GameEngine {
 - **Engine lifetime is decoupled from React.** The driver+engine pair is owned per game session (module/app scope), not per component mount; a thin hook attaches/detaches the canvas and store. Remounting the component no longer restarts the world — the engine-side twin of the renderer's docs/05 §2.3 fix.
 - **Command queue.** Commands are validated against the state *at the tick they apply*, not at submit time. Rejections emit `commandRejected` — commands never throw. This single mechanism gives determinism (commands are part of the replayable input log) and is wire-shaped for Phase 8: in replica mode `submit` forwards to the server and the authoritative accept/reject comes back as an event.
 - `EngineConfig` carries the tuning currently in `src/game/config.ts`/`constants.ts` (injected, not imported ambient) — the future server-configurable surface (admin panel, Phase 9) and the white-label hook on the gameplay side.
+
+### 13.1 Engine freeze exception E-X2 — valid-stake enforcement (proposed 2026-11-13; APPROVED BY THE OWNER 2026-11-14, AS IMPLEMENTED; uncommitted)
+
+**Current status (2026-11-14).** The owner explicitly approved the E-X2 change already implemented in the working tree: the shared stake-validation predicate, the engine `placeBet` validation, their tests and the UI re-export. The freeze exception is **not expanded** beyond the files below. The change is uncommitted. Under owner decision Q14 = S1 it lands inside the single atomic M1 integration commit, and only after the owner separately authorizes the Git operation (docs/07 §23.9, §23.18). The status paragraphs that follow ("not approved", "planning only") are kept as the record of 2026-11-13. They no longer describe the authorization.
+
+| File | Implemented change |
+|---|---|
+| `src/shared/stake.ts` (new) | `MIN_STAKE = 0.01` and `isValidStake(amount: unknown)`: a `number`, finite, ≥ 0.01, and `+amount.toFixed(2) === amount` (docs/07 §23.4). No ceiling (Q1: B-R, docs/07 §23.20) |
+| `src/shared/stake.test.ts` (new) | The predicate's matrix |
+| `src/engine/state-machine.ts` | One import (`isValidStake` from `@/shared/stake`, line 37). In `applyPlaceBet`, the guard `!(command.amount > 0)` becomes `!isValidStake(command.amount)`, with three comment lines. Reason `invalid-amount`, rejection order and everything else are unchanged |
+| `src/engine/state-machine.test.ts` | The existing amount pin is **extended in place**. It is retitled, and it now also rejects `0.005`, `0.123`, `NaN`, `Infinity` and `-1` and asserts that no `betPlaced` is emitted. The original amount-`0` → `invalid-amount` expectation is unchanged. There is also a new `E-X2` block: accepted whole-cent stakes, rejected sub-cent, non-finite and non-number payloads, and replay determinism |
+| `src/ui/store/stake.ts` (new; not frozen) | Re-export of `isValidStake` and `MIN_STAKE` for the UI. One predicate (K4) |
+
+Two details differ from the candidate scope's wording below, and the approval covers them as implemented:
+
+- the import line lies outside "lines 216-222 only";
+- the existing pin was extended, not left "unmodified". Its original assertion still holds.
+
+Freeze audit: `git diff --stat src/engine src/rendering src/shared` together with the untracked files lists exactly the four frozen-directory files above (verified 2026-11-14).
+
+Status (2026-11-13): the owner approved *planning* this exception on 2026-11-13 (Money Integrity decision M1-D4, docs/07 §23). The owner has **not** approved its implementation scope. Until that approval is recorded here and in docs/07 §19 gate 4, the engine freeze stands unchanged, E-X1 remains the sole approved exception, and nothing in this subsection authorizes a code change. E-X2 does not widen E-X1: E-X1's file list and rules (§5) are untouched.
+
+*Status after the security boundary review (owner decision M1-D12, 2026-11-13).* E-X2 remains approved **for planning only**. No engine implementation is authorized. The owner's other decisions leave E-X2's candidate scope below unchanged:
+
+- C3, the provisional commit plan (M1-D9, docs/07 §23.14), keeps E-X2 + M1-1 as commit 1, exactly as before.
+- The V2 payout-rounding fix (M1-D7, M1-D8) needs **no** engine change: the engine computes no payouts, and its events carry multipliers only (§3).
+- The wallet's non-finite guards are settlement-layer code.
+
+The following are recorded as known limitations (M1-D11, docs/07 §23.15). They are **not** part of E-X2:
+
+- public `events.emit`;
+- `restore()` validation;
+- live references returned by `getPublicState()` and the `chestsRevealed` payload;
+- `snapshot()` exposing `crashAt`;
+- `advance(NaN)`;
+- validation of authority outputs.
+
+E-X2 closes the *command* edge for every caller. It does not authenticate events, and no wallet guard does either.
+
+*Status after the final financial integrity reconciliation (owner decisions M1-D13 to M1-D16, 2026-11-13; docs/07 §23.1, §23.16–§23.19).* E-X2 is **still approved for planning only**, and its candidate scope below is unchanged:
+
+- **Payouts (M1-D13).** They are computed in the settlement layer, from the accepted stake and the authoritative multiplier carried by the events, rounded down with exact BigInt arithmetic. The engine's multiplier generation is unchanged, including the `+(jackpot × chest).toFixed(2)` of `finalMultiplier` (`state-machine.ts:267`), and so is determinism. No engine file is added for this.
+- **Invalid multipliers and wallet integrity (M1-D14, M1-D15).** Rules W1–W9 are settlement-layer code. They use the `roundId` every event already carries (§12), and they need no new payload field.
+- **Out of scope for E-X2.** Event identifiers (`betId`, `participantId`, `settlementId`), a private emitter, `restore()` validation and a multiplier contract are engine changes, and each would need **its own owner-approved freeze exception**. None is part of E-X2 or M1.
+- **Publication (M1-D16).** The proposed plan C4 (docs/07 §23.18) develops E-X2 in a local working commit and publishes it only inside one atomic integration commit, together with the UI and settlement changes. E-X2 keeps its own implementation approval gate. The engine and shared-floor part of that integration commit must equal the approved E-X2 file list exactly.
+
+**Why it is needed.** `placeBet` validates the amount with one comparison, `!(command.amount > 0)` → `"invalid-amount"` (`src/engine/state-machine.ts:222`). That guard is correct for what it covers and stays:
+
+| Amount | Today (`state-machine.ts:219-230`) | Required by M1-D1/D2 |
+|---|---|---|
+| `NaN`, `0`, `-0`, negative, `-Infinity` | rejected, `invalid-amount` | rejected (no change) |
+| `+Infinity` | **accepted**; `betPlaced { amount: Infinity }` emitted (`:229`) | rejected |
+| positive below 0.01 (`0.001`, `0.004`, `0.005`, `0.009`) | **accepted** | rejected |
+| positive with a fractional cent (`1.005`, `0.123`) | **accepted** | rejected |
+| finite but beyond exact cent representation (e.g. `1e300`) | **accepted** | open — question Q1, docs/07 §23.9 |
+
+Confirmed gaps: the engine accepts stakes that are not whole cents, and `+Infinity`. The settlement layer then debits `+(balance − amount).toFixed(2)` (`src/ui/store/wallet-store.ts:143-153`), which is a zero debit for `0.001`–`0.005` while the payout `+(roundBet × m).toFixed(2)` (`:165`, `:186`, `:218`) is non-zero from a modest multiplier upward — the M1 vulnerability (docs/07 §23.2). Today only the UI stands between such a command and the engine; commands are the future protocol messages (§13), so the authoritative boundary must not depend on a well-behaved client.
+
+**Intended validation boundary.** The engine becomes the authoritative validator of *stake validity* — a property of the command payload alone — exactly as it is already the validator of every round-state question. `applyPlaceBet` accepts an amount iff the shared valid-stake predicate holds (docs/07 §23.4); anything else is rejected with the **existing** reason `"invalid-amount"`: no new reason code, no new event, no payload change. The check keeps its current position, after `not-in-betting` and `already-participating`, so rejection precedence is unchanged.
+
+**Separation from wallet settlement (unchanged law, §3).** E-X2 adds no balance, no affordability check and no money arithmetic to the engine. Stake validity ("is this a well-formed amount of money") is engine-validated; affordability ("can this player pay it") stays a wallet question answered before submit; debit and credit math stays in the settlement layer. The engine still never sees a balance.
+
+**Why the engine must be the enforcement point** (review, 2026-11-13; docs/07 §23.12). Events are post-tick facts (§12): a listener cannot veto or undo an acceptance, and no command cancels a bet. A settlement layer that refuses an accepted `betPlaced` therefore leaves the engine holding a participant the wallet does not know, and nothing can reconcile them before the round ends. The invariant "no engine-accepted participation without a correctly debited wallet stake" can only be enforced at acceptance. The engine's acceptance rule must never be weaker than any wallet rule on `betPlaced`. E-X2 provides exactly that, and nothing more.
+
+**Candidate scope — every item requires owner approval before any change:**
+
+| File | Change | Note |
+|---|---|---|
+| `src/shared/stake.ts` (new; name open) | The single valid-stake predicate and the minimum-stake constant | One definition for engine and UI (Master Rules: never duplicate logic). `src/shared` is the dependency floor both layers may import (§4, docs/07 §6) and is itself frozen, so this file is part of the exception. Alternative home: an engine domain module re-exported by the facade — question Q2, docs/07 §23.9 |
+| `src/shared/stake.test.ts` (new) | The predicate's test matrix (docs/07 §23.7) | |
+| `src/engine/state-machine.ts` | Lines 216-222 only: the amount guard (line 222) calls the shared predicate, and the comment above it (216-218) states that the engine now validates stake validity but still never sees a balance | No other line; reason string unchanged |
+| `src/engine/state-machine.test.ts` | New rejection/acceptance cases, including a non-number payload (`amount: "5"`, accepted by today's `> 0`, rejected by the predicate; added 2026-11-13 from the security boundary review) and replay with rejected stakes | The existing pin (`:219-231`, amount `0` → `invalid-amount`) stays valid, unmodified |
+
+Explicitly **not** in the candidate scope: `src/engine/game-engine.ts` (no state shape changes, so no snapshot schema bump), `src/engine/commands.ts`, `src/engine/events.ts`, `src/engine/domain/*`, `src/engine/simulation.ts`, `src/rendering`, and every other file under `src/shared`.
+
+**Test compatibility and commit grouping** (review, 2026-11-13). Landed alone, this scope fails an existing UI test. `src/ui/screen.bet-input.test.tsx:104-114` places a `0.123` bet through the real engine, which would now reject it. It would also leave PLACE BET enabled for stakes the engine silently rejects. docs/07 §23.8 therefore recommends landing E-X2 in **one commit with M1-1** (the non-frozen UI and session edges). That bundles UI files into the commit; it adds **no** engine or shared-floor file to the exception. The bundling itself needs the owner's explicit approval (docs/07 §23.9, Q2). *(2026-11-13, M1-D16: under the proposed plan C4 the published unit is one atomic integration commit, which contains E-X2, M1-1 and the settlement integrity changes. E-X2 + M1-1 exists only as a local, never-pushed working commit (docs/07 §23.18, Q14).)*
+
+**Existing guards to reuse, not duplicate.** The `> 0` comparison is subsumed by the predicate's minimum (0.01) and is replaced, not kept beside it. Duplicate-bet and wrong-phase rejections (`:220-221`) are untouched. Settlement exclusivity and idempotency live in the wallet (docs/07 §10) and are not mirrored in the engine.
+
+**Determinism and replay (§7, §14).** The predicate is a pure function of the command amount: no RNG draw, no clock, no state read. A rejected `placeBet` takes the existing reject path — state untouched, one `commandRejected` queued for post-tick dispatch — so `state(n+1) = f(state(n), commands, rngDraws)` holds unchanged and no RNG stream position moves. Consequences to record with the implementation:
+
+- A command log containing a stake that was accepted before E-X2 and is invalid after it replays differently (rejected; the participant is absent for that round). This is the sanctioned behavior change, not a determinism defect. No such log is persisted today.
+- `restore()` assigns `participant.betAmount` without validation (`src/engine/state-machine.ts:382-395`). Snapshots are authority-produced, trusted data (§14); validating them is outside the narrowest scope and is recorded as question Q4 (docs/07 §23.9), not silently added.
+- Outcome multipliers are produced by the `RoundAuthority`, not by commands, and are out of E-X2's scope. With `LocalRoundAuthority` they are finite by construction: `sampleCrashPoint` ≤ 200 (`src/engine/domain/outcomes.ts:22-30`), `sampleJackpot` ≤ 500 (`:34-41`), chests ≤ 50 (`:43-55`), `finalMultiplier` ≤ 25,000 (`state-machine.ts:267`). The live cashout multiplier stays below ≈ 6.61, because the dive reaches `CHAIN_MAX_DEPTH` by tick 1290 at the latest. That limit comes from tuning and is not a named cap (docs/07 §23.11). An injected authority is checked for neither range nor finiteness. A multiplier contract — a named cap plus a finiteness check — would be a separate engine change and is **not** part of E-X2 (recorded, not changed).
+
+**Why it remains proposed.** The engine is a frozen, binding contract for Sprint 4 (docs/07 §19 gate 4). The owner's M1-D4 decision approves planning E-X2 and requires a separate, explicit approval of the final implementation scope. The scope above is a candidate for that approval; open questions Q1, Q2 and Q4 must be answered first. Q1 (a technical stake ceiling) remains **open**: no bound is adopted, and the candidates are analyzed in docs/07 §23.11. *(2026-11-13, M1-D10: stake, balance and payout ceilings all stay unresolved until each is supported by mathematical analysis and approved by the owner. E-X2's predicate therefore carries no ceiling unless Q1 is decided first.)*
 
 ## 14. Snapshot Model
 

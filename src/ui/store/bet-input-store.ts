@@ -13,7 +13,9 @@
 //   double     Math.min(balance, +(b * 2).toFixed(2))
 //   quick-set  the QUICK_BETS value as is
 //   typed      Math.max(0, +raw)
-// No new rounding or precision rule (D11): a typed 0.123 stays 0.123.
+// No new rounding (D11): a typed 0.123 stays 0.123 in the field. Since M1
+// (M1-D1; D11 superseded in part, docs/07 §23.3) such a value is editable
+// but not submittable — PLACE BET and the submit edge both reject it.
 //
 // Sanitation (V4, D1–D3), applied to every write: a non-finite number
 // (NaN, Infinity, -Infinity) becomes 0, and the existing negative clamp is

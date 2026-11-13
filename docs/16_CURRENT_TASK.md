@@ -4,7 +4,7 @@
 
 Blueprint: `docs/07_UI_ARCHITECTURE.md` — **approved 2026-08-17 and binding** (the §17 U0 step; approval ratified the five §7 sanctioned deltas V1–V5). Extraction commits follow its §17 order, one per approval.
 
-The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/shared`) are **read-only contracts** for the whole sprint (docs/07 §20 risk 1, §19 gate 4: `git diff --stat src/engine src/rendering src/shared` must be empty for every Sprint 4 commit). **Sole approved exception: E-X1** (2026-11-13, below) — limited to `src/engine/state-machine.ts`, `src/engine/game-engine.ts`, `src/engine/domain/tuning.ts` and their tests.
+The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/shared`) are **read-only contracts** for the whole sprint (docs/07 §20 risk 1, §19 gate 4: `git diff --stat src/engine src/rendering src/shared` must be empty for every Sprint 4 commit). Approved exceptions: **E-X1** (2026-11-13, below), limited to `src/engine/state-machine.ts`, `src/engine/game-engine.ts`, `src/engine/domain/tuning.ts` and their tests; and **E-X2** (engine-side valid-stake enforcement, docs/06 §13.1), **approved by the owner 2026-11-14 exactly as implemented**: `src/shared/stake.ts`, `src/shared/stake.test.ts`, `src/engine/state-machine.ts`, `src/engine/state-machine.test.ts`. The exception is not expanded. *(History: E-X2 was planning-only from 2026-11-13, M1-D4 and M1-D12, until the 2026-11-14 approval.)*
 
 ## Sprint 4 progress
 
@@ -16,11 +16,191 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 | E-X1 — engine freeze exception: bonus eligibility + deterministic completion | **Committed `897c5be`, pushed to `origin/develop` (2026-11-13).** All automated gates green (tsc clean, 151/151 tests, lint at baseline 7 + 6, build passes, `diff --check` clean, freeze check within the exception); owner manual browser QA passed, 4/4 scenarios |
 | U3 — UI test harness + DOM characterization pins | **Done — committed `8e9b21b`, pushed to `origin/develop` (2026-11-13); validation results accepted by the owner.** 180/180 tests green across 22 files (29 new DOM tests); production source unchanged. Details in `docs/15_PROGRESS.md` |
 | U4a — notification store (delta V2) | **Done — approved by the owner 2026-11-13 (manual browser QA 5/5); committed and pushed to `origin/develop`.** 212/212 tests green across 24 files; production source changes limited to `src/ui` + `AbyssAnchor.tsx`. Details in `docs/15_PROGRESS.md` |
-| U4b — round store | **Implemented and validated 2026-11-13; committed as `bbdc13443e1b2a8cb29e58a1f24e72f7d44711c2` and pushed to `origin/develop`.** Plan approved by the owner 2026-11-13 (C6, C7, `attachCanvas` sync parameter retired, synchronous write on attach, revealed chest restored after remount). 249/249 tests green across 26 files; the 20 characterization pins unchanged; one sanctioned remount pin updated. Details in `docs/15_PROGRESS.md` |
-| U5 — bet-input store + action-state derivation (delta V4) | **Implemented and validated 2026-11-13 under the owner's U5 authorization (decisions D1–D12, docs/07 §17); committed as `09cc5af56534766982697f7036efce72f440260d` and pushed to `origin/develop`. Development checkpoint — not fully accepted.** 311/311 tests green across 29 files; the 20 characterization pins pass with unchanged assertions; one sanctioned remount pin updated. Manual browser QA pending; M1 (sub-cent betting) unresolved |
-| U6–U7 | Pending, per docs/07 §17 |
+| U4b — round store | **Implemented and validated 2026-11-13; committed as `bbdc13443e1b2a8cb29e58a1f24e72f7d44711c2` and pushed to `origin/develop`.** Plan approved by the owner 2026-11-13 (C6, C7, `attachCanvas` sync parameter retired, synchronous write on attach, revealed chest restored after remount). 249/249 tests green across 26 files; the 20 characterization pins unchanged; one sanctioned remount pin updated. Details in `docs/15_PROGRESS.md`. *(2026-11-14: owner-confirmed browser QA passed, 6/6.)* |
+| U5 — bet-input store + action-state derivation (delta V4) | **Implemented and validated 2026-11-13 under the owner's U5 authorization (decisions D1–D12, docs/07 §17); committed as `09cc5af56534766982697f7036efce72f440260d` and pushed to `origin/develop`. Development checkpoint — not fully accepted.** 311/311 tests green across 29 files; the 20 characterization pins pass with unchanged assertions; one sanctioned remount pin updated. Manual browser QA pending; M1 (sub-cent betting) unresolved. *(2026-11-14: owner-confirmed browser QA passed, U5 7/7; M1 implemented, awaiting the S1 commit.)* |
+| M1-0 — Money Integrity decisions + architecture plan (docs only) | **Drafted 2026-11-13, refined by a review pass, and reconciled with the security boundary review the same day; awaiting the owner's review of the documentation diff. Not staged, not committed.** Policy M1-D1 to M1-D16 approved by the owner 2026-11-13 (docs/07 §23.1). Final financial integrity reconciliation drafted 2026-11-13 |
+| E-X2 — engine freeze exception: valid-stake enforcement | **Implemented and approved by the owner 2026-11-14, as implemented; uncommitted** (docs/06 §13.1). Four frozen-directory files plus the UI re-export; exception not expanded. *(Until 2026-11-14: planning only, M1-D4 / M1-D12.)* |
+| M1-1 (UI + session stake validation), M1-2 (redefined: settlement integrity — V2 payouts rounded down + wallet non-finite protection), M1-3 (validation + QA) | Proposed stages, **not authorized**. Provisional plan **C3** (M1-D9, docs/07 §23.14): commit 1 E-X2 + M1-1 → commit 2 M1-2 → commit 3 M1-3. **Commit 1 alone still leaves V2 open.** M1 closes only after commit 3 and the §23.14 closure criteria. *(2026-11-13, M1-D15/M1-D16: C3's publication model is superseded by the proposed plan **C4** (§23.18). The stages become local working commits L1–L3, never pushed, published as one atomic integration commit. The M1-scope wallet rules W1–W9 (§23.17) join L2.)* *(2026-11-14: superseded. M1-1 and the settlement integrity work are implemented in the working tree, and under Q14 = S1 they land as one atomic commit, with no L1–L3 working commits. See "Current" below.)* |
+| M1 owner decisions 2026-11-14 | Q12 approved (W3 kept). Q8 approved within its demonstrated domain. Q9c (ii) approved in principle → **W10 fault marker implemented, uncommitted**; no refund or forfeiture; the resolution policy is OPEN. Q1/Q11 option B approved in principle, **not implemented**: it needs the owner's choice between a technical limit and a balance-representation change (docs/07 §23.9). 402/402 tests, `tsc` clean |
+| M1 final owner decisions 2026-11-14 | **Q1/Q11 = B-R** (exact integer-cent ledger, `number` balance for presentation only): **not implemented**, minimal design awaiting approval (docs/07 §23.20). **Q9c = R2**: **implemented**, as auditable unresolved claims with no loss classification. **E-X2 approved.** **Q14 = S1** (one atomic commit; no Git operation authorized yet). 409/409 tests, `tsc` clean, build passes |
+| M1 roadmap return 2026-11-14 | Owner: M1 scope frozen; **B-R moved to M2**. Precision-boundary review: M1 is **BLOCKED** on one decision, the proposed fail-closed rule **W11** (docs/07 §23.21, not implemented). Final validation green (below) |
+| M1 W11 — exact-cent credit envelope 2026-11-14 | **Approved by the owner (final M1 authorization) and implemented, uncommitted.** Credits decided in exact cents below 2^44 units; an unrepresentable valid win becomes an R2 claim (rule `W11`, exact `unpaidCents`), and the chest of a withheld jackpot becomes one follow-up claim (docs/07 §23.21). 427/427 tests, `tsc` clean, build passes |
+| M2 — integer minor units | Deferred, not started (docs/07 §23.10). **Now also holds B-R**, the integer-cent wallet ledger (owner, 2026-11-14) |
+| U6–U7 | Pending, per docs/07 §17. Not started |
 
-## Current: U5 — committed and pushed (`09cc5af`), browser QA pending, not fully accepted
+## Current: return to the approved roadmap — close M1, finish the pending browser QA, then resume Sprint 4
+
+Status on 2026-11-14. Nothing is staged, committed or pushed.
+
+**Status by category:**
+
+- **M1, implemented and validated (uncommitted):**
+  - E-X2 (approved);
+  - M1-1;
+  - the BigInt rounded-down payout (V2);
+  - W1–W10;
+  - R2 unresolved claims;
+  - **W11** (approved and implemented 2026-11-14, docs/07 §23.21): the exact-cent credit envelope below 2^44 units;
+  - the sanctioned test rewrites.
+- **M1, pending acceptance:**
+  1. ~~The owner's manual browser QA for M1: **partially confirmed** (below). The full gate is pending.~~ **Done (2026-11-14): the owner confirms all 19/19 detailed checks passed (below).**
+  2. A separate, explicit authorization to perform the S1 commit. *(Owner, 2026-11-14: S1 is to be one **local** commit, with **no push**. That is not yet authorization to commit.)*
+- **Deferred to M2 (not started):** B-R / the authoritative integer-cent ledger (docs/07 §23.20 design kept as input), and the rest of §23.10.
+- **U4b and U5:** committed and pushed. Manual browser QA **passed** (owner-confirmed 2026-11-14: U4b 6/6, U5 7/7). *(Earlier the same day: partially confirmed, still pending.)*
+- **Browser QA accepted (2026-11-14, owner-confirmed):** the owner confirms that **all 19/19 detailed checks passed**: U4b 6/6, U5 7/7, M1 6/6. These are owner-performed browser checks; the agent ran no browser test. The browser QA gate for U4b, U5 and M1 is **closed**. The temporary `// @refresh reset` line is confirmed absent from `src/components/AbyssAnchor.tsx`. The paragraph below records the earlier, partial status.
+- **Browser QA status (2026-11-14, owner-reported; superseded by the 19/19 acceptance above):** the owner reports that **10 consolidated browser checks passed**. This is **not** a pass of the 19-item detailed checklist below (U4b 1–6, U5 1–7, M1 1–6). The 10 checks were not listed item by item, so no detailed item is recorded as passed on their strength. The detailed items still awaiting the owner's confirmation are in the reconciliation list after the checklist. The full browser QA gate for U4b, U5 and M1 stays **pending** until the owner confirms them. No browser test was run by the agent.
+- **U6:** not started. It starts only after M1 closes and the owner authorizes it.
+- **Still open, not blocking:** the R2 resolution policy; Q4, Q5, Q6, Q8c, Q9b, Q13.
+
+**Final validation (2026-11-14, working tree, after W11):**
+
+| Check | Result |
+|---|---|
+| Tests | 427/427 green across 33 files (Vitest from PowerShell; 18 new W11 tests) |
+| TypeScript | `tsc --noEmit` clean |
+| Build | Production build passes |
+| ESLint | Changed and new files, end-of-line neutralized: clean, apart from the 6 pre-existing `AbyssAnchor.tsx` errors |
+| `git diff --check` | Clean |
+| Freeze audit | Exactly the four E-X2 files |
+| `src/routeTree.gen.ts` | Byte-identical to HEAD (stat-dirty only) |
+| Engine–wallet consistency, idempotency, faulted rounds (W10 / R2 / W11) | Covered by green tests, including a real-engine round landing exactly on 2^44 |
+
+**Manual browser QA checklist** (run in `npm run dev` with the console open):
+
+- **Remount procedure.** Temporarily add `// @refresh reset` to `src/components/AbyssAnchor.tsx` and save the file at the moment named in the check. Remove the line afterwards.
+- **U4b — round store:**
+  1. Phase label, countdown, multiplier and boost update smoothly through a full round.
+  2. Bet and reach impact without cashing out. The chest picker appears; a pick updates the balance and the result once.
+  3. Remount while the chest picker is visible. The picker reappears and still works, and the pick credits once.
+  4. Remount after a chest is revealed. The revealed chest is still shown.
+  5. Remount mid-dive, then cash out. Exactly one credit, against the locked bet.
+  6. As a spectator (no bet), go through a bonus. No picker appears and the round completes.
+- **U5 — bet input and action state:**
+  1. Clear the field. PLACE BET is disabled and no error appears.
+  2. Type decimals (1.50, 0.01). PLACE BET is enabled; −, + and the quick bets behave as before.
+  3. Type a negative value, then a value above the balance. PLACE BET is disabled.
+  4. PLACE BET disables in the last 0.2 s of the countdown.
+  5. Double-click PLACE BET: one debit. Double-click CASH OUT: one credit.
+  6. During impact, crash and bonus the button reads WAITING…, and the bet controls stay enabled.
+  7. Type a bet, then remount. The typed bet survives.
+- **M1 — money integrity:**
+  1. Bets of 0.005, 0.001, 0.123 and 1.234: PLACE BET is disabled, Enter does nothing and the balance is unchanged.
+  2. Bet 0.01 and cash out just above 1.5×. The credit is 0.01, not 0.02.
+  3. Bet 1 and cash out. The SECURED amount and the balance change both equal stake × the secured multiplier, rounded **down** to the cent.
+  4. Jackpot, then chest. The total equals the rounded-down final payout, and the balance rises once per payout.
+  5. A bet exactly equal to the balance is accepted; a bet 0.01 above it is disabled.
+  6. About 10 rounds with no console errors. Balance labels always show two decimals.
+
+**Reconciliation with the owner's 10 consolidated checks (2026-11-14).** The owner reported 10 passed checks without listing them. None of the 19 items above can be shown to be *clearly* covered, so none is recorded as passed. To close the gate, the owner confirms each item, or names the items the 10 checks already covered:
+
+*Resolved later on 2026-11-14: the owner confirms every item below passed (19/19).*
+
+- [x] U4b-1 · [x] U4b-2 · [x] U4b-3 (remount, picker visible) · [x] U4b-4 (remount, chest revealed) · [x] U4b-5 (remount mid-dive, one credit) · [x] U4b-6 (spectator bonus)
+- [x] U5-1 · [x] U5-2 · [x] U5-3 · [x] U5-4 (0.2 s cutoff) · [x] U5-5 (double-click) · [x] U5-6 (WAITING…) · [x] U5-7 (remount, typed bet)
+- [x] M1-1 (sub-cent rejected) · [x] M1-2 (0.01 at 1.5× → 0.01) · [x] M1-3 (round-down) · [x] M1-4 (jackpot + chest) · [x] M1-5 (bet = balance) · [x] M1-6 (10 rounds, two decimals)
+
+The four remount items (U4b-3, U4b-4, U4b-5, U5-7) need the temporary `// @refresh reset` line. It must be removed before the S1 commit: `AbyssAnchor.tsx` is in the commit manifest. *(2026-11-14: confirmed absent from the working tree; the file's only diff is the M1 `payoutAmount` change.)*
+
+**S1 commit readiness (2026-11-14, after the QA acceptance):** READY for one local atomic commit, pending the owner's authorization. Manifest: 27 files (19 modified, 8 new), `src/routeTree.gen.ts` excluded (byte-identical to HEAD, line-ending stat only). The frozen directories differ by exactly the four E-X2 files. `git diff --check` clean; nothing staged. No push.
+
+**Next step in the original Sprint 4 roadmap:** after M1 closes, **U6 (componentization**, docs/07 §17). Its plan goes to the owner for approval before any code. **U7** (responsive layout) follows.
+
+## Previous: M1 — implemented in the working tree except B-R; awaiting the B-R design approval, browser QA and Git authorization
+
+*Superseded 2026-11-14 by the roadmap return above: B-R is deferred to M2, and blocker 1 below is replaced by the W11 decision.*
+
+Status on 2026-11-14. Nothing is staged, committed or pushed. `src/routeTree.gen.ts` is untouched.
+
+- **Implemented (uncommitted):**
+  - E-X2 (approved): the shared predicate and the engine guard.
+  - M1-1: the action state and the session submit edge share `isPlaceableStake`.
+  - V2: the BigInt rounded-down payout, used for every settlement path and for `potentialWin`.
+  - Wallet rules W1–W9, W3 included.
+  - W10 under R2: faulted participations are kept as auditable unresolved claims (`wallet.unresolvedClaims()`), never refunded, forfeited, credited again or recorded as a loss.
+  - Sanctioned test rewrites: the `0.123` DOM pin, one characterization value (5.22 → 5.21, M1-D8), the round-to-nearest oracles (replaced by `money-oracle.ts`), and the wallet read-surface pin.
+- **Not implemented: B-R.** A read-surface change cannot be avoided. The minimal design D1–D6 and three approval points are in docs/07 §23.20.
+- **Validation (2026-11-14):**
+  - `tsc --noEmit` clean.
+  - 409/409 tests green across 33 files, 7 of them new R2 tests.
+  - A mutation check of the R2 rules: all 4 mutants caught.
+  - Production build passes.
+  - Targeted ESLint with end-of-line neutralized: only the 6 pre-existing `AbyssAnchor.tsx` errors.
+  - `git diff --check` clean.
+  - Freeze audit: exactly the four E-X2 files.
+- **Blockers to M1 closure:**
+  1. The owner approves or amends the B-R design (§23.20), and B-R is implemented and validated. Alternatively, the owner decides to close M1 with the `number` ledger and its recorded 2^44 / 2^46 envelope.
+  2. Owner manual browser QA for M1, together with the pending U4b and U5 QA.
+  3. The owner authorizes staging, the single S1 commit and the push.
+- **Still open, not blocking:** the R2 resolution policy (temporary local-demo policy); Q4, Q5, Q6, Q8c, Q9b, Q13.
+
+## Previous: M1-0 — Money Integrity decisions and architecture plan (documentation only)
+
+*The status lines in this section describe 2026-11-13. "Not implemented", "not authorized" and "planning-only" were true then. For the current state, see the section above.*
+
+- Scope: documentation only, under TASK 007. Edited: `docs/06_ENGINE_ARCHITECTURE.md`, `docs/07_UI_ARCHITECTURE.md`, `docs/14_TASKS.md`, `docs/15_PROGRESS.md`, this file. No source, test, configuration or dependency file changed; nothing staged, committed or pushed.
+- Approved by the owner 2026-11-13 (policy, docs/07 §23.1): **M1-D1** bets have at most two decimals of monetary value, sub-cent amounts rejected and never rounded; **M1-D2** minimum bet 0.01, no new arbitrary maximum; **M1-D3** invalid amounts rejected, PLACE BET disabled, the submit path enforcing the same rule; **M1-D4** engine exception E-X2 to be planned; **M1-D5** integer minor units deferred to M2; **M1-D6** U5 decisions D7 and D11 superseded in part, with dated notes (docs/07 §17, §23.3).
+- **Not done, not claimed:** the M1 vulnerability is **not fixed** — a stake of `0.005` or less still debits nothing and still pays (docs/07 §23.2). V2, the minimum-stake payout-rounding edge, is **not fixed** either. M1 is approved policy, not implemented. E-X2 is not approved for implementation. M2 is not underway. No manual browser QA has passed for U4b or U5.
+- Proposed (each stage needs its own approval):
+  - the valid-stake predicate (docs/07 §23.4);
+  - the commit plan: E-X2 + M1-1 in one commit, then M1-2, then M1-3, under conditions K1–K4 (docs/07 §23.8 — revised by the review pass; the first draft's separate E-X2 → M1-1 → M1-2 commits are withdrawn);
+  - the E-X2 candidate file scope (docs/06 §13.1);
+  - the test matrix (docs/07 §23.7).
+- Review pass (2026-11-13), docs only:
+  - numeric bounds analysis (docs/07 §23.11) — no ceiling adopted;
+  - engine–wallet consistency contract with invariant I8, ten traced cases and limitations L1–L6 (docs/07 §23.12).
+- Open questions for the owner (docs/07 §23.9):
+  - Q1 technical stake ceiling (**open**; candidates T1–T6);
+  - Q2 commit plan and approval to bundle the M1-1 files into the E-X2 commit;
+  - Q3 scope of the wallet guard;
+  - Q4 snapshot restore validation;
+  - Q5 input `step`/`min` attributes;
+  - Q6 user-facing rejection hint;
+  - Q7 event and command injection (now a recorded limitation, M1-D11);
+  - Q8 payout implementation and the meaning of "intended" (new);
+  - Q9 negative or out-of-range multipliers (new);
+  - Q10 push timing for C3 commit 1 (new).
+  - Q2 and Q3 are partly resolved by M1-D9.
+- Security boundary review (2026-11-13, read-only):
+  - confirmed a second open vulnerability, **V2** — minimum-stake payout rounding;
+  - a 0.01 stake cashed just above 1.5× is paid 0.02;
+  - measured return per unit staked: 1.2588, against 0.9571 for a stake of 1;
+  - V2 uses valid stakes only, so it survives E-X2 + M1-1.
+- Final reconciliation (2026-11-13, docs only) — owner decisions (docs/07 §23.1):
+  - **M1-D7:** V2 is a required fix inside M1.
+  - **M1-D8:** nonnegative payouts are rounded down to the cent, with a numerically justified implementation. `Math.floor(s * m * 100)` is shown to be unsafe. This supersedes the U2 bit-identical rule for payouts (docs/07 §23.3, §23.13).
+  - **M1-D9:** C3 is the provisional plan, with the wallet non-finite debit, credit, payout and balance protection kept in M1 (§23.14).
+  - **M1-D10:** stake, balance and payout ceilings stay unresolved.
+  - **M1-D11:** event emission, restore, live-reference aliasing and network trust boundaries are recorded limitations; wallet guards do not authenticate events (§23.15).
+  - **M1-D12:** E-X2 remains planning-only.
+- Added in the reconciliation:
+  - invariants I9 (settlement) and I10 (finite wallet);
+  - the V2 test block (docs/07 §23.7);
+  - the list of affected U2/U3 expectations (§23.3);
+  - questions Q8 (payout implementation and the meaning of "intended"), Q9 (negative multipliers) and Q10 (push timing for commit 1).
+- **Open financial vulnerability at an intermediate commit:** after C3 commit 1, V2 is still open through the normal UI, and non-finite wallet poisoning is still open through runtime access. Both exist today; neither is introduced by commit 1.
+- Final financial integrity reconciliation (2026-11-13, docs only).
+  - **Approved owner policy** (docs/07 §23.1):
+    - **M1-D13:** payout policy — computed from the accepted stake × the authoritative settlement multiplier, rounded down to the cent, never above the intended amount; the binary product is not a monetary result.
+    - **M1-D14:** NaN, ±Infinity and negative multipliers never credit; nothing is silently zeroed; nothing is partially applied.
+    - **M1-D15:** the wallet-side integrity guards are in M1.
+    - **M1-D16:** no unsafe intermediate commit is pushed or presented as production-ready.
+    - M1-D10 is reaffirmed.
+  - **Proposed** (not authorized):
+    - the BigInt payout function and the four multiplier meanings (§23.16);
+    - wallet rules W1–W9, closing holes H1–H6 (§23.17). H1 and H2 are duplicate-credit paths in today's wallet, and H1 is pinned by a U2 test that would get a sanctioned rewrite;
+    - plan **C4**: local L1–L3, then one atomic integration commit, pushed once after G2 (§23.18);
+    - the numeric envelope (§23.19).
+  - E-X2 remains **planning-only**. Event identifiers and the other engine changes are classified as separate future freeze exceptions.
+  - **Open:** Q1, Q2, Q4, Q8a–c, Q9b–c, Q11 (representability above the envelope), Q12 (over-balance `betPlaced`), Q13 (`roundId` keying under restore), Q14 (S1 or S3). Q10 is replaced by Q14 (M1-D16 rejects pushing commit 1 alone).
+  - **Under C4, no intermediate state is pushed.** The published `8363b9f` still contains V1, V2 and H1–H6.
+- Next steps:
+  1. The owner reviews the M1-0 diff.
+  2. If approved, a separate documentation-only commit.
+  3. Owner decisions on Q1, Q2 (bundling), Q4–Q9 and Q11–Q14, and on E-X2's scope (the separate G1 gate, docs/07 §23.18).
+
+  **No implementation stage may start before that.** Still pending independently: U4b and U5 manual browser QA. **U6 is not started.**
+
+## Previous: U5 — committed and pushed (`09cc5af`), browser QA pending, not fully accepted
 
 - Authorized by the owner 2026-11-13 with decisions D1–D12 (recorded in docs/07 §17, corrections C8, C9).
 - Delivered (committed `09cc5af56534766982697f7036efce72f440260d`, `refactor(ui): complete U5 bet input store and action state`, pushed to `origin/develop`; 19 files: 5 new, 14 modified): `src/ui/store/bet-input-store.ts` (session-owned bet amount, `DEFAULT_BET` initial, verbatim halve/double/quick-set/typed arithmetic, every write sanitized: non-finite → 0, negative → 0, cleared field still 0); `src/ui/components/action-state.ts` (pure `actionStateFor` + `canPlaceBet`); `BET_CUTOFF_SECONDS = 0.2` in `src/game/config.ts`; `isAffordable` in `wallet-store.ts`, shared by `canAfford` and the action state (non-finite → false); `session.betInput`; `AbyssAnchor.tsx` reads the bet via `useStore`, drives the action button from `actionStateFor`, and has no `useState` left. JSX markup, class strings and button order unchanged; `submit` unchanged.
@@ -30,6 +210,7 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - Post-commit: 311/311 tests green across 29 files; tsc and production build pass; targeted lint — no new findings; engine/rendering/shared freeze preserved.
 - Open security item: **M1 — sub-cent betting vulnerability, unresolved.** U5 does not address it; it requires a separate owner-approved task.
 - Next: owner manual browser QA for U4b and U5, and an owner decision on the M1 task. **U6 is not started** until the owner says so.
+- Update 2026-11-13: the owner decided on M1 — policy M1-D1 to M1-D6 approved, the work staged under TASK 007 (see "Current" above). U5's D7 and D11 are superseded in part (docs/07 §17 supersession note, §23.3). The browser QA items above are still pending.
 
 ## Previous: U4b — committed and pushed (`bbdc134`)
 

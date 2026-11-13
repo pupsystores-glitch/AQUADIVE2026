@@ -29,8 +29,8 @@
 // Since U5 the session also owns the bet-input store (§9, delta V4): created
 // at construction at DEFAULT_BET, so the typed amount survives remounts. It
 // subscribes to nothing; its only writers are the betting-panel handlers.
-// submit() is unchanged: placeBet still goes through wallet.canAfford, which
-// shares its predicate with the panel's action state (D7).
+// Since M1, submit() routes placeBet through wallet.canPlaceStake (valid
+// stake ∧ affordable, docs/07 §23.5), shared with the panel's action state.
 
 import {
   EngineDriver,
@@ -51,7 +51,7 @@ import {
   type RejectionLogger,
 } from "@/ui/store/notification-store";
 import { createRoundStore, type RoundStore } from "@/ui/store/round-store";
-import { createWalletStore, type WalletStore } from "@/ui/store/wallet-store";
+import { createWalletStore, type WalletRefusal, type WalletStore } from "@/ui/store/wallet-store";
 
 /** The renderer surface the session drives — SceneRenderer in production, injectable for headless tests (§8 test seam). */
 export type CanvasRenderer = Pick<SceneRenderer, "resize" | "frame" | "dispose">;
@@ -68,6 +68,8 @@ export interface GameSessionDeps {
   diagnostics?: boolean;
   /** Diagnostics sink. Default console.warn. */
   diagnosticsLog?: RejectionLogger;
+  /** Wallet-refusal diagnostics sink (M1, W9). Default console.warn. Effective only with `diagnostics` in DEV builds. */
+  walletDiagnosticsLog?: (message: string, refusal: WalletRefusal) => void;
 }
 
 export interface GameSession {
@@ -96,8 +98,9 @@ export interface GameSession {
   attachCanvas(canvas: HTMLCanvasElement): () => void;
   /**
    * The single command edge for components (§8). placeBet is dropped unless
-   * the wallet can afford it (§6 — the one wallet question); everything is
-   * otherwise forwarded unchanged. The engine remains the validator of all
+   * its amount is a valid stake (M1-D1/D2: whole cents, ≥ 0.01) the wallet
+   * can afford — the PLACE BET enable rule's own predicate (M1-D3, §23.5);
+   * everything is otherwise forwarded unchanged. The engine remains the validator of all
    * round-state questions (D4).
    */
   submit(command: EngineCommand): void;
@@ -114,7 +117,18 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   // Settlement subscribes first and for the session's lifetime (V1): its
   // listeners precede any component listener on every event, and nothing
   // ever unsubscribes them.
-  const wallet = createWalletStore(engine.events);
+  // W9 (M1): wallet refusals are reported as dev diagnostics, under the same
+  // opt-in as the rejection diagnostics; compiled out of production builds.
+  const wallet = createWalletStore(engine.events, {
+    onRefusal:
+      import.meta.env.DEV && deps.diagnostics
+        ? (r) =>
+            (deps.walletDiagnosticsLog ?? console.warn)(
+              `[aquadive] wallet refused ${r.event} (${r.rule}: ${r.reason})`,
+              r,
+            )
+        : undefined,
+  });
   // Notifications subscribe second, also for the session's lifetime (V2):
   // flash triggers come from the wallet (after its snapshot is written);
   // the round-transition clears run after the wallet's per-round resets.
@@ -141,7 +155,7 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     betInput,
     driver,
     submit: (command) => {
-      if (command.type === "placeBet" && !wallet.canAfford(command.amount)) return;
+      if (command.type === "placeBet" && !wallet.canPlaceStake(command.amount)) return;
       engine.submit(command);
     },
     attachCanvas: (canvas) => {

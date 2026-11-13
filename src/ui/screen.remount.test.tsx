@@ -16,6 +16,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { bootScreen, type ScreenHarness } from "@/ui/test/dom-harness";
+import { payoutOracle } from "@/ui/test/money-oracle";
 
 /**
  * The component's display subscriptions (AbyssAnchor mount effect). U4a
@@ -93,13 +94,13 @@ describe("component remount over the same session", () => {
     expect(h.session.engine.tickCount).toBe(ticksAtUnmount);
     const m = h.session.engine.getPublicState().multiplier;
     expect(screen.getByText("Multiplier").nextElementSibling?.textContent).toBe(`${m.toFixed(2)}×`);
-    const potential = (+(10 * m).toFixed(2)).toFixed(2);
+    const potential = payoutOracle(10, m).toFixed(2);
     expect(button(`CASH OUT · ${potential}`).hasAttribute("disabled")).toBe(false);
 
     await h.user.click(button(/^CASH OUT · /));
     h.tick();
     const { lastWin, balance, history } = h.session.wallet.get();
-    expect(lastWin!.amount).toBe(+(10 * lastWin!.mult).toFixed(2)); // against the locked 10, not the input
+    expect(lastWin!.amount).toBe(payoutOracle(10, lastWin!.mult)); // against the locked 10, not the input
     expect(balance).toBe(+(990 + lastWin!.amount).toFixed(2));
     expect(balanceText()).toBe(balance.toFixed(2));
     expect(button(`SECURED +${lastWin!.amount.toFixed(2)} · WATCHING DIVE…`)).toBeTruthy();
@@ -146,7 +147,7 @@ describe("component remount over the same session", () => {
     expect(betInput().value).toBe("25"); // the typed amount, not DEFAULT_BET
     expect(h.session.betInput.get()).toBe(25);
     const m = h.session.engine.getPublicState().multiplier;
-    expect(button(`CASH OUT · ${(+(25 * m).toFixed(2)).toFixed(2)}`)).toBeTruthy(); // still the locked 25
+    expect(button(`CASH OUT · ${payoutOracle(25, m).toFixed(2)}`)).toBeTruthy(); // still the locked 25
   });
 
   it("a bet changed after the bet locked survives a remount without moving the locked basis", async () => {
@@ -164,11 +165,11 @@ describe("component remount over the same session", () => {
     h.untilState("diving");
     h.frames(30);
     const m = h.session.engine.getPublicState().multiplier;
-    expect(button(`CASH OUT · ${(+(10 * m).toFixed(2)).toFixed(2)}`)).toBeTruthy(); // the locked 10
+    expect(button(`CASH OUT · ${payoutOracle(10, m).toFixed(2)}`)).toBeTruthy(); // the locked 10
     await h.user.click(button(/^CASH OUT · /));
     h.tick();
     const { lastWin, balance } = h.session.wallet.get();
-    expect(lastWin!.amount).toBe(+(10 * lastWin!.mult).toFixed(2));
+    expect(lastWin!.amount).toBe(payoutOracle(10, lastWin!.mult));
     expect(balance).toBe(+(990 + lastWin!.amount).toFixed(2));
   });
 

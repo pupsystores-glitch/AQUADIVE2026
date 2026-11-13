@@ -216,18 +216,30 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
     ]);
   });
 
-  it("rejects non-positive bet amounts and bets outside the betting window", () => {
+  it("rejects invalid bet amounts (E-X2: sub-cent, non-finite, zero) and bets outside the betting window", () => {
     const h = makeHarness();
     h.engine.submit({ type: "placeBet", amount: 0 });
+    h.engine.submit({ type: "placeBet", amount: 0.005 });
+    h.engine.submit({ type: "placeBet", amount: 0.123 });
+    h.engine.submit({ type: "placeBet", amount: NaN });
+    h.engine.submit({ type: "placeBet", amount: Infinity });
+    h.engine.submit({ type: "placeBet", amount: -1 });
     advanceTicks(h.engine, 1);
-    advanceTicks(h.engine, BETTING_TICKS); // → diving (betting had already spent 1 tick)
+    advanceTicks(h.engine, BETTING_TICKS);
     expect(h.engine.state).toBe("diving");
     h.engine.submit({ type: "placeBet", amount: 5 });
     advanceTicks(h.engine, 1);
-    expect(h.log.filter((e) => e.name === "commandRejected").map((e) => e.payload)).toEqual([
+    const rejections = h.log.filter((e) => e.name === "commandRejected").map((e) => e.payload);
+    expect(rejections).toEqual([
       { roundId: 1, command: { type: "placeBet", amount: 0 }, reason: "invalid-amount" },
+      { roundId: 1, command: { type: "placeBet", amount: 0.005 }, reason: "invalid-amount" },
+      { roundId: 1, command: { type: "placeBet", amount: 0.123 }, reason: "invalid-amount" },
+      { roundId: 1, command: { type: "placeBet", amount: NaN }, reason: "invalid-amount" },
+      { roundId: 1, command: { type: "placeBet", amount: Infinity }, reason: "invalid-amount" },
+      { roundId: 1, command: { type: "placeBet", amount: -1 }, reason: "invalid-amount" },
       { roundId: 1, command: { type: "placeBet", amount: 5 }, reason: "not-in-betting" },
     ]);
+    expect(h.log.filter((e) => e.name === "betPlaced")).toEqual([]);
   });
 
   it("cashOut uses the tick-authoritative multiplier from the last completed tick (D4)", () => {
@@ -556,5 +568,85 @@ describe("E-X1 — bonus eligibility and deterministic completion", () => {
       { roundId: 4, outcome: "jackpot" },
     ]);
     expect(rejections(h)).toEqual([]);
+  });
+});
+
+// E-X2: engine-side valid-stake enforcement (docs/07 §23.4, §23.8; owner
+// policy M1-D1, M1-D2, M1-D3; authorized scope: the placeBet branch only).
+describe("E-X2 — valid-stake enforcement in applyPlaceBet", () => {
+  it("accepts whole-cent stakes: 0.01, 0.07, 0.29, 1, 5, 100", () => {
+    for (const amount of [0.01, 0.07, 0.29, 1, 5, 100]) {
+      const h = makeHarness();
+      h.engine.submit({ type: "placeBet", amount });
+      advanceTicks(h.engine, 1);
+      expect(
+        h.log.filter((e) => e.name === "betPlaced"),
+        `accepted ${amount}`,
+      ).toEqual([{ name: "betPlaced", payload: { roundId: 1, amount } }]);
+    }
+  });
+
+  it("rejects sub-cent amounts: 0.001, 0.004, 0.005, 0.009, 1.005, 0.123, 999.999", () => {
+    for (const amount of [0.001, 0.004, 0.005, 0.009, 1.005, 0.123, 999.999]) {
+      const h = makeHarness();
+      h.engine.submit({ type: "placeBet", amount });
+      advanceTicks(h.engine, 1);
+      expect(
+        h.log.filter((e) => e.name === "commandRejected").map((e) => e.payload),
+        `rejected ${amount}`,
+      ).toEqual([{ roundId: 1, command: { type: "placeBet", amount }, reason: "invalid-amount" }]);
+      expect(
+        h.log.filter((e) => e.name === "betPlaced"),
+        `no bet for ${amount}`,
+      ).toEqual([]);
+    }
+  });
+
+  it("a rejected invalid stake consumes no RNG, leaves no participant, and a later valid bet works normally", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    for (const amount of [0.005, NaN, Infinity, -0.01]) {
+      h.engine.submit({ type: "placeBet", amount });
+    }
+    advanceTicks(h.engine, 1);
+    expect(h.engine.getPublicState().participant).toBeNull();
+    h.engine.submit({ type: "placeBet", amount: 5 });
+    advanceTicks(h.engine, 1);
+    expect(h.engine.getPublicState().participant?.betAmount).toBe(5);
+    const snap = h.engine.snapshot();
+    // Compare with a clean run where no invalid stakes were submitted.
+    const clean = makeHarness({ crashPoint: NEVER_CRASH });
+    advanceTicks(clean.engine, 1); // advance past the tick where invalid commands would have applied
+    clean.engine.submit({ type: "placeBet", amount: 5 });
+    advanceTicks(clean.engine, 1);
+    expect(clean.engine.snapshot()).toEqual(snap);
+  });
+
+  it("replay determinism: rejected stakes produce identical snapshots as if they never existed", () => {
+    const run = (withInvalid: boolean) => {
+      const h = makeHarness({ crashPoint: NEVER_CRASH });
+      if (withInvalid) {
+        h.engine.submit({ type: "placeBet", amount: 0.005 });
+        h.engine.submit({ type: "placeBet", amount: 0.123 });
+        h.engine.submit({ type: "placeBet", amount: NaN });
+      }
+      h.engine.submit({ type: "placeBet", amount: 10 });
+      advanceTicks(h.engine, BETTING_TICKS);
+      advanceTicks(h.engine, 100);
+      return h.engine.snapshot();
+    };
+    expect(run(true)).toEqual(run(false));
+  });
+
+  it("same-tick ordering: an invalid bet then a valid bet in the same command batch — the valid one wins", () => {
+    const h = makeHarness();
+    h.engine.submit({ type: "placeBet", amount: 0.005 });
+    h.engine.submit({ type: "placeBet", amount: 10 });
+    advanceTicks(h.engine, 1);
+    expect(h.log.filter((e) => e.name === "betPlaced")).toEqual([
+      { name: "betPlaced", payload: { roundId: 1, amount: 10 } },
+    ]);
+    expect(h.log.filter((e) => e.name === "commandRejected").map((e) => e.payload)).toEqual([
+      { roundId: 1, command: { type: "placeBet", amount: 0.005 }, reason: "invalid-amount" },
+    ]);
   });
 });

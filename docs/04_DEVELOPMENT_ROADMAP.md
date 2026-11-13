@@ -23,7 +23,11 @@ Sprints are the execution units of this roadmap; each sprint delivers into one o
 - **Sprint 1 — Foundation Improvements (TASK 004): ✅ COMPLETED** (2026-07-17). Config/constants/types extraction, folder structure, shared utilities — feeds Phase 3. (Deferred: `sampleJackpot` move, scheduled as its own commit.)
 - **Sprint 2 — Rendering Architecture (TASK 005): ✅ COMPLETED** (2026-07-18). `docs/05_RENDERING_ARCHITECTURE.md` blueprint (Phase 2 rendering deliverable) + extraction commits R1–R5 — delivers Phase 4 in full and advances Phase 3.
 - **Sprint 3 — Game Engine (TASK 006): ✅ COMPLETED** (closed 2026-08-17; commits delivered 2026-07-18 → 2026-07-19). `docs/06_ENGINE_ARCHITECTURE.md` blueprint + extraction commits E1–E6 + bet-basis fix — delivers Phase 5 in full and advances Phase 3.
-- **Sprint 4 — next: Phase 6 (User Interface) per `docs/07_UI_ARCHITECTURE.md` (status: proposed; its review/approval is Sprint 4's Commit 1); requires approval before starting.**
+- **Sprint 4 — Phase 6 (User Interface) per `docs/07_UI_ARCHITECTURE.md` (TASK 007): 🔄 IN PROGRESS** (blueprint approved 2026-08-17).
+  - U1–U5 are committed. Browser QA for U4b and U5 is pending. *(2026-11-14: the owner reports 10 consolidated checks passed. The full 19-item gate for U4b, U5 and M1 is still pending; see docs/16.)* *(2026-11-14, later: the owner confirms **all 19/19 detailed browser QA checks passed** — U4b 6/6, U5 7/7, M1 6/6. The U4b and U5 browser QA is complete.)*
+  - M1 (Money Integrity) is implemented, including W11 (approved and implemented 2026-11-14, docs/07 §23.21). Its browser QA passed (19/19, owner-confirmed 2026-11-14). It is uncommitted and not closed, pending only the owner's separate authorization of the local S1 commit (no push).
+  - M2 is deferred. It includes the integer-cent ledger, B-R.
+  - Next: U6, then U7, each after owner approval. *(Original line: "Sprint 4 — next: … status: proposed; its review/approval is Sprint 4's Commit 1".)*
 
 ---
 

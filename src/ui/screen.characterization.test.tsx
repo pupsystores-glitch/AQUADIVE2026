@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import { screen, within } from "@testing-library/react";
 import { CASH_FLASH_MS } from "@/game/config";
 import { bootScreen, outline } from "@/ui/test/dom-harness";
+import { payoutOracle } from "@/ui/test/money-oracle";
 
 const FRAMES_PER_SECOND = 60;
 
@@ -224,7 +225,7 @@ describe("dive phase", () => {
     h.frames(30);
 
     const m = h.session.engine.getPublicState().multiplier;
-    const potential = (+(10 * m).toFixed(2)).toFixed(2);
+    const potential = payoutOracle(10, m).toFixed(2);
     expect(m).toBeGreaterThan(1);
     expect(multiplierText()).toBe(`${shown(m)}×`);
     expect(screen.getByText("Potential").textContent).toBe(`Potential ${potential}`);
@@ -313,12 +314,15 @@ describe("dive phase", () => {
     expect(screen.getByText(`at ${lastWin!.mult.toFixed(2)}×`)).toBeTruthy();
     expect(button(`SECURED +${win} · WATCHING DIVE…`).hasAttribute("disabled")).toBe(true);
     expect(screen.queryByText("No rounds yet")).toBeNull();
+    // Sanctioned characterization change (M1-D8, docs/07 §23.3): the credit is
+    // rounded down — was 5.22 / balance 1000.22 under round-to-nearest. The
+    // Potential label (5.22) is the payout at the later live multiplier (D4).
     expect(outline(container)).toMatchInlineSnapshot(`
       [
         "REAL-TIME",
         "AQUADIVE",
         "Balance",
-        "1000.22",
+        "1000.21",
         "1.04",
         "×",
         "[canvas]",
@@ -328,7 +332,7 @@ describe("dive phase", () => {
         "5.22",
         "CASHED OUT",
         "+",
-        "5.22",
+        "5.21",
         "at",
         "1.04",
         "×",
@@ -342,7 +346,7 @@ describe("dive phase", () => {
         "[button disabled] 10",
         "[button disabled] 25",
         "[button disabled] 100",
-        "[button disabled] SECURED +5.22 · WATCHING DIVE…",
+        "[button disabled] SECURED +5.21 · WATCHING DIVE…",
       ]
     `);
 

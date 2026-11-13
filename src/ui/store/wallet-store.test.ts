@@ -10,7 +10,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { EventBus, type BonusChest, type EngineEventMap } from "@/engine";
 import { HISTORY_LIMIT } from "@/game/config";
 import { DEFAULT_BALANCE } from "@/game/constants";
-import { createWalletStore, isAffordable, type FlashKind, type WalletStore } from "./wallet-store";
+import {
+  createWalletStore,
+  isAffordable,
+  type FlashKind,
+  type SettlementFault,
+  type WalletRefusal,
+  type WalletStore,
+} from "./wallet-store";
 
 const CHESTS: [BonusChest, BonusChest, BonusChest] = [
   { id: 0, multiplier: 2, opened: false },
@@ -76,7 +83,7 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     expect(wallet.get()).toMatchObject({ balance: 999.9, roundBet: 0.1, participating: true });
   });
 
-  it("cashedOut: credits roundBet × m with toFixed(2) artifacts preserved; records history and lastWin", () => {
+  it("cashedOut: credits roundBet × m rounded down to the cent; records history and lastWin", () => {
     bet(0.1);
     dive();
     cashOut(1.15); // 0.1 * 1.15 = 0.11499999999999999 → 0.11
@@ -89,12 +96,13 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     expect(flashes).toEqual(["cashFlash"]);
   });
 
-  it("cashedOut: 33.33 × 2.005 = 66.82664999999999 settles to 66.83", () => {
+  // Sanctioned rewrite (M1-D8, docs/07 §23.3): was 66.83 / 1033.5 (round to nearest).
+  it("cashedOut: 33.33 × 2.005 = 66.82665 exactly → rounded down to 66.82", () => {
     bet(33.33);
     dive();
     cashOut(2.005);
-    expect(wallet.get().balance).toBe(1033.5); // +(966.67 + 66.83).toFixed(2)
-    expect(wallet.get().lastWin).toEqual({ amount: 66.83, mult: 2.005 });
+    expect(wallet.get().balance).toBe(1033.49); // 966.67 + 66.82
+    expect(wallet.get().lastWin).toEqual({ amount: 66.82, mult: 2.005 });
   });
 
   it("crashed (loss): the stake stays debited and a crashed entry is recorded", () => {
@@ -218,13 +226,19 @@ describe("wallet store — per-round resets", () => {
     });
   });
 
-  it("diveStarted clears hasCashed", () => {
+  // Sanctioned rewrite (M1 rule W5, hole H1, docs/07 §23.17). The U2 pin was
+  // "diveStarted clears hasCashed", which let a repeated diveStarted re-open a
+  // settled participation so a second cashedOut credited again.
+  it("W5/H1: a repeated diveStarted does not re-open a settled participation — one credit", () => {
     bet(5);
     dive();
     cashOut(2);
     expect(wallet.get().hasCashed).toBe(true);
     dive();
-    expect(wallet.get().hasCashed).toBe(false);
+    expect(wallet.get()).toMatchObject({ hasCashed: true, settledBy: "cashout" });
+    cashOut(3);
+    expect(wallet.get().balance).toBe(1005);
+    expect(wallet.get().history).toHaveLength(1);
   });
 
   it("history is newest-first and capped at HISTORY_LIMIT", () => {
@@ -269,11 +283,11 @@ describe("wallet store — multi-round golden ledger", () => {
 
     bet(33.33); // 8731.68
     dive();
-    cashOut(2.005); // +66.83 → 8798.51
+    cashOut(2.005); // +66.82 → 8798.50 (M1-D8; was +66.83 → 8798.51)
 
     // One notification per state-changing event; dedupe to the balance trail.
     const trail = ledger.filter((b, i) => i === 0 || b !== ledger[i - 1]);
-    expect(trail).toEqual([999.9, 1000.01, 975.01, 965.01, 2165.01, 8765.01, 8731.68, 8798.51]);
+    expect(trail).toEqual([999.9, 1000.01, 975.01, 965.01, 2165.01, 8765.01, 8731.68, 8798.5]);
     expect(wallet.get().history.map((h) => [h.mult, h.crashed])).toEqual([
       [2.005, false],
       [2.5, true],
@@ -533,9 +547,10 @@ describe("wallet store — read surface and affordability", () => {
     wallet.subscribe(() => notifications++);
     bet(10);
     expect(notifications).toBe(1);
-    dive();
+    dive(); // since M1 (W5) diveStarted writes nothing
+    expect(notifications).toBe(1);
     cashOut(2);
-    expect(notifications).toBe(3);
+    expect(notifications).toBe(2);
   });
 
   it("snapshots are immutable: a held snapshot never changes under later events", () => {
@@ -547,8 +562,37 @@ describe("wallet store — read surface and affordability", () => {
     expect(wallet.get()).not.toBe(held);
   });
 
-  it("exposes no writer: the read surface is get/subscribe/canAfford/onFlash only", () => {
-    expect(Object.keys(wallet).sort()).toEqual(["canAfford", "get", "onFlash", "subscribe"]);
+  it("exposes no writer: the read surface is get/subscribe/canAfford/canPlaceStake/unresolvedClaims/onFlash only", () => {
+    // M1 adds one read-only predicate, canPlaceStake (docs/07 §23.5), and
+    // R2 one read-only audit list, unresolvedClaims (§23.17 W10).
+    expect(Object.keys(wallet).sort()).toEqual([
+      "canAfford",
+      "canPlaceStake",
+      "get",
+      "onFlash",
+      "subscribe",
+      "unresolvedClaims",
+    ]);
+  });
+
+  it("canPlaceStake (M1): valid stake ∧ affordable — sub-cent and zero rejected, isAffordable unchanged", () => {
+    for (const v of [0.01, 5, 0.29, DEFAULT_BALANCE])
+      expect(wallet.canPlaceStake(v), String(v)).toBe(true);
+    for (const v of [
+      0,
+      -1,
+      0.001,
+      0.005,
+      0.009,
+      1.005,
+      0.1 + 0.2,
+      NaN,
+      Infinity,
+      DEFAULT_BALANCE + 0.01,
+    ]) {
+      expect(wallet.canPlaceStake(v), String(v)).toBe(false);
+    }
+    expect(wallet.canAfford(0.005)).toBe(true); // the U5 D7 predicate itself is unchanged
   });
 
   it("canAfford: the pre-U2 predicate for finite amounts — (0, balance] accepted", () => {
@@ -670,5 +714,689 @@ describe("isAffordable — one predicate for canAfford and the action state (U5,
     isAffordable(5, 0);
     isAffordable(Number.NaN, 1000);
     expect(wallet.get()).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M1 settlement integrity (docs/07 §23.7 final-reconciliation block, §23.17
+// rules W1–W9, holes H1–H6). Expected values are integer-cent literals
+// computed by hand from ⌊k·M/100⌋ — never from the function under test.
+// These are local consistency checks; they do not authenticate events
+// (M1-D11).
+// ---------------------------------------------------------------------------
+describe("wallet store — M1 integrity guards (W1–W10)", () => {
+  let refusals: WalletRefusal[];
+
+  beforeEach(() => {
+    refusals = [];
+    wallet = createWalletStore(bus, { onRefusal: (r) => refusals.push(r) });
+    wallet.onFlash((kind) => flashes.push(kind));
+  });
+
+  /** Emit with an explicit roundId (foreign or stale events). */
+  const emitIn = <K extends keyof EngineEventMap>(
+    round: number,
+    name: K,
+    payload: Omit<EngineEventMap[K], "roundId">,
+  ) => {
+    bus.emit(name, { roundId: round, ...payload } as EngineEventMap[K]);
+    bus.dispatchQueued();
+  };
+  const rules = () => refusals.map((r) => `${r.event}:${r.rule}`);
+
+  it("W1: an invalid betPlaced amount debits nothing and opens no participation; the round then pays nothing", () => {
+    const before = wallet.get();
+    for (const amount of [
+      0,
+      -0,
+      -1,
+      0.001,
+      0.005,
+      0.009,
+      1.005,
+      0.1 + 0.2,
+      NaN,
+      Infinity,
+      -Infinity,
+    ]) {
+      bet(amount);
+    }
+    emit("betPlaced", { amount: "5" as unknown as number });
+    expect(wallet.get()).toBe(before); // no snapshot written at all (W8)
+    expect(refusals).toHaveLength(12);
+    expect(new Set(rules())).toEqual(new Set(["betPlaced:W1"]));
+    dive();
+    impact(500);
+    pick(2, 50, 25000);
+    expect(wallet.get().balance).toBe(DEFAULT_BALANCE);
+    expect(wallet.get().lastWin).toBeNull();
+  });
+
+  it("W2/H3: a duplicate betPlaced debits once", () => {
+    bet(10);
+    bet(10);
+    expect(wallet.get()).toMatchObject({ balance: 990, roundBet: 10 });
+    expect(rules()).toEqual(["betPlaced:W2"]);
+  });
+
+  it("W3/H4: an over-balance betPlaced writes nothing and the round pays nothing", () => {
+    const before = wallet.get();
+    bet(DEFAULT_BALANCE + 0.01);
+    bet(5000);
+    expect(wallet.get()).toBe(before);
+    expect(rules()).toEqual(["betPlaced:W3", "betPlaced:W3"]);
+    dive();
+    cashOut(2);
+    impact(500);
+    expect(wallet.get().balance).toBe(DEFAULT_BALANCE);
+    expect(wallet.get().lastWin).toBeNull();
+  });
+
+  it("W3: an all-in bet of exactly the balance is accepted and leaves 0, never negative", () => {
+    bet(DEFAULT_BALANCE);
+    expect(wallet.get()).toMatchObject({
+      balance: 0,
+      roundBet: DEFAULT_BALANCE,
+      participating: true,
+    });
+    expect(refusals).toEqual([]);
+  });
+
+  it("W5/H1: a repeated bettingOpened of the participation's own round cannot re-open it", () => {
+    bet(5);
+    dive();
+    cashOut(2);
+    emitIn(roundId, "bettingOpened", {});
+    expect(wallet.get()).toMatchObject({ participating: true, settledBy: "cashout" });
+    cashOut(3);
+    expect(wallet.get().balance).toBe(1005);
+    openBetting(); // the next round still resets as before
+    expect(wallet.get()).toMatchObject({ participating: false, roundBet: 0, settledBy: null });
+  });
+
+  it("W6/H2: a second shipImpact cannot lower the chest base — the delta uses the recorded jackpot payout", () => {
+    bet(1);
+    dive();
+    impact(100); // credit 100.00, recorded
+    impact(1); // duplicate/forged: history only, no credit
+    reveal();
+    pick(2, 5, 500); // total 500.00 − recorded 100.00 = 400.00 (the U2 code paid 499)
+    expect(wallet.get().balance).toBe(1499);
+    expect(wallet.get().lastWin).toEqual({ amount: 500, mult: 500 });
+  });
+
+  it("W6/H5: a final multiplier below the jackpot is refused — a chest never debits", () => {
+    bet(10);
+    dive();
+    impact(100);
+    const before = wallet.get();
+    pick(0, 0.5, 50);
+    expect(wallet.get()).toBe(before);
+    expect(rules()).toEqual(["chestPicked:W6"]);
+  });
+
+  it("W4/H6: settlement events of another round pay nothing", () => {
+    bet(10);
+    dive();
+    const before = wallet.get();
+    emitIn(roundId + 1, "cashedOut", { multiplier: 2 });
+    emitIn(roundId - 1, "shipImpact", { jackpotMultiplier: 100 });
+    expect(wallet.get()).toBe(before);
+    impact(100);
+    const afterJackpot = wallet.get();
+    emitIn(roundId + 1, "chestPicked", { chestId: 0, chestMultiplier: 2, finalMultiplier: 200 });
+    expect(wallet.get()).toBe(afterJackpot);
+    expect(rules()).toEqual(["cashedOut:W4", "shipImpact:W4", "chestPicked:W4"]);
+  });
+
+  describe("W7/W8: invalid settlement multipliers never credit and change nothing (M1-D14, I10, I11)", () => {
+    const INVALID: unknown[] = [NaN, Infinity, -Infinity, -1, -0, 0, "2"];
+
+    it("cashedOut", () => {
+      // One round per value: since W10 the first refusal faults the round.
+      for (const m of INVALID) {
+        openBetting();
+        bet(10);
+        dive();
+        const before = wallet.get();
+        cashOut(m as number);
+        expect(wallet.get()).toBe(before);
+      }
+      expect(flashes).toEqual([]);
+      expect(rules()).toEqual(INVALID.map(() => "cashedOut:W7"));
+    });
+
+    it("shipImpact (participant and spectator alike: no credit, no history, no flash)", () => {
+      const spectatorBefore = wallet.get();
+      for (const m of INVALID) impact(m as number);
+      expect(wallet.get()).toBe(spectatorBefore);
+      bet(10);
+      dive();
+      const before = wallet.get();
+      for (const m of INVALID) impact(m as number);
+      expect(wallet.get()).toBe(before);
+      expect(flashes).toEqual([]);
+    });
+
+    it("chestPicked", () => {
+      bet(10);
+      dive();
+      impact(100);
+      const before = wallet.get();
+      for (const m of INVALID) pick(1, 2, m as number);
+      expect(wallet.get()).toBe(before);
+      expect(Number.isFinite(wallet.get().balance) && wallet.get().balance >= 0).toBe(true);
+    });
+  });
+
+  describe("W10: a faulted participation is never credited later in its round (Q9c)", () => {
+    const faultOf = (i: number) => refusals[i]?.fault;
+
+    it("an invalid cashout faults the round: a later valid cashout, jackpot and chest pay nothing", () => {
+      bet(10);
+      dive();
+      const afterBet = wallet.get();
+      cashOut(NaN);
+      cashOut(2);
+      impact(100);
+      reveal();
+      pick(1, 6.5, 650);
+      // Not one write: no credit, no history, no lastWin, no flash (W8).
+      expect(wallet.get()).toBe(afterBet);
+      expect(flashes).toEqual([]);
+      // The chest pick is not even eligible (no jackpot settlement): ignored
+      // silently by the E-X1 guard before W10 is reached.
+      expect(rules()).toEqual(["cashedOut:W7", "cashedOut:W10", "shipImpact:W10"]);
+    });
+
+    it("the fault preserves its diagnostics and is reported with every blocked event", () => {
+      bet(10);
+      dive();
+      cashOut(-1);
+      cashOut(2);
+      const fault = faultOf(0);
+      expect(fault).toEqual({
+        roundId,
+        stake: 10,
+        creditedCents: 0n,
+        event: "cashedOut",
+        rule: "W7",
+        reason: "invalid multiplier or payout",
+        payload: { roundId, multiplier: -1 },
+      });
+      expect(faultOf(1)).toBe(fault);
+    });
+
+    it("neither refunds nor forfeits: the stake stays debited exactly as before the fault", () => {
+      bet(10);
+      dive();
+      cashOut(Infinity);
+      expect(wallet.get()).toMatchObject({
+        balance: 990,
+        roundBet: 10,
+        participating: true,
+        hasCashed: false,
+        settledBy: null,
+      });
+      crash(1.5); // the round ends: still no money movement
+      expect(wallet.get().balance).toBe(990);
+      // R2: a technical failure is not a player loss — no loss entry.
+      expect(wallet.get().history).toEqual([]);
+    });
+
+    it("an invalid jackpot faults the round; a duplicate valid shipImpact then pays nothing", () => {
+      bet(10);
+      dive();
+      const afterBet = wallet.get();
+      impact(0);
+      impact(100);
+      expect(wallet.get()).toBe(afterBet);
+      expect(rules()).toEqual(["shipImpact:W7", "shipImpact:W10"]);
+    });
+
+    it("an invalid chest after the jackpot credit blocks a later chest; the jackpot credit stands", () => {
+      bet(10);
+      dive();
+      impact(100);
+      const afterJackpot = wallet.get();
+      expect(afterJackpot.balance).toBe(1990);
+      reveal();
+      pick(0, 0.5, 50); // W6: below the credited jackpot
+      pick(2, 30, 3000);
+      expect(wallet.get()).toBe(afterJackpot);
+      expect(rules()).toEqual(["chestPicked:W6", "chestPicked:W10"]);
+      expect(faultOf(0)).toMatchObject({ event: "chestPicked", rule: "W6", stake: 10 });
+    });
+
+    it("a foreign-round event never faults the participation (W4 stays a plain refusal)", () => {
+      bet(10);
+      dive();
+      emitIn(roundId + 1, "cashedOut", { multiplier: NaN });
+      emitIn(roundId + 1, "shipImpact", { jackpotMultiplier: NaN });
+      cashOut(2);
+      expect(wallet.get().balance).toBe(1010);
+      expect(rules()).toEqual(["cashedOut:W4", "shipImpact:W7"]);
+      expect(refusals.every((r) => r.fault === undefined)).toBe(true);
+    });
+
+    it("a spectator's invalid shipImpact faults nothing; settled participations are not faulted", () => {
+      impact(NaN); // spectator
+      bet(5);
+      dive();
+      cashOut(2);
+      impact(NaN); // already settled by cashout
+      expect(refusals.map((r) => r.fault)).toEqual([undefined, undefined]);
+      expect(wallet.get().balance).toBe(1005);
+    });
+
+    it("the fault is per round: the same-round bettingOpened keeps it, the next round clears it", () => {
+      bet(10);
+      dive();
+      cashOut(NaN);
+      emitIn(roundId, "bettingOpened", {}); // W5: same round, ignored
+      cashOut(2);
+      expect(wallet.get().balance).toBe(990);
+      openBetting();
+      bet(10);
+      dive();
+      cashOut(2);
+      expect(wallet.get().balance).toBe(1000);
+      expect(rules()).toEqual(["cashedOut:W7", "cashedOut:W10"]);
+    });
+  });
+
+  describe("R2: a faulted participation is an auditable unresolved claim (Q9c, owner 2026-11-14)", () => {
+    it("starts empty; W4, spectator and already-settled refusals record no claim", () => {
+      expect(wallet.unresolvedClaims()).toEqual([]);
+      impact(NaN); // spectator
+      bet(5);
+      dive();
+      emitIn(roundId + 1, "cashedOut", { multiplier: NaN }); // W4
+      cashOut(2);
+      impact(NaN); // already settled
+      expect(refusals).toHaveLength(3);
+      expect(wallet.unresolvedClaims()).toEqual([]);
+    });
+
+    it("records stake, round, fault and zero credited for a cashout fault", () => {
+      bet(12.34);
+      dive();
+      cashOut(NaN);
+      expect(wallet.unresolvedClaims()).toEqual([
+        {
+          roundId,
+          stake: 12.34,
+          creditedCents: 0n,
+          event: "cashedOut",
+          rule: "W7",
+          reason: "invalid multiplier or payout",
+          payload: { roundId, multiplier: NaN },
+        },
+      ]);
+      expect(wallet.unresolvedClaims()[0]).toBe(refusals[0]?.fault);
+    });
+
+    it("records the jackpot payout already credited when the chest faults", () => {
+      bet(0.29);
+      dive();
+      impact(100.57); // ⌊0.29 × 100.57 × 100⌋ = 2916 cents credited
+      reveal();
+      pick(0, 0.5, 50.28); // W6: below the credited jackpot
+      expect(wallet.unresolvedClaims()).toHaveLength(1);
+      expect(wallet.unresolvedClaims()[0]).toMatchObject({
+        stake: 0.29,
+        creditedCents: 2916n,
+        event: "chestPicked",
+        rule: "W6",
+      });
+      expect(wallet.get().balance).toBe(+(1000 - 0.29 + 29.16).toFixed(2));
+    });
+
+    it("survives the round reset and later rounds; late events of the faulted round credit nothing", () => {
+      bet(10);
+      dive();
+      const faultedRound = roundId;
+      cashOut(Infinity);
+      crash(1.2);
+      openBetting(); // the next round: the active marker clears, the claim stays
+      // Late valid events of the faulted round, while not participating.
+      emitIn(faultedRound, "cashedOut", { multiplier: 2 });
+      emitIn(faultedRound, "chestPicked", { chestId: 0, chestMultiplier: 2, finalMultiplier: 200 });
+      expect(wallet.get().balance).toBe(990);
+      bet(10);
+      dive();
+      // ...and while participating in the next round (W4).
+      emitIn(faultedRound, "cashedOut", { multiplier: 2 });
+      emitIn(faultedRound, "shipImpact", { jackpotMultiplier: 100 });
+      expect(wallet.get().balance).toBe(980);
+      cashOut(2); // the new round itself settles normally
+      expect(wallet.get().balance).toBe(1000);
+      openBetting();
+      expect(wallet.unresolvedClaims()).toHaveLength(1);
+      expect(wallet.unresolvedClaims()[0]).toMatchObject({ roundId: faultedRound, stake: 10 });
+    });
+
+    it("appends one claim per faulted participation, oldest first", () => {
+      for (const m of [NaN, -1]) {
+        openBetting();
+        bet(10);
+        dive();
+        cashOut(m);
+        cashOut(m); // a repeat in the same round is W10, not a second claim
+      }
+      expect(wallet.unresolvedClaims().map((c) => c.payload)).toEqual([
+        { roundId: roundId - 1, multiplier: NaN },
+        { roundId, multiplier: -1 },
+      ]);
+      expect(wallet.get().balance).toBe(980);
+    });
+
+    it("the audit list cannot be altered through its read surface", () => {
+      bet(10);
+      dive();
+      cashOut(NaN);
+      const list = wallet.unresolvedClaims();
+      expect(Object.isFrozen(list)).toBe(true);
+      expect(Object.isFrozen(list[0])).toBe(true);
+      expect(() => (list as SettlementFault[]).pop()).toThrow(TypeError);
+      expect(wallet.unresolvedClaims()).toHaveLength(1);
+    });
+
+    it("only the faulted round's crash is withheld from history; other losses are still recorded", () => {
+      bet(10);
+      dive();
+      cashOut(NaN);
+      crash(1.4);
+      openBetting();
+      bet(10);
+      dive();
+      crash(1.3); // an ordinary loss
+      expect(wallet.get().history).toEqual([{ mult: 1.3, crashed: true }]);
+    });
+  });
+
+  describe("W11: a credit outside the 2^44 envelope is an unresolved claim, never applied (owner 2026-11-14)", () => {
+    // Integer-cent expectations only (BigInt literals), never toFixed.
+    const LIMIT_UNITS = 17592186044416; // 2^44
+    const F = 10_000_000_000_000; // funded balance: 1000 × 1e10 (1e15 cents)
+    const centsOf = (amount: number) => BigInt(Math.round(amount * 100));
+
+    /** Round 1: all-in 1000 cashed at 1e10 → balance 1e13 (exact). Leaves round 2 open for betting. */
+    const fund = () => {
+      bet(1000);
+      dive();
+      cashOut(1e10);
+      expect(wallet.get().balance).toBe(F);
+      crash(1e10);
+      openBetting();
+      flashes = [];
+      refusals.length = 0;
+    };
+
+    // Stakes s with F − s + 2s = F + s landing just below, at and above 2^44.
+    const BELOW = 7592186044415.99; // → 2^44 − 0.01
+    const AT = 7592186044416; // → 2^44
+    const ABOVE = 7592186044416.01; // → 2^44 + 0.01
+
+    it("cashout immediately below 2^44: credited exactly, lands at 2^44 − 0.01", () => {
+      fund();
+      bet(BELOW);
+      dive();
+      cashOut(2);
+      expect(refusals).toEqual([]);
+      expect(wallet.get().balance).toBe(17592186044415.99);
+      expect(centsOf(wallet.get().balance)).toBe(2n ** 44n * 100n - 1n);
+      expect(wallet.get().lastWin).toEqual({ amount: 15184372088831.98, mult: 2 });
+      expect(wallet.get().settledBy).toBe("cashout");
+      expect(wallet.unresolvedClaims()).toEqual([]);
+    });
+
+    for (const [label, stake] of [
+      ["at", AT],
+      ["above", ABOVE],
+    ] as const) {
+      it(`cashout ${label} 2^44: refused as W11, nothing applied, the exact unpaid payout kept as a claim`, () => {
+        fund();
+        bet(stake);
+        dive();
+        const before = wallet.get();
+        cashOut(2);
+        // Not mutated, not rounded, no flash, no history, no settlement.
+        expect(wallet.get()).toBe(before);
+        expect(flashes).toEqual([]);
+        expect(rules()).toEqual(["cashedOut:W11"]);
+        const unpaid = centsOf(stake) * 2n;
+        expect(wallet.unresolvedClaims()).toEqual([
+          {
+            roundId,
+            stake,
+            creditedCents: 0n,
+            unpaidCents: unpaid,
+            event: "cashedOut",
+            rule: "W11",
+            reason: "credit outside the exact balance envelope (2^44)",
+            payload: { roundId, multiplier: 2 },
+          },
+        ]);
+        expect(refusals[0]?.fault).toBe(wallet.unresolvedClaims()[0]);
+        // No repeated payment: later settlement events of the round are W10.
+        cashOut(2);
+        impact(3);
+        expect(rules()).toEqual(["cashedOut:W11", "cashedOut:W10", "shipImpact:W10"]);
+        expect(refusals[1]?.fault).toBe(wallet.unresolvedClaims()[0]);
+        // Not a loss: the round's crash adds no loss entry.
+        crash(2.5);
+        expect(wallet.get()).toBe(before);
+        expect(wallet.unresolvedClaims()).toHaveLength(1);
+        expect(wallet.get().balance).toBeLessThan(LIMIT_UNITS);
+      });
+    }
+
+    it("jackpot at 2^44: refused as W11; the chest result is kept once as a follow-up claim, nothing credited", () => {
+      fund();
+      bet(AT);
+      dive();
+      const before = wallet.get();
+      impact(2);
+      expect(wallet.get()).toBe(before); // no jackpot multiplier, balance, history or flash write
+      expect(flashes).toEqual([]);
+      reveal();
+      pick(2, 1.5, 3);
+      pick(1, 1.5, 3); // a repeat: W10, no second chest claim
+      emitIn(roundId, "shipImpact", { jackpotMultiplier: 2 }); // a repeated impact: W10
+      expect(rules()).toEqual([
+        "shipImpact:W11",
+        "chestPicked:W11",
+        "chestPicked:W10",
+        "shipImpact:W10",
+      ]);
+      expect(wallet.get()).toBe(before);
+      const s = centsOf(AT);
+      const claims = wallet.unresolvedClaims();
+      expect(claims).toEqual([
+        {
+          roundId,
+          stake: AT,
+          creditedCents: 0n,
+          unpaidCents: 2n * s,
+          event: "shipImpact",
+          rule: "W11",
+          reason: "credit outside the exact balance envelope (2^44)",
+          payload: { roundId, jackpotMultiplier: 2 },
+        },
+        {
+          roundId,
+          stake: AT,
+          creditedCents: 0n,
+          unpaidCents: s, // total 3s − jackpot 2s
+          event: "chestPicked",
+          rule: "W11",
+          reason: "chest delta withheld: the round's jackpot is an unresolved claim",
+          payload: { roundId, chestId: 2, chestMultiplier: 1.5, finalMultiplier: 3 },
+        },
+      ]);
+      // The participation's full unpaid win is the sum of its claims: ⌊s × 3⌋.
+      expect(claims.reduce((sum, c) => sum + (c.unpaidCents ?? 0n), 0n)).toBe(3n * s);
+      expect(refusals[2]?.fault).toBe(claims[0]); // the W10 report carries the original fault
+    });
+
+    it("jackpot at 2^44 then an invalid chest result: no follow-up claim, refused as W10", () => {
+      fund();
+      bet(AT);
+      dive();
+      impact(2);
+      reveal();
+      pick(0, 0.5, 1); // below the withheld jackpot
+      pick(0, 1, NaN);
+      expect(rules()).toEqual(["shipImpact:W11", "chestPicked:W10", "chestPicked:W10"]);
+      expect(wallet.unresolvedClaims()).toHaveLength(1);
+    });
+
+    describe("chest delta across the boundary after a credited jackpot (stake 5e12, jackpot ×2 → 1.5e13)", () => {
+      const S = 5_000_000_000_000;
+      const setUp = () => {
+        fund();
+        bet(S);
+        dive();
+        impact(2);
+        expect(wallet.get().balance).toBe(15_000_000_000_000);
+        reveal();
+        flashes = [];
+      };
+
+      it("below: delta lands at 2^44 − 0.50, credited exactly", () => {
+        setUp();
+        pick(1, 1.25921860444155, 2.5184372088831);
+        expect(refusals).toEqual([]);
+        expect(wallet.get().balance).toBe(17592186044415.5);
+        expect(wallet.get().lastWin).toEqual({ amount: 12592186044415.5, mult: 2.5184372088831 });
+        expect(wallet.get().chestSettled).toBe(true);
+      });
+
+      for (const [label, final] of [
+        ["at", 2.5184372088832],
+        ["above", 3],
+      ] as const) {
+        it(`${label}: refused as W11; the credited jackpot and the exact unpaid delta are both recorded`, () => {
+          setUp();
+          const before = wallet.get();
+          pick(1, final / 2, final);
+          expect(wallet.get()).toBe(before); // balance stays 1.5e13; lastWin is the jackpot
+          expect(rules()).toEqual(["chestPicked:W11"]);
+          const total = (centsOf(S) * BigInt(Math.round(final * 1e13))) / 10n ** 13n;
+          expect(wallet.unresolvedClaims()).toEqual([
+            expect.objectContaining({
+              stake: S,
+              creditedCents: 1_000_000_000_000_000n, // the jackpot 1e13 units, paid
+              unpaidCents: total - 1_000_000_000_000_000n,
+              event: "chestPicked",
+              rule: "W11",
+            }),
+          ]);
+          pick(1, final / 2, final); // a repeat: W10, not credited, no second claim
+          expect(rules()).toEqual(["chestPicked:W11", "chestPicked:W10"]);
+          expect(wallet.get()).toBe(before);
+          expect(wallet.unresolvedClaims()).toHaveLength(1);
+        });
+      }
+    });
+
+    it("a W11 claim stays distinguishable from invalid data (W7) and from a loss; later rounds settle normally", () => {
+      fund();
+      bet(AT);
+      dive();
+      cashOut(2); // W11: valid win, unrepresentable
+      crash(3);
+      openBetting();
+      bet(10);
+      dive();
+      cashOut(NaN); // W7: invalid data
+      crash(3);
+      openBetting();
+      bet(10);
+      dive();
+      crash(1.1); // an ordinary loss
+      openBetting();
+      bet(10);
+      dive();
+      cashOut(2); // an ordinary win, inside the envelope
+      const [w11, w7] = wallet.unresolvedClaims();
+      expect(w11).toMatchObject({ rule: "W11", unpaidCents: centsOf(AT) * 2n });
+      expect(w7).toMatchObject({ rule: "W7" });
+      expect(w7).not.toHaveProperty("unpaidCents");
+      expect(wallet.get().history).toEqual([
+        { mult: 2, crashed: false },
+        { mult: 1.1, crashed: true },
+        { mult: 1e10, crashed: false }, // the funding cashout
+      ]);
+      expect(wallet.get().balance).toBe(F - AT - 10 - 10 - 10 + 20);
+    });
+  });
+
+  describe("payouts rounded down on every settlement path (M1-D8, M1-D13; I9)", () => {
+    it("minimum stake 0.01 at 1.5014× pays 0.01 by cashout and by jackpot (V2: was 0.02)", () => {
+      bet(0.01);
+      dive();
+      cashOut(1.5014);
+      expect(wallet.get().lastWin).toEqual({ amount: 0.01, mult: 1.5014 });
+      expect(wallet.get().balance).toBe(1000);
+      openBetting();
+      bet(0.01);
+      dive();
+      impact(1.5014);
+      expect(wallet.get().lastWin).toEqual({ amount: 0.01, mult: 1.5014 });
+      expect(wallet.get().balance).toBe(1000);
+    });
+
+    it("jackpot: 0.29 × 100.57 → 29.16; 33.33 × 57.29 → 1909.47; 10 × 499.99 → 4999.90", () => {
+      const cases: Array<[number, number, number]> = [
+        [0.29, 100.57, 29.16],
+        [33.33, 57.29, 1909.47],
+        [10, 499.99, 4999.9],
+      ];
+      for (const [stake, jackpot, win] of cases) {
+        openBetting();
+        const start = wallet.get().balance;
+        bet(stake);
+        dive();
+        impact(jackpot);
+        expect(wallet.get().lastWin).toEqual({ amount: win, mult: jackpot });
+        expect(Math.round(wallet.get().balance * 100)).toBe(
+          Math.round(start * 100) - Math.round(stake * 100) + Math.round(win * 100),
+        );
+      }
+    });
+
+    const chestCases: Array<[number, number, number, number, number]> = [
+      // stake, jackpot, final, total payout, delta
+      [0.01, 50.01, 50.51, 0.5, 0], // round-to-nearest paid a 0.01 delta
+      [0.01, 500, 25000, 250, 245],
+      [0.29, 57.29, 65.88, 19.1, 2.49], // round-to-nearest paid 2.50
+    ];
+    for (const [stake, jackpot, final, total, delta] of chestCases) {
+      it(`chest: stake ${stake}, jackpot ${jackpot} → final ${final}: total ${total}, delta ${delta}`, () => {
+        bet(stake);
+        dive();
+        impact(jackpot);
+        const afterJackpot = wallet.get().balance;
+        reveal();
+        pick(1, final / jackpot, final); // the engine's finalMultiplier as emitted
+        expect(wallet.get().lastWin).toEqual({ amount: total, mult: final });
+        expect(Math.round((wallet.get().balance - afterJackpot) * 100)).toBe(
+          Math.round(delta * 100),
+        );
+        // Credits per participation sum to the rounded-down total.
+        expect(Math.round((wallet.get().balance - (DEFAULT_BALANCE - stake)) * 100)).toBe(
+          Math.round(total * 100),
+        );
+      });
+    }
+  });
+
+  it("without onRefusal a refusal is silent and still writes nothing", () => {
+    const silent = createWalletStore(bus);
+    const before = silent.get();
+    bet(0.005);
+    expect(silent.get()).toBe(before);
   });
 });

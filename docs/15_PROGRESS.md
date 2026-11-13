@@ -16,7 +16,22 @@ Rules:
 
 Current Status:
 
-Sprint 4 (User Interface, TASK 007) IN PROGRESS — started 2026-08-17. Blueprint `docs/07_UI_ARCHITECTURE.md` approved and binding (U0); Commit U1 delivered and approved (`140790f`). Commit U2 (wallet store, delta V1) committed as `ad30d7a` and pushed to `origin/develop` together with its tracking docs (`f080b03`) and its settlement-exclusivity bug fix (`39f5a9f`); **U2 approved by the owner 2026-11-13**: SSR smoke passed, owner manual gameplay and browser console checks passed with no errors, 151/151 tests green. Accepted limitation: remount coverage is automated (session-level) only — a browser-level React component remount was not manually tested. Engine freeze exception **E-X1** (bonus eligibility and deterministic completion): owner-approved 2026-11-13, validated (all automated gates green; owner manual browser QA passed, 4/4 scenarios), **committed as `897c5be` and pushed to `origin/develop`**. U2 closure docs committed as `9b1071e`. **U3 (UI test harness + DOM characterization pins) committed and pushed as `8e9b21b` (2026-11-13); the owner accepted its validation results.** Suite at 180/180 green across 22 files (151 node + 29 DOM). Real-browser remount still unverified. **U4 architecture approved 2026-11-13 and re-cut into U4a + U4b** (separate gates; dev rejection banner deferred to U6). **U4a (notification store, V2) implemented and validated 2026-11-13; owner manual browser QA passed (5/5); approved by the owner 2026-11-13; committed and pushed to `origin/develop`.** Suite at 212/212 green across 24 files. **U4b (round store) implemented and validated 2026-11-13; committed as `bbdc13443e1b2a8cb29e58a1f24e72f7d44711c2` and pushed to `origin/develop`** (249/249 tests green across 26 files); its manual browser QA is pending. **U5 (bet-input store + action-state derivation, V4) authorized by the owner 2026-11-13 (D1–D12); implemented and validated 2026-11-13; committed as `09cc5af56534766982697f7036efce72f440260d` and pushed to `origin/develop`** (311/311 tests green across 29 files) — a development checkpoint, not fully accepted: U4b and U5 manual browser QA pending. **M1 (sub-cent betting vulnerability) unresolved** — requires a separate owner-approved task. U6 not started. Renderer and shared floor frozen; engine frozen except for E-X1 (docs/07 §19 gate 4).
+Sprint 4 (User Interface, TASK 007) IN PROGRESS — started 2026-08-17. Blueprint `docs/07_UI_ARCHITECTURE.md` approved and binding (U0); Commit U1 delivered and approved (`140790f`). Commit U2 (wallet store, delta V1) committed as `ad30d7a` and pushed to `origin/develop` together with its tracking docs (`f080b03`) and its settlement-exclusivity bug fix (`39f5a9f`); **U2 approved by the owner 2026-11-13**: SSR smoke passed, owner manual gameplay and browser console checks passed with no errors, 151/151 tests green. Accepted limitation: remount coverage is automated (session-level) only — a browser-level React component remount was not manually tested. Engine freeze exception **E-X1** (bonus eligibility and deterministic completion): owner-approved 2026-11-13, validated (all automated gates green; owner manual browser QA passed, 4/4 scenarios), **committed as `897c5be` and pushed to `origin/develop`**. U2 closure docs committed as `9b1071e`. **U3 (UI test harness + DOM characterization pins) committed and pushed as `8e9b21b` (2026-11-13); the owner accepted its validation results.** Suite at 180/180 green across 22 files (151 node + 29 DOM). Real-browser remount still unverified. **U4 architecture approved 2026-11-13 and re-cut into U4a + U4b** (separate gates; dev rejection banner deferred to U6). **U4a (notification store, V2) implemented and validated 2026-11-13; owner manual browser QA passed (5/5); approved by the owner 2026-11-13; committed and pushed to `origin/develop`.** Suite at 212/212 green across 24 files. **U4b (round store) implemented and validated 2026-11-13; committed as `bbdc13443e1b2a8cb29e58a1f24e72f7d44711c2` and pushed to `origin/develop`** (249/249 tests green across 26 files); its manual browser QA is pending. **U5 (bet-input store + action-state derivation, V4) authorized by the owner 2026-11-13 (D1–D12); implemented and validated 2026-11-13; committed as `09cc5af56534766982697f7036efce72f440260d` and pushed to `origin/develop`** (311/311 tests green across 29 files) — a development checkpoint, not fully accepted: U4b and U5 manual browser QA pending. **M1 (Money Integrity — sub-cent / zero-debit betting vulnerability): financial policy approved by the owner 2026-11-13 (M1-D1 to M1-D6); not implemented, vulnerability still open.** Stage M1-0 (decisions + architecture plan, docs only) drafted under TASK 007, refined by a review pass and then reconciled with the security boundary review (2026-11-13); awaiting owner review, not committed. The security boundary review found a second open vulnerability, **V2** (minimum-stake payout rounding), which the owner made a required M1 fix: payouts rounded down to the cent (M1-D7, M1-D8). Provisional plan C3 (M1-D9). Final financial integrity reconciliation (2026-11-13, docs only):
+- owner policy M1-D13 to M1-D16 recorded — the payout calculation policy, invalid-multiplier handling, wallet-side integrity in M1, and no push of an unsafe intermediate state;
+- proposed: the BigInt payout function, wallet rules W1–W9 and plan **C4** (one atomic integration commit, which replaces C3's publication model);
+- Q1 and the numeric envelope stay open.
+
+Engine freeze exception E-X2 is proposed, not approved. M2 (integer minor units) deferred. U6 not started. Renderer and shared floor frozen; engine frozen except for E-X1 (docs/07 §19 gate 4).
+
+**Update 2026-11-14 — supersedes the status statements above as a description of the code.** M1 is implemented in the working tree: E-X2, M1-1, the V2 payout fix, W1–W9 and W10 under R2. It is uncommitted and unpushed. **E-X2 was approved by the owner, as implemented**, and the freeze now allows E-X1 and E-X2 only. Final owner decisions:
+
+- Q1/Q11 = **B-R**: not implemented; minimal design awaiting approval (docs/07 §23.20).
+- Q9c = **R2**: implemented.
+- Q14 = **S1**: one atomic commit, with no Git operation authorized.
+
+409/409 tests green across 33 files. M1 is **not closed**. See "Stage M1 — implementation" below.
+
+M2 (the rest of integer minor units) is still deferred.
 
 ---
 
@@ -40,6 +55,135 @@ Tracking note (process deviation, recorded for provenance): Commit U1 (`140790f`
 - Architectural decisions: per §8/§9 as specified — factory + module singleton so tests construct deterministic sessions while production initialization order is unchanged (§20 risk 5); the renderer factory is injectable because `SceneRenderer` needs a real 2D context; `attachCanvas` accepts the host sync callback as a documented U1→U4 seam.
 - Risks: none open. Validation (per the commit and re-verified by the 2026-08-17 U2 audit): `tsc --noEmit` clean; **93/93 tests green** (10 new: 6 store-primitive semantics — set/subscribe/Object.is bailout incl. NaN, unsubscribe isolation; 4 session tests — inert construction, attach drives resize/frame/sync, optional sync, detach/re-attach remount semantics with engine state surviving); engine/renderer freeze check clean (`140790f` touches only `src/components` and `src/ui`); working tree clean after commit. Manual gameplay pass: owner approved 2026-08-17.
 
+### Stage M1 — implementation (E-X2 + M1-1 + settlement integrity + R2) — IMPLEMENTED IN THE WORKING TREE 2026-11-14; NOT COMMITTED; NOT CLOSED
+
+- Date: 2026-11-14. Nothing staged, committed or pushed. Integration strategy S1 is approved (one atomic commit). Staging, committing and pushing each need the owner's separate authorization.
+- Owner decisions, 2026-11-14:
+  - Q12 approved: W3 is kept.
+  - Q8 approved within its demonstrated domain.
+  - **E-X2 approved as implemented**; the exception is not expanded.
+  - **Q9c = R2.**
+  - **Q1/Q11 = B-R in principle.**
+  - **Q14 = S1.**
+
+  Recorded in docs/07 §23.9 and docs/06 §13.1.
+- Delivered (working tree):
+  - `src/shared/stake.ts` + test, and the engine guard in `src/engine/state-machine.ts` + test (E-X2), with the re-export `src/ui/store/stake.ts` + test;
+  - `isPlaceableStake`, shared by `canPlaceBet` and `session.submit` (M1-1);
+  - `src/ui/store/payout.ts` + test: the BigInt rounded-down payout for every settlement path and for `potentialWin` (V2);
+  - wallet rules W1–W10 in `src/ui/store/wallet-store.ts`;
+  - `src/ui/session.money.test.ts`, `src/ui/test/money-oracle.ts`.
+- R2 (this pass):
+  - `wallet.unresolvedClaims()`: an append-only, frozen, session-lifetime list. Each claim records round, stake, `creditedCents`, event, rule, reason and payload.
+  - A faulted round's `crashed` adds no loss entry.
+  - No refund, forfeiture or later credit.
+  - The read-surface pin now lists `unresolvedClaims`, and the W10 expectations were updated (`creditedCents`; no loss entry). There are 7 new R2 tests. A mutation check caught all 4 mutants.
+- Sanctioned test changes, all recorded in docs/07 §23.3:
+  - the `0.123` DOM pin was rewritten;
+  - one characterization value changed, 5.22 → 5.21 (rounding down, M1-D8);
+  - the round-to-nearest oracles were replaced by `payoutOracle`;
+  - the engine amount pin was extended in place, and its original assertion is kept.
+- Validation (2026-11-14):
+  - `tsc --noEmit` clean.
+  - 409/409 tests, 33 files.
+  - Production build passes.
+  - Targeted ESLint with end-of-line neutralized: only the 6 pre-existing `AbyssAnchor.tsx` errors.
+  - `git diff --check` clean.
+  - Freeze audit: exactly the four E-X2 files.
+  - `src/routeTree.gen.ts` untouched.
+- Not done:
+  - **B-R.** A change to the wallet's read surface cannot be avoided, so the minimal design D1–D6 waits for approval (docs/07 §23.20).
+  - Owner browser QA (M1, U4b, U5).
+  - The commit.
+  - The R2 resolution policy stays a temporary local-demo policy.
+- **Roadmap return (2026-11-14):**
+  - **Owner direction:** the M1 scope is frozen and B-R moves to M2. No code changed in this pass.
+  - **Precision-boundary review:** the current `credited()` is exact below 2^44 units (proven; 0 errors in 1.4 M sampled sums up to 2^45). It is wrong by one cent, up or down, in ≈13% of sampled credits in [2^45, 2^46), and W7 does not catch it.
+  - **Proposed:** rule **W11**, an exact-ledger postcondition. A credit is refused into an R2 unresolved claim unless the resulting balance is below 2^44. No ceiling, no rounding change. Not implemented (docs/07 §23.21).
+  - **Final validation:** 409/409 tests (33 files), tsc clean, build passes, ESLint at baseline (6 pre-existing `AbyssAnchor.tsx` errors), `diff --check` clean, freeze scope = the four E-X2 files, `routeTree.gen.ts` byte-identical to HEAD.
+  - **M1 status:** BLOCKED on the W11 decision. Then browser QA and the S1 commit.
+- **W11 — approved and implemented (2026-11-14, owner's final M1 authorization; uncommitted):**
+  - `src/ui/store/payout.ts`: `BALANCE_LIMIT_CENTS` (2^44 · 100, exclusive), `amountToCents` (exact, via `String(x)`), and `exactCredit(balance, cents)`. The existing balance, the credit and the result are all checked in integer cents before one exact conversion.
+  - `src/ui/store/wallet-store.ts`: the cashout, jackpot and chest credits go through `exactCredit`, and `credited()` is removed.
+    - A refusal is rule `W11` and faults the participation (W10).
+    - `SettlementFault` gains the optional `unpaidCents` (W11 claims only) and the rule `"W11"`.
+    - A jackpot withheld under W11 records its chest delta once, as a follow-up claim. Nothing is credited, and there is no loss entry.
+  - Tests (+18, 409 → 427): `payout.test.ts` (+8), `wallet-store.test.ts` (+9), `session.money.test.ts` (+1, real engine landing exactly on 2^44). A mutation check caught all 3 mutants.
+  - Validation: 427/427, tsc clean, build passes, changed files lint-clean (6 pre-existing `AbyssAnchor.tsx` errors), `diff --check` clean, freeze = the four E-X2 files, `routeTree.gen.ts` byte-identical.
+  - **M1 status:** implementation complete. Awaiting the owner's browser QA and the S1 commit authorization.
+- **Browser QA reconciliation (2026-11-14, documentation only):**
+  - **Owner-reported:** 10 consolidated browser checks passed. The agent ran no browser test.
+  - **Not the same as the detailed checklist.** The 19-item detailed checklist (docs/16: U4b 1–6, U5 1–7, M1 1–6) is not recorded as passed. The 10 checks were not listed item by item, so the remaining items go back to the owner for confirmation (docs/16). The full browser QA gate stays pending.
+  - **W11 wording clarified** (docs/07 §23.21; the rule is unchanged). After a withheld jackpot, the first *valid* chest settlement creates the follow-up claim. Invalid chest events create no claim.
+  - **Git:** the owner chose one local S1 commit with no push. Nothing is staged or committed; the commit awaits a separate authorization.
+- **Browser QA accepted (2026-11-14, documentation only; supersedes the "pending" status above for the current state):**
+  - **Owner-confirmed:** all **19/19** detailed browser QA checks passed: U4b 6/6, U5 7/7, M1 6/6 (docs/16). These are owner-performed checks. The agent ran no browser test.
+  - The temporary `// @refresh reset` directive is confirmed absent from `src/components/AbyssAnchor.tsx`.
+  - S1 readiness re-check: the 27-file manifest is unchanged (`src/routeTree.gen.ts` excluded, byte-identical to HEAD); the frozen directories differ by exactly the four E-X2 files; `git diff --check` clean; nothing staged. No source changed since the W11 validation, so the full suite was not re-run.
+  - **M1 status:** browser QA passed. M1 closes with the S1 commit, which awaits the owner's separate authorization (local only, no push).
+
+### Stage M1-0 — Money Integrity decisions and architecture plan (documentation only) — DRAFTED 2026-11-13, RECONCILED WITH THE SECURITY BOUNDARY REVIEW AND THE FINAL FINANCIAL INTEGRITY RECONCILIATION 2026-11-13, AWAITING OWNER REVIEW; NOT COMMITTED
+
+- Date: 2026-11-13. A stage of TASK 007, not a new top-level task. No source, test, configuration or dependency file changed.
+- Summary: records the owner's Money Integrity decisions and the plan to implement them. The vulnerability itself is **not fixed**.
+  - *Approved policy (owner, 2026-11-13):* M1-D1 bets have at most two decimals of monetary value (increments of 0.01; sub-cent rejected, never rounded; `1.000` is valid — the rule is on the value, not the text); M1-D2 minimum bet 0.01, no new arbitrary maximum; M1-D3 invalid amounts rejected — PLACE BET disabled and the submit path enforcing the same rule independently, editable input kept distinct from an accepted stake; M1-D4 engine freeze exception E-X2 to be *planned* (implementation not approved); M1-D5 integer minor units deferred to a separate task M2; M1-D6 U5 decisions D7 and D11 formally superseded in part, history preserved.
+  - *Root cause (verified at `8363b9f`):* no layer checks that a stake is a whole number of cents — the UI asks only affordability (`wallet-store.ts:105-106`), the engine only `amount > 0` (`state-machine.ts:222`) — while the wallet rounds the debit and the payout independently (`wallet-store.ts:150`, `:165`). A stake of `0.005` or less debits 0 and still pays (e.g. `0.004` → 0.20 at 50×). The engine also accepts `+Infinity`.
+  - *Plan (proposed, docs/07 §23):* valid-stake predicate `Number.isFinite(a) && a >= 0.01 && +a.toFixed(2) === a` (exact, no tolerance; rationale and rejected alternatives in §23.4); composition of sanitation → stake validity → affordability → round state (§23.5); settlement guarantees and limits on the float architecture, invariants I1–I8 (§23.6); test matrix (§23.7); commit plan (§23.8). *The first draft's plan — stages E-X2 → M1-1 → M1-2 → M1-3 in separate commits, "no atomic landing required" — was revised by the review pass below.*
+  - *Review pass (2026-11-13, docs only):*
+    - **Q1 (§23.11):** the maximum payout multiplier (25,000) is a property of `LocalRoundAuthority`, not an engine invariant. The live cashout multiplier is limited to ≈ 6.61 by descent tuning alone. Balances accumulate. So a settlement-safety ceiling cannot be finalized in M1. Only a representability bound is derivable (T1: stake < 2^46 units). The draft's 2^51-cent recommendation is withdrawn, and Q1 stays open.
+    - **Q2 (§23.12):** ten engine–wallet cases traced. A wallet rule stricter than the engine leaves the engine holding a participant the wallet does not know (zero in, zero out, but not consistent). E-X2 alone fails `src/ui/screen.bet-input.test.tsx:104-114`. Revised plan (proposed): E-X2 and M1-1 in one commit, then M1-2, then M1-3, under conditions K1–K4.
+    - **New:** invariant I8; open question Q7 (event and command injection); limitations L1–L6.
+  - *Security boundary review (2026-11-13, read-only; probes outside the repository):*
+    - Confirmed **V2**. Wins are rounded to the nearest cent, `+(roundBet × m).toFixed(2)`, so a 0.01 stake cashed out just above 1.5× is paid 0.02.
+    - Measured return per unit staked: 1.2588 for 0.01 at 1.5×, against 0.9571 for a stake of 1.
+    - V2 uses valid stakes only, so it survives E-X2 + M1-1, and I1–I8 all hold while it is exploited.
+    - Also classified: V3–V7 (non-finite stakes, forged events, live references, restore, authority outputs). Recommended sequence C3.
+  - *Final reconciliation (2026-11-13, documentation only). Owner decisions M1-D7 to M1-D12:*
+    - V2 is a required fix inside M1.
+    - Nonnegative payouts are rounded down to the cent, with a numerically justified implementation. This supersedes the U2 bit-identical money-math rule for payouts; the original texts are kept, with dated pointers.
+    - C3 is the provisional plan, with the wallet non-finite debit, credit, payout and balance protection kept in M1.
+    - Stake, balance and payout ceilings stay unresolved.
+    - Event emission, restore, live-reference aliasing and network trust boundaries are recorded as known limitations; wallet guards do not authenticate events.
+    - E-X2 remains planning-only.
+  - *Documented as a result (docs/07):*
+    - invariants I9 (settlement) and I10 (finite wallet);
+    - §23.13, the payout policy:
+      - why `Math.floor(s * m * 100)` fails (0.29 → 0.28; 12,431 errors on a 1.8M-pair grid);
+      - why integer stake cents alone fail (1 × 1.15 → 1.14);
+      - why the exact binary multiplier semantics fails (1 × 57.29 → 57.28);
+      - the proposed exact `BigInt` method on shortest round-trip decimals (0 mismatches);
+      - the limits of verifying I9 with floats in JavaScript;
+    - §23.14, plan C3 with the open vulnerabilities at each commit boundary, and the M1 closure criteria;
+    - §23.15, the recorded limitations;
+    - the required V2 test block in §23.7, and the affected U2/U3 expectations in §23.3;
+    - new questions Q8–Q10;
+    - a formatting fix: Q4 and Q5 had run together on one line.
+  - *Final financial integrity reconciliation (2026-11-13, documentation only). Owner decisions M1-D13 to M1-D16, with M1-D10 reaffirmed:*
+    - **M1-D13 — payout policy.** The payout is computed from the accepted stake and the authoritative settlement multiplier, and rounded down to the cent. It never exceeds the intended amount. A float product is not a monetary result.
+    - **M1-D14 — invalid multipliers.** NaN, ±Infinity and negative multipliers never credit. Nothing is silently converted to zero, and nothing is partially applied.
+    - **M1-D15 — wallet-side integrity in M1.** This supersedes C3's P1 deferral.
+    - **M1-D16 — publication.** No unsafe intermediate commit is pushed.
+  - *Documented as a result (docs/07):*
+    - **§23.16:** the four meanings of a multiplier (canonical decimal, exact binary, displayed, authoritative). The engine's rounded `finalMultiplier` is the authoritative chest value and must not be recomputed. The BigInt algorithm, refined.
+    - **Probe results** (scratch script, outside the repository): all required cases, jackpot and chest-delta cases, a 1,802,000-pair grid with 0 mismatches, and 139,212 cashout-like samples with 0 decimal-versus-binary differences.
+    - **New conversion findings:** `Number(BigInt)` can round **up** above 2^53 cents, and `Number(c)/100` overflows above ≈ 1.8 × 10^306 units.
+    - **§23.17:**
+      - zero is not a legitimate settlement multiplier on any path;
+      - six wallet holes, H1–H6, found by code reading. H1, the `diveStarted` reset that re-enables a credit, is pinned by the U2 test `wallet-store.test.ts:221-228`. H2, a second `shipImpact`, overwrites the jackpot base and inflates the chest delta;
+      - identities A–E: idempotency is achievable with the existing `roundId`; authenticity is not;
+      - wallet rules W1–W9, proposed. Event identifiers would need a separate freeze exception.
+    - **§23.18:** plan C4 — local commits L1–L3, never pushed, then one atomic integration commit, with the risk at each boundary.
+    - **§23.19:** the numeric envelope per quantity, and why BigInt does not make the `number` wallet unlimited.
+    - **Other edits:** invariants I11 (atomic settlement) and I12 (wallet idempotency); a final-reconciliation test block in §23.7; amended closure criteria; new questions Q11–Q14; dated status notes on Q3, Q8, Q9 and Q10; dated pointers in §23.13 and §23.14.
+  - *docs/06 §13.1:* E-X2 is still planning-only, and its scope is unchanged. Event identifiers, a private emitter, restore validation and a multiplier contract are each classified as a separate freeze exception.
+- Files modified (working tree only): `docs/06_ENGINE_ARCHITECTURE.md` (§3 notes; new §13.1 — proposed E-X2, with the M1-D12 status), `docs/07_UI_ARCHITECTURE.md` (new §23, including §23.13–§23.19; dated notes in §1 goal 6, §6, §7 V4, §10, §17, §19 gate 4, §20, §22), `docs/14_TASKS.md`, `docs/15_PROGRESS.md`, `docs/16_CURRENT_TASK.md`.
+- Architectural decisions: the engine is to become the authoritative stake validator (commands are the future protocol messages) while affordability and all money math stay in the settlement layer; one shared predicate for engine and UI; `isAffordable` (D7) unchanged and composed with the stake check; rejection, never rounding.
+- Risks / open: the vulnerability stays exploitable until the implementation stages land. Seven questions await the owner (docs/07 §23.9), notably Q1 (technical stake ceiling — open; any bound needs approval under M1-D2) and Q2 (commit plan, including approval to bundle the M1-1 UI files into the E-X2 commit). *(Reconciliation, 2026-11-13:*
+  - *Both V1 and V2 stay exploitable through the normal UI until the stages land. After commit 1 of C3, V2 is still open; M1 must not be marked closed or released there.*
+  - *Open questions are now Q1 and Q4–Q10; Q2 and Q3 are partly resolved by M1-D9. (Final reconciliation, 2026-11-13: Q10 is replaced by Q14; Q11–Q13 are added; Q8 and Q9 are partly resolved by M1-D13 and M1-D14.)*
+  - *Q1 is reaffirmed open by M1-D10.*
+  - *Forged finite events, restore, live references and the network trust boundary are recorded limitations, not fixed by M1.)* E-X2's scope is a candidate only. M1 removes one class of float error; it does not make float accounting exact — that is M2. U4b and U5 manual browser QA are still pending; U6 not started.
+
 ### Commit U5 — Bet-input store + action-state derivation (delta V4) — IMPLEMENTED 2026-11-13, COMMITTED AND PUSHED (`09cc5af56534766982697f7036efce72f440260d`); NOT FULLY ACCEPTED (browser QA pending)
 
 - Date: 2026-11-13. Authorized by the owner with decisions D1–D12 (docs/07 §17; corrections C8, C9).
@@ -54,7 +198,7 @@ Tracking note (process deviation, recorded for provenance): Commit U1 (`140790f`
 - Tests (+62; 311/311 across 29 files): `action-state.test.ts` (13; full cross product 5 phases × 2 × 2 × 12 countdowns × 16 bets × 6 balances against a verbatim transcription of the pre-U5 JSX); `bet-input-store.test.ts` (20; arithmetic against the transcribed shell handlers, sanitation, notifications); `screen.bet-input.test.tsx` (14, DOM: session ownership, field edge cases, the matrix in every phase, UI-only cutoff, double-click PLACE BET / CASH OUT → one debit / one credit); session (+8: ownership, isolation, independence, remount, D7/D8/D9 at the submit edge); wallet (+5: the U2 `canAfford(NaN) === true` pin updated, `isAffordable` equivalence with the original guard on finite values); remount (+2 new, 1 rewritten: the sanctioned `PINNED UNTIL U5` pin — the bet now survives a remount; StrictMode double-mount + remount). The 20 characterization pins pass with unchanged assertions; the two `PINNED UNTIL U5` titles were retitled because U5 keeps their behavior. Mutation check: breaking the cutoff comparison or the non-finite check makes the new tests fail.
 - Validation: tsc clean; 311/311; targeted lint — the 5 new files clean raw, EOL-neutralized findings limited to the 6 pre-existing `AbyssAnchor.tsx` JSX-formatting errors; production build passes; SSR smoke passed (port 5231); `git diff --check` clean; freeze check (`src/engine`, `src/rendering`, `src/shared`) empty; `src/routeTree.gen.ts` untouched (SHA-256 unchanged).
 - Commit: `refactor(ui): complete U5 bet input store and action state`, `09cc5af56534766982697f7036efce72f440260d`, pushed to `origin/develop` (2026-11-13). 19 files: 5 new (`bet-input-store.ts` + test, `action-state.ts` + test, `screen.bet-input.test.tsx`), 14 modified. Post-commit: 311/311 tests green across 29 files; tsc and production build pass; targeted lint — no new findings; engine/rendering/shared freeze preserved. Status: a committed development checkpoint — not fully accepted, not production-ready.
-- Open: U5 manual browser QA (input edge cases, cutoff, double clicks, WAITING… phases, remount) and U4b manual browser QA — neither has passed. **M1 (sub-cent betting vulnerability) remains unresolved**; U5 does not address it, and it requires a separate owner-approved task. U6 not started.
+- Open: U5 manual browser QA (input edge cases, cutoff, double clicks, WAITING… phases, remount) and U4b manual browser QA — neither has passed. **M1 (sub-cent betting vulnerability) remains unresolved**; U5 does not address it, and it requires a separate owner-approved task. U6 not started. *(Update 2026-11-13: the owner approved the M1 policy and placed the work under TASK 007 as stages — see Stage M1-0 above. Still unresolved in code.)*
 
 ### Commit U4b — Round store, session-owned — IMPLEMENTED 2026-11-13, COMMITTED AND PUSHED (`bbdc13443e1b2a8cb29e58a1f24e72f7d44711c2`)
 

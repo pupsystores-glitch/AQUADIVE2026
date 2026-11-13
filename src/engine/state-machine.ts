@@ -34,6 +34,7 @@
 // rule: a Phase 8 server completes bonus independently of any one player.
 
 import type { Phase } from "@/rendering/scene-renderer";
+import { isValidStake } from "@/shared/stake";
 import { TICK_SECONDS } from "./clock";
 import type { EngineCommand } from "./commands";
 import type { BonusChest } from "./domain/outcomes";
@@ -216,10 +217,13 @@ export class RoundStateMachine {
   // §5/§6: one bet per participant per round, only while betting. Whether
   // the player can afford it is a wallet question answered before the
   // command is submitted (§3) — the engine never sees a balance.
+  // E-X2: the shared valid-stake predicate (M1-D1/D2, docs/07 §23.4)
+  // replaces the former `!(amount > 0)` check. Invalid stakes (sub-cent,
+  // non-finite, zero, negative) are rejected, never rounded.
   private applyPlaceBet(command: EngineCommand & { type: "placeBet" }): void {
     if (this._state !== "betting") return this.reject(command, "not-in-betting");
     if (this._participant !== null) return this.reject(command, "already-participating");
-    if (!(command.amount > 0)) return this.reject(command, "invalid-amount");
+    if (!isValidStake(command.amount)) return this.reject(command, "invalid-amount");
     this._participant = {
       betAmount: command.amount,
       cashedOut: false,

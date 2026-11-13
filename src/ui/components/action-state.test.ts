@@ -210,6 +210,42 @@ describe("canPlaceBet — the old inline canBet, with the named cutoff and the w
   });
 });
 
+describe("canPlaceBet — M1 stake validity (M1-D1 to M1-D3, docs/07 §23.5)", () => {
+  const idle: ActionRoundInput = { phase: "idle", countdownSeconds: 3 };
+  const spectator: ActionWalletInput = { balance: 1000, participating: false, hasCashed: false };
+
+  it("sub-cent, fractional-cent and non-canonical bets are never offered, though affordable", () => {
+    for (const bet of [0.001, 0.004, 0.005, 0.009, 1.005, 0.123, 0.1 + 0.2, 1000.0000000000001]) {
+      expect(canPlaceBet(idle, spectator, bet), String(bet)).toBe(false);
+    }
+  });
+
+  it("whole-cent bets keep the U5 behaviour — the oracle's canBet, unchanged", () => {
+    for (const bet of [0.01, 0.07, 0.29, 0.57, 1.15, 4.35, 8.2, 999.99, 1000]) {
+      expect(canPlaceBet(idle, spectator, bet), String(bet)).toBe(true);
+    }
+    expect(canPlaceBet(idle, { ...spectator, balance: 0.01 }, 0.01)).toBe(true);
+    expect(canPlaceBet(idle, { ...spectator, balance: 0.01 }, 0.02)).toBe(false);
+  });
+
+  it("over the full cross product with sub-cent bets added: enabled ⇔ oracle ∧ valid stake", () => {
+    const valid = (b: number) => Number.isFinite(b) && b >= 0.01 && +b.toFixed(2) === b;
+    for (const phase of PHASES)
+      for (const countdownSeconds of COUNTDOWNS)
+        for (const bet of [...BETS, 0.001, 0.005, 0.009, 1.005, 0.123])
+          for (const balance of BALANCES) {
+            const s = actionStateFor(
+              { phase, countdownSeconds },
+              { balance, participating: false, hasCashed: false },
+              bet,
+            );
+            const o = oracle(phase, countdownSeconds, false, false, bet, balance);
+            const expectedDisabled = o.disabled || (o.branch === "placeBet" && !valid(bet));
+            expect(render(s)).toEqual({ branch: o.branch, disabled: expectedDisabled });
+          }
+  });
+});
+
 describe("actionStateFor — purity", () => {
   it("reads frozen plain inputs without mutating them and is deterministic", () => {
     const r = Object.freeze({ phase: "idle" as const, countdownSeconds: 3 });

@@ -16,6 +16,7 @@
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { bootScreen, type ScreenHarness } from "@/ui/test/dom-harness";
+import { payoutOracle } from "@/ui/test/money-oracle";
 
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
 const queryButton = (name: string | RegExp) => screen.queryByRole("button", { name });
@@ -101,16 +102,47 @@ describe("bet input edge cases at the field (V4)", () => {
     expect(h.session.betInput.get()).toBe(0);
   });
 
-  it("D11: decimals are kept as typed — no new rounding — and the bet placed is that exact amount", async () => {
+  // Sanctioned rewrite (M1-D1, M1-D3; D11 superseded in part, docs/07 §23.3).
+  // Before M1 this pinned that a typed 0.123 was placed and debited 0.12.
+  it("M1: a sub-cent amount stays in the field as typed — never rounded — but PLACE BET is disabled and nothing is debited", async () => {
     const h = await bootScreen();
     h.mount();
-    fireEvent.change(betInput(), { target: { value: "0.123" } });
-    expect(betInput().value).toBe("0.123");
-    await h.user.click(button(/^PLACE BET/));
-    h.tick();
-    expect(h.session.wallet.get().roundBet).toBe(0.123);
-    expect(h.session.wallet.get().balance).toBe(+(1000 - 0.123).toFixed(2)); // the unchanged wallet debit
-    expect(balanceText()).toBe("999.88");
+    const log = record(h, ["betPlaced", "commandRejected"]);
+    for (const raw of ["0.123", "0.001", "0.004", "0.005", "0.009", "1.005"]) {
+      fireEvent.change(betInput(), { target: { value: raw } });
+      expect(betInput().value, raw).toBe(raw);
+      expect(h.session.betInput.get(), raw).toBe(+raw);
+      expect(button(/^PLACE BET/).hasAttribute("disabled"), raw).toBe(true);
+      fireEvent.click(button(/^PLACE BET/));
+      h.session.submit({ type: "placeBet", amount: h.session.betInput.get() }); // the submit edge independently
+      h.tick();
+    }
+    expect(log).toEqual([]);
+    expect(h.session.wallet.get()).toMatchObject({
+      balance: 1000,
+      roundBet: 0,
+      participating: false,
+    });
+    expect(balanceText()).toBe("1000.00");
+  });
+
+  it("M1: whole-cent values are placeable, including the minimum and text forms like 1.000 and 1e-2", async () => {
+    for (const [raw, amount] of [
+      ["0.01", 0.01],
+      ["1.000", 1],
+      ["1e-2", 0.01],
+      ["0.29", 0.29],
+    ] as const) {
+      const h = await bootScreen();
+      const view = h.mount();
+      fireEvent.change(betInput(), { target: { value: raw } });
+      expect(button("PLACE BET · 5.0s").hasAttribute("disabled"), raw).toBe(false);
+      await h.user.click(button(/^PLACE BET/));
+      h.tick();
+      expect(h.session.wallet.get().roundBet, raw).toBe(amount);
+      expect(h.session.wallet.get().balance, raw).toBe((100_000 - Math.round(amount * 100)) / 100);
+      view.unmount();
+    }
   });
 
   it("D7: a bet equal to the balance is placeable; a cent more is not", async () => {
@@ -191,7 +223,7 @@ describe("the action matrix in every phase (§13.3, D10)", () => {
     h.untilState("diving");
     h.frames(30);
     const m = h.session.engine.getPublicState().multiplier;
-    expect(button(`CASH OUT · ${(+(10 * m).toFixed(2)).toFixed(2)}`)).toBeTruthy();
+    expect(button(`CASH OUT · ${payoutOracle(10, m).toFixed(2)}`)).toBeTruthy();
   });
 });
 

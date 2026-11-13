@@ -15,11 +15,13 @@
 // The cutoff is a UI-only restriction (D9): BET_CUTOFF_SECONDS disables the
 // button; the session and the engine do not enforce it. The affordability
 // term is the wallet's own predicate (D7), the same one the session's submit
-// edge applies, so the button and the submit path never disagree.
+// edge applies, so the button and the submit path never disagree. Since M1
+// (docs/07 §23.5) that shared predicate is `isPlaceableStake`: a valid stake
+// (whole cents, ≥ 0.01) that is also affordable.
 
 import { BET_CUTOFF_SECONDS } from "@/game/config";
 import type { RoundState } from "@/ui/store/round-store";
-import { isAffordable, type WalletState } from "@/ui/store/wallet-store";
+import { isPlaceableStake, type WalletState } from "@/ui/store/wallet-store";
 
 /** The round-store fields the matrix reads. */
 export type ActionRoundInput = Pick<RoundState, "phase" | "countdownSeconds">;
@@ -49,9 +51,10 @@ export type ActionKind = ActionState["kind"];
 
 /**
  * Whether PLACE BET is offered: betting window, not yet participating, the
- * bet affordable (the wallet's predicate), and the countdown strictly above
- * the UI cutoff. Identical to the shell's `canBet` for every finite bet; the
- * bet-input store keeps the bet finite.
+ * bet a valid affordable stake (`isPlaceableStake` — the submit edge's own
+ * predicate, M1-D3), and the countdown strictly above the UI cutoff. For
+ * whole-cent bets identical to the shell's `canBet`; a sub-cent or zero bet
+ * stays editable in the field but is never offered (M1-D1; D11 superseded).
  */
 export function canPlaceBet(
   round: ActionRoundInput,
@@ -61,7 +64,7 @@ export function canPlaceBet(
   return (
     round.phase === "idle" &&
     !wallet.participating &&
-    isAffordable(bet, wallet.balance) &&
+    isPlaceableStake(bet, wallet.balance) &&
     round.countdownSeconds > BET_CUTOFF_SECONDS
   );
 }

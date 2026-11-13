@@ -4,6 +4,7 @@ import { chainTier, formatMultiplier } from "@/game/presentation";
 import { actionStateFor } from "@/ui/components/action-state";
 import { useStore } from "@/ui/hooks/use-store";
 import { gameSession } from "@/ui/session";
+import { payoutAmount } from "@/ui/store/payout";
 
 // The game session (docs/07_UI_ARCHITECTURE.md §8): engine, driver, the
 // wallet, notification, round and bet-input stores and renderer attachment
@@ -102,7 +103,12 @@ export default function AbyssAnchor() {
 
   // Displayed only while participating in a dive; based on the LOCKED bet
   // (the settlement basis), not the live input — display and payout agree.
-  const potentialWin = useMemo(() => +(roundBet * multiplier).toFixed(2), [roundBet, multiplier]);
+  // M1-D8/D13: the wallet's own rounded-down payout function, never more
+  // than the wallet would credit at this multiplier.
+  const potentialWin = useMemo(
+    () => payoutAmount(roundBet, multiplier) ?? 0,
+    [roundBet, multiplier],
+  );
 
   return (
     <div className="relative mx-auto flex h-[100dvh] max-w-md flex-col overflow-hidden bg-background text-foreground">
