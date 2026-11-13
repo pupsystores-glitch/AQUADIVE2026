@@ -17,7 +17,7 @@ Status — Sprint 4 in progress:
 | `session.ts` | U1, U2 | `createGameSession` factory + production singleton; engine/driver construction; `attachCanvas` (renderer per canvas mount, session survives remounts); owns the wallet store, subscribed once at construction (V1); `submit(command)` — the component command edge, `placeBet` gated by `wallet.canAfford` |
 | `store/store.ts` | U1 | `createStore` — the minimal external store primitive (§9); `ReadableStore` — the read half exposed by single-writer stores |
 | `hooks/use-store.ts` | U1 | `useStore` — `useSyncExternalStore` binding with selector-level subscription (accepts any `ReadableStore`) |
-| `store/wallet-store.ts` | U2 (`ad30d7a`; manual validation pending) | Settlement layer — all money math (§10); sole writer is engine settlement events; read-only surface `get`/`subscribe`/`canAfford`/`onFlash` |
+| `store/wallet-store.ts` | U2 (`ad30d7a`; approved 2026-11-13) | Settlement layer — all money math (§10); sole writer is engine settlement events; read-only surface `get`/`subscribe`/`canAfford`/`onFlash` |
 | `store/round-store.ts` | U4 (pending) | `EnginePublicState` mirror (§11) |
 | `store/notification-store.ts` | U4 (pending) | Flashes + dev rejection surface (§12) |
 | `store/bet-input-store.ts` | U5 (pending) | Bet amount + stepper/quick-set logic (§9) |

@@ -12,22 +12,78 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 |---|---|
 | U0 — blueprint approval | Done 2026-08-17 (deltas V1–V5 ratified) |
 | U1 — session module + store primitive + `useStore` | Done — committed `140790f`, approved 2026-08-17 (validation: tsc clean, 93/93 tests green, freeze check clean) |
-| U2 — wallet store (delta V1) | **Committed `ad30d7a` + fix `39f5a9f` (settlement exclusivity), pushed to `origin/develop`.** Automated validation complete. Browser remount mid-round, SSR smoke and console hygiene **not recorded as passed; owner approval of U2 pending** |
-| E-X1 — engine freeze exception: bonus eligibility + deterministic completion | **Implemented and validated, not yet committed.** All automated gates green (tsc clean, 151/151 tests, lint at baseline 7 + 6, build passes, `diff --check` clean, freeze check within the exception); **owner manual browser QA passed — 4/4 scenarios (2026-11-13)**. Commit awaits owner authorization |
-| U3–U7 | Pending, per docs/07 §17. U3 NOT STARTED — must not begin until U2 is approved |
+| U2 — wallet store (delta V1) | **Done — committed `ad30d7a` + fix `39f5a9f` (settlement exclusivity), pushed; approved by the owner 2026-11-13.** SSR smoke passed; owner manual gameplay and browser console checks passed with no errors; 151/151 tests green. Limitation accepted at approval: remount verified by automated session-level tests only — no browser-level React remount was manually tested |
+| E-X1 — engine freeze exception: bonus eligibility + deterministic completion | **Committed `897c5be`, pushed to `origin/develop` (2026-11-13).** All automated gates green (tsc clean, 151/151 tests, lint at baseline 7 + 6, build passes, `diff --check` clean, freeze check within the exception); owner manual browser QA passed, 4/4 scenarios |
+| U3 — UI test harness + DOM characterization pins | **NOT STARTED.** Implementation plan prepared 2026-11-13 and awaiting owner review (below). Needs explicit approval of new devDependencies (docs/07 §20 risk 4) before any code |
+| U4–U7 | Pending, per docs/07 §17 |
 
-## Current: E-X1 commit authorization, then U2 approval
+## Current: U3 — plan awaiting owner review
+
+U3 has not started; no U3 code exists. Before implementation, the owner must:
+
+1. review and approve the U3 plan, including the vitest config change it needs (`*.test.tsx` include);
+2. explicitly approve the new devDependencies: `jsdom`, `@testing-library/react`, `@testing-library/dom` (a required peer of `@testing-library/react` 16, not named in docs/07 §20 risk 4), and `@testing-library/user-event`. Exact versions are pinned at install and recorded in the commit;
+3. decide the open plan questions (how the test session is injected; whether a React-level remount pin is in scope).
+
+## U2 closure (approved 2026-11-13)
+
+Owner approval: 2026-11-13. Recorded basis:
+
+- Gate 5 SSR smoke: passed (details below).
+- Gate 6 console hygiene: passed. The owner's browser console checks found no errors.
+- Gate 7 manual gameplay: passed. The owner's manual gameplay checks found no errors.
+- Automated: 151/151 tests green, `tsc --noEmit` clean.
+- E-X1: committed and pushed as `897c5be`.
+- **Limitation (accepted by the owner):** React remount coverage is automated only, through the session-level remount tests in `src/ui/session.test.ts`. A browser-level React component remount mid-round was **not** manually tested. The `// @refresh reset` procedure below was not run. It is kept for reference and for any later re-check.
+
+U2 validation run (2026-11-13, against `897c5be`) — kept for reference:
+
+- **Gate 5 — SSR smoke: PASSED.** A fresh `vite dev` (port 5211) served `GET /` with HTTP 200 and the expected markup: `<canvas class="absolute inset-0 h-full w-full">` (from `AbyssAnchor.tsx:177`) and `<title>AQUADIVE — Real-Time Crash Game</title>`. The HTML had no error/exception strings and the server log had no errors. The client modules (`AbyssAnchor.tsx`, `session.ts`, `wallet-store.ts`, `routes/index.tsx`) transform with HTTP 200. `src/routeTree.gen.ts` stayed byte-identical (SHA-1 checked before and after). Note: a stale dev server from an earlier session was still listening on port 5199 and was left running; the smoke result comes from the fresh server only.
+- **Gate 6 — Console hygiene: PASSED (owner, 2026-11-13).** The agent environment has no browser tooling, so the owner ran this check; the browser console showed no errors.
+- **Automated re-check: PASSED.** `tsc --noEmit` clean, 151/151 tests green (20 files).
+- **Remount: code review and automated coverage done.** The browser-level check was not run; see the limitation above. Details below.
+
+Remount review (component remount, not page refresh):
+
+- *Wallet balance and settlement state survive a remount.* The wallet listeners subscribe once, at session construction (`src/ui/session.ts`), on a module singleton. They are never unsubscribed, so an unmount can neither reset the wallet nor cause it to miss an event.
+- *Subscriptions stay active, without duplicates.* The component's mount effect (`AbyssAnchor.tsx`) attaches the canvas and five display listeners. Its cleanup detaches the canvas and unsubscribes all five, so mount/unmount cycles (including React StrictMode's dev double-mount) stay balanced. Display listeners are never added twice.
+- *No duplicate settlement.* The settlement listener count is fixed at construction, and the wallet is idempotent against duplicate `cashedOut` / `chestPicked` events (`39f5a9f`, tested). A remount cannot add a second settlement listener.
+- *Automated coverage* (`src/ui/session.test.ts`, session level; there is no React/DOM test harness):
+  - detach/re-attach keeps engine state (U1);
+  - unmount mid-dive, remount, then cash out credits against the locked bet with the wallet snapshot unchanged;
+  - events that fire while nothing is mounted are still settled.
+  - These simulate the component's mount effect through `attachCanvas`/detach; **no test mounts the actual React component**.
+- *Known display gap, not money-related (a named U2 → U4 seam):* `chests`, `chosenChest` and `cashFlash` are component `useState`.
+  - A remount **during `bonus`** loses `chests`, so an eligible player's picker stays hidden for the rest of that bonus.
+  - E-X1's 6 s auto-pick (chest 0) still completes the round, and the wallet credits it correctly.
+  - The round store (U4) fixes this. Not a U2 blocker: settlement is unaffected.
+  - Also a known U2 → U4 seam: the flash `setTimeout` is not cleared on unmount (harmless under React 18).
+- *Full page refresh is out of scope:* it rebuilds the module singleton, so the balance returns to the default. This is expected; persistence and reconnect are not part of U2.
+
+Manual browser checks as planned before approval. Outcome: items 1 and 3 done; item 2 was **not run** and was accepted by the owner as covered by automated tests only.
+
+1. **Gate 6:** console hygiene, as above. Passed.
+2. **Gate 7, remount mid-round.** Not run (reference procedure).
+   - How to remount without refreshing: in `npm run dev`, temporarily add the line `// @refresh reset` to `src/components/AbyssAnchor.tsx`, then save the file during a dive.
+     - Fast Refresh then remounts the component: `useState` is reset and effects are cleaned up and re-run. The session module (`src/ui/session.ts`) is not re-executed.
+     - A plain save without that line keeps state and only re-runs effects, so it is not a full remount.
+     - Remove the line afterwards; it is a QA-only edit and must not be committed.
+     - A full page reload (F5) is a refresh, not a remount, and does not count.
+   - Pass criteria:
+     - balance and the round bet are unchanged right after the remount;
+     - a later cashout or crash settles exactly once, against the locked bet;
+     - the history gets exactly one entry for the round;
+     - the HUD resumes (phase, multiplier, countdown).
+   - Caveat: if HMR does a full reload instead (session module invalidated, balance back to the default), the check is not valid. Report that instead of a failure.
+3. Then: owner approval of U2. Done 2026-11-13. The U2 commits were already pushed.
 
 E-X1 (details in `docs/15_PROGRESS.md`, rules in docs/06 §5): only a participant auto-cashed at the jackpot is bonus-eligible; it gets a 6 s / 360-tick pick window, and on expiry chest 0 is applied through the normal pick path. Spectators and manual-cashout players cannot pick, never see the picker, and their bonus phase ends after the result interval with no `chestPicked`; the wallet ignores any ineligible pick (no credit, no history entry). Snapshot schema bumped to v2.
 
 **Phase 8 limitation (open):** E-X1 is a local single-player rule. A server-authoritative multiplayer round must complete `bonus` on its own schedule, independent of any one player's eligibility; per-player eligibility then gates only picking and crediting, and a server-side auto-pick / per-player default replaces the local chest-0 rule. This must be redesigned, not inherited, in Phase 8.
 
-Remaining before U2 can be approved (docs/07 §19):
+Gate 7 coverage: the owner's E-X1 browser QA (4/4 scenarios passed) covered bonus-path gameplay. The owner's later manual gameplay checks (2026-11-13) found no errors and are the recorded gate 7 pass. The remount mid-round focus item rests on automated coverage only (limitation above).
 
-- Gate 5 (partial): production build passes; dev-server SSR smoke (HTTP 200 with canvas markup) not yet run.
-- Gate 6: console hygiene in the browser.
-- Gate 7: manual gameplay pass — bet → dive → cash out → crash round → jackpot round → chest pick → spectate — with the U2 focus: balance ledger through every settlement path, **including a browser remount mid-round** (the wallet must neither reset nor miss an event).
-- Then: owner approval of U2 (the U2 commits are already pushed).
+**Next task: U3** (docs/07 §17). Not started; its plan awaits owner review (see "Current" above).
 
 Delivered in `ad30d7a` (details in `docs/15_PROGRESS.md`): `src/ui/store/wallet-store.ts` (settlement listeners, money state, `canAfford`, `onFlash`; read-only surface), session-owned and subscribed at construction (V1); `session.submit(command)` with the affordability check; component reads via `useStore`, state+ref mirrors deleted; 32 new tests (25 wallet ledger/replay, 7 session wiring + remount). Named U2 → U4 seams: flash timer/`cashFlash`, `chests` and `chosenChest` stay component-side via display subscriptions on `session.engine.events`; `attachCanvas` keeps the sync callback.
 
