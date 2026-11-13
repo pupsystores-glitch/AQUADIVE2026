@@ -13,16 +13,38 @@
 // Pins marked "PINNED UNTIL Ux" record documented current behavior that a
 // later step is sanctioned to change (docs/07 §7, §17); they are updated in
 // that step's commit, and only there.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
-import { bootScreen } from "@/ui/test/dom-harness";
+import { bootScreen, type ScreenHarness } from "@/ui/test/dom-harness";
 
 /**
- * The component's display subscriptions (AbyssAnchor mount effect): the three
- * chest-display engine events. U4a moved wallet.onFlash and the flash-only
- * bettingOpened listener into the session-owned notification store (was 5).
+ * The component's display subscriptions (AbyssAnchor mount effect). U4a
+ * moved wallet.onFlash and the flash-only bettingOpened listener into the
+ * session-owned notification store (5 → 3); U4b moved the three chest
+ * listeners into the session-owned round store (3 → 0, correction C7). The
+ * component now subscribes to no engine events; the sink and per-frame
+ * write assertions below carry the "exactly one" guarantees instead.
  */
-const DISPLAY_SUBSCRIPTIONS = 3;
+const DISPLAY_SUBSCRIPTIONS = 0;
+
+/**
+ * Per-frame sink accounting: every driver frame renders once (on the live
+ * renderer) and synchronizes the round store once — the sink's sync is the
+ * round-store write, and it is the only caller of engine.getPublicState()
+ * while frames run.
+ */
+const expectOneSinkPerFrame = (h: ScreenHarness, frames: number) => {
+  const reads = vi.spyOn(h.session.engine, "getPublicState");
+  const drawn = h.renderers.map((r) => r.frames);
+  h.frames(frames);
+  expect(reads).toHaveBeenCalledTimes(frames);
+  reads.mockRestore();
+  const live = h.renderers.filter((r) => !r.disposed);
+  expect(live).toHaveLength(1);
+  const delta = h.renderers.map((r, i) => r.frames - (drawn[i] ?? 0));
+  expect(delta.reduce((a, b) => a + b, 0)).toBe(frames);
+  expect(delta[h.renderers.indexOf(live[0])]).toBe(frames);
+};
 
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
 const balanceText = () => screen.getByText("Balance").nextSibling?.textContent;
@@ -47,6 +69,7 @@ describe("component remount over the same session", () => {
     expect(h.renderers[1].disposed).toBe(false);
     expect(h.pendingFrames()).toBe(1); // exactly one loop
     expect(h.subscriptions.active).toBe(DISPLAY_SUBSCRIPTIONS);
+    expectOneSinkPerFrame(h, 5); // one sink: one draw and one round-store write per frame
   });
 
   it("remount mid-dive: the world does not advance while unmounted; the HUD resumes on the locked bet and the cashout settles exactly once", async () => {
@@ -120,7 +143,14 @@ describe("component remount over the same session", () => {
     expect(button(`CASH OUT · ${(+(25 * m).toFixed(2)).toFixed(2)}`)).toBeTruthy(); // still the locked 25
   });
 
-  it("PINNED UNTIL U4 (known U2 → U4 seam): remount during the bonus hides the picker — the round still completes through the E-X1 auto-pick and is credited", async () => {
+  // Updated in U4b — the sanctioned step for this pin (docs/07 §11, §17).
+  // Was "PINNED UNTIL U4 (known U2 → U4 seam): remount during the bonus
+  // hides the picker": the chests were component state, lost on remount,
+  // and only the E-X1 auto-pick completed the round. Now the picker is
+  // rebuilt from the session's round store (engine state: chests,
+  // chosenChestId, participant.bonusEligible), so it survives the remount
+  // and a pick after it is credited exactly once.
+  it("remount during the bonus restores the eligible picker; a pick after the remount reveals its chest and is credited once (U4b)", async () => {
     const h = await bootScreen();
     const first = h.mount();
     await h.user.click(button("10"));
@@ -131,27 +161,34 @@ describe("component remount over the same session", () => {
 
     first.unmount();
     h.mount();
-    h.frames(1);
-    // The engine still has the chests and the player is still eligible, but
-    // the revealed chests were component state: the picker stays hidden.
-    expect(h.session.engine.getPublicState().chests).not.toBeNull();
-    expect(h.session.engine.getPublicState().participant?.bonusEligible).toBe(true);
-    expect(screen.queryByText("Pirate Wreck — Pick a Chest")).toBeNull();
-    expect(screen.queryByRole("button", { name: "???" })).toBeNull();
+    // Restored on the remount render itself — no frame needed.
+    expect(screen.getByText("Pirate Wreck — Pick a Chest")).toBeTruthy();
+    const chests = screen.getAllByRole("button", { name: "???" });
+    expect(chests.map((c) => c.hasAttribute("disabled"))).toEqual([false, false, false]);
     expect(balanceText()).toBe("1990.00");
+
+    h.frames(1);
+    await h.user.click(screen.getAllByRole("button", { name: "???" })[1]);
+    h.tick();
+    expect(button("+6.50×").hasAttribute("disabled")).toBe(true);
+    expect(
+      screen.getAllByRole("button", { name: "???" }).map((c) => c.hasAttribute("disabled")),
+    ).toEqual([true, true]);
+    expect(balanceText()).toBe("7490.00"); // 1990 + (10 × 650 − 10 × 100)
 
     h.untilState("betting");
     h.frames(1);
-    expect(balanceText()).toBe("2990.00"); // chest 0 auto-applied: 1990 + (10 × 200 − 10 × 100)
+    expect(screen.queryByText("Pirate Wreck — Pick a Chest")).toBeNull();
+    expect(balanceText()).toBe("7490.00"); // credited once
     expect(h.session.wallet.get().history).toEqual([
-      { mult: 200, crashed: false },
+      { mult: 650, crashed: false },
       { mult: 100, crashed: false },
     ]);
   });
 });
 
 describe("React.StrictMode (development double-mount)", () => {
-  it("the double-mount leaves exactly one renderer, one rAF loop and one set of display subscriptions", async () => {
+  it("the double-mount leaves exactly one renderer, one rAF loop and one sink: one draw and one round-store write per frame", async () => {
     const h = await bootScreen();
     h.mount({ strict: true });
     // mount → cleanup → mount: the first attach was fully undone.
@@ -159,11 +196,11 @@ describe("React.StrictMode (development double-mount)", () => {
     expect(h.renderers.map((r) => r.disposed)).toEqual([true, false]);
     expect(h.pendingFrames()).toBe(1);
     expect(h.session.driver.running).toBe(true);
-    expect(h.subscriptions.added).toBe(2 * DISPLAY_SUBSCRIPTIONS);
-    expect(h.subscriptions.removed).toBe(DISPLAY_SUBSCRIPTIONS);
+    // C7: the component subscribes to nothing (U3 counted 2× added here).
+    expect(h.subscriptions.added).toBe(0);
     expect(h.subscriptions.active).toBe(DISPLAY_SUBSCRIPTIONS);
 
-    h.frames(5);
+    expectOneSinkPerFrame(h, 5);
     expect(h.renderers[0].frames).toBe(0); // the discarded renderer never draws
     expect(h.renderers[1].frames).toBe(5); // one frame per rAF, not two
   });
@@ -227,7 +264,7 @@ describe("React.StrictMode (development double-mount)", () => {
     expect(h.renderers.filter((r) => !r.disposed)).toHaveLength(1);
     expect(h.pendingFrames()).toBe(1);
     expect(h.subscriptions.active).toBe(DISPLAY_SUBSCRIPTIONS);
-    h.frames(1);
+    expectOneSinkPerFrame(h, 1);
     expect(balanceText()).toBe("995.00");
 
     await h.user.click(button(/^CASH OUT · /));

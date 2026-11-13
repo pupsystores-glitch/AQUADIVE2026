@@ -1,27 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BETTING_WINDOW_SECONDS, type BonusChest } from "@/engine";
 import { QUICK_BETS } from "@/game/config";
 import { DEFAULT_BET } from "@/game/constants";
 import { chainTier, formatMultiplier } from "@/game/presentation";
-import type { Phase } from "@/rendering/scene-renderer";
 import { useStore } from "@/ui/hooks/use-store";
 import { gameSession } from "@/ui/session";
 
 // The game session (docs/07_UI_ARCHITECTURE.md §8): engine, driver, the
-// wallet and notification stores and renderer attachment live in
+// wallet, notification and round stores and renderer attachment live in
 // src/ui/session.ts, owned at module scope — remounting the component
-// resumes the world, the wallet and an active win flash instead of
-// restarting them (docs/06 §13; deltas V1, V2). Mid-migration surface
-// (U4a): the HUD mirror and display-only chest state (chests, chosen chest)
-// are still component-side until U4b's round store.
-const { engine, wallet, notifications } = gameSession;
+// resumes the world, the wallet, an active win flash and the round/bonus
+// presentation (including the chest picker) instead of restarting them
+// (docs/06 §13; deltas V1, V2; U4b).
+const { wallet, notifications, round } = gameSession;
 
-// The UI shell (E6): rendering, user input, and display subscriptions only.
-// The simulation, round lifecycle and all projections live in the engine;
-// all money state and math live in the session's wallet store (U2). This
-// component mirrors engine public state per frame (delta D5), renders
-// wallet state via useStore, and submits typed commands through the
-// session (§8).
+// The UI shell (E6): rendering and user input only. The simulation, round
+// lifecycle and all projections live in the engine; all money state and
+// math live in the session's wallet store (U2); the per-frame engine
+// public-state mirror is the session's round store (U4b). This component
+// subscribes to no engine events: it reads the stores via useStore and
+// submits typed commands through the session (§8).
 export default function AbyssAnchor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -38,14 +35,23 @@ export default function AbyssAnchor() {
   // supersede and round-transition clears all live there (V2).
   const cashFlash = useStore(notifications, (n) => n.flash !== null);
 
+  // Round and bonus presentation (§11): one owner, the round store — the
+  // engine's public state mirrored once per frame by the driver's sync.
+  // Selectors return primitives or references the store keeps stable while
+  // unchanged, so quiet frames re-render nothing.
+  const phase = useStore(round, (r) => r.phase);
+  const multiplier = useStore(round, (r) => r.multiplier);
+  const boost = useStore(round, (r) => r.boost); // 0..1 short boost when goldfish
+  const countdown = useStore(round, (r) => r.countdownSeconds);
+  const bonusEligible = useStore(round, (r) => r.participant?.bonusEligible ?? false);
+  const chests = useStore(round, (r) => r.chests);
+  const chosenChestId = useStore(round, (r) => r.chosenChestId);
+  // The chosen chest is engine state (chosenChestId), not event history, so
+  // a remount after a pick shows it revealed again.
+  const chosenChest = chests !== null && chosenChestId !== null ? chests[chosenChestId] : null;
+
+  // Bet input: component state until U5's bet-input store.
   const [bet, setBet] = useState(DEFAULT_BET);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [multiplier, setMultiplier] = useState(1);
-  const [chests, setChests] = useState<[BonusChest, BonusChest, BonusChest] | null>(null);
-  const [chosenChest, setChosenChest] = useState<BonusChest | null>(null);
-  const [bonusEligible, setBonusEligible] = useState(false);
-  const [boost, setBoost] = useState(0); // 0..1 short boost when goldfish
-  const [countdown, setCountdown] = useState(BETTING_WINDOW_SECONDS);
 
   // ----- user input → session commands (§8) -----
   // The engine validates every command against round state at the tick it
@@ -63,47 +69,15 @@ export default function AbyssAnchor() {
     gameSession.submit({ type: "pickChest", chestId: id });
   }, []);
 
-  // ----- session attach: canvas + display subscriptions -----
+  // ----- session attach: canvas only -----
+  // The session constructs the renderer, synchronizes the round store once,
+  // and drives frame + round-store sync per rAF (docs/07 §8, §11). The
+  // cleanup detaches: one attach, one detach per mount, so StrictMode's
+  // double-mount and repeated remounts leave exactly one sink.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    // Display-only chest listeners (mid-migration, U4a → U4b). Settlement
-    // and the win flash are not here: the wallet and notification stores
-    // subscribed at session construction, so their listeners have already
-    // run when these do.
-    const subscriptions = [
-      engine.events.on("diveStarted", () => {
-        setChests(null);
-        setChosenChest(null);
-      }),
-      engine.events.on("chestsRevealed", ({ chests: revealed }) => {
-        setChests(revealed);
-        setChosenChest(null);
-      }),
-      engine.events.on("chestPicked", ({ chestId, chestMultiplier }) => {
-        setChosenChest({ id: chestId, multiplier: chestMultiplier, opened: true });
-      }),
-    ];
-
-    // Canvas attach (docs/07 §8): the session constructs the renderer and
-    // drives the frame half of the sink; this component supplies only the
-    // per-frame HUD mirror (delta D5 — the 100 ms countdown interval is
-    // gone) until the round store becomes the sync target (U4). Equal-value
-    // setState calls bail out, so frames without visible change re-render
-    // nothing.
-    const detachCanvas = gameSession.attachCanvas(canvas, (s) => {
-      setPhase(s.phase);
-      setCountdown(s.countdownSeconds);
-      setMultiplier(s.multiplier);
-      setBoost(s.boost);
-      setBonusEligible(s.participant?.bonusEligible ?? false);
-    });
-
-    return () => {
-      detachCanvas();
-      subscriptions.forEach((unsubscribe) => unsubscribe());
-    };
+    return gameSession.attachCanvas(canvas);
   }, []);
 
   // ----- UI -----

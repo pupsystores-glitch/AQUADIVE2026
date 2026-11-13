@@ -106,29 +106,36 @@ describe("createGameSession — construction order (§8, §20 risk 5)", () => {
     expect(session.engine.tickCount).toBe(0);
   });
 
-  it("attachCanvas constructs the renderer, starts the driver, and drives resize + frame + sync per rAF frame", () => {
+  it("attachCanvas constructs the renderer, starts the driver, and drives resize + frame + round-store sync per rAF frame", () => {
     const { session, renderers, canvas } = makeHarness();
-    const syncs: string[] = [];
-    session.attachCanvas(canvas, (s) => syncs.push(s.phase));
+    const reads = vi.spyOn(session.engine, "getPublicState");
+    session.attachCanvas(canvas);
 
     expect(renderers).toHaveLength(1);
     expect(session.driver.running).toBe(true);
+    expect(reads).toHaveBeenCalledTimes(1); // the synchronous write on attach
 
     fire(1000); // first frame after attach: zero wall delta
+    expect(reads).toHaveBeenCalledTimes(2); // one sync per frame
+    expect(session.round.get().phase).toBe("idle"); // betting → renderer Phase "idle" (docs/06 §5 projection)
     fire(1100);
+    expect(reads).toHaveBeenCalledTimes(3);
     expect(renderers[0].frames).toBe(2);
     expect(renderers[0].resizes[0]).toEqual([375, 667, 2]); // CSS size + window.devicePixelRatio
-    expect(syncs).toHaveLength(2);
-    expect(syncs[0]).toBe("idle"); // betting → renderer Phase "idle" (docs/06 §5 projection)
     expect(session.engine.tickCount).toBeGreaterThan(0); // 100 ms advanced = 6 ticks
+    expect(session.round.get()).toEqual(session.engine.getPublicState()); // the store holds this frame's state
   });
 
-  it("sync is optional: attach without it still renders", () => {
+  it("attachCanvas takes no host sync callback: the round store is the only sync target (U4b)", () => {
     const { session, renderers, canvas } = makeHarness();
+    expect(session.attachCanvas.length).toBe(1);
     session.attachCanvas(canvas);
     fire(1000);
     fire(1016);
     expect(renderers[0].frames).toBe(2);
+    expect(session.round.get().countdownSeconds).toBe(
+      session.engine.getPublicState().countdownSeconds,
+    );
   });
 });
 
@@ -585,5 +592,293 @@ describe("createGameSession — notification wiring (U4a, §8/§12)", () => {
     expect(warn).not.toHaveBeenCalled();
     expect(session.notifications.get().rejections).toEqual([]);
     warn.mockRestore();
+  });
+});
+
+// ----- U4b: the round store at session scope (docs/07 §8, §11) -----
+
+/** A 60 Hz rAF frame clock over the stubbed host: each step fires one driver frame. */
+const frameClock = () => {
+  let ts = 0;
+  return {
+    step: () => {
+      ts += 1000 / 60;
+      fire(ts);
+    },
+  };
+};
+
+/** Step driver frames until `predicate` holds, calling `each` after every frame. */
+const stepUntil = (
+  clock: ReturnType<typeof frameClock>,
+  predicate: () => boolean,
+  each: () => void = () => {},
+  cap = 20000,
+) => {
+  for (let i = 0; i < cap && !predicate(); i++) {
+    clock.step();
+    each();
+  }
+  expect(predicate()).toBe(true);
+};
+
+describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
+  it("is seeded at construction from the engine's public state; construction notifies nobody and schedules nothing", () => {
+    const { session } = makeHarness();
+    const seeded = session.round.get();
+    expect(seeded).toEqual(session.engine.getPublicState());
+    expect(seeded).toMatchObject({
+      phase: "idle",
+      multiplier: 1,
+      boost: 0,
+      participant: null,
+      chests: null,
+    });
+    expect(seeded.countdownSeconds.toFixed(1)).toBe("5.0"); // the shell's old initial state
+    expect(pending.size).toBe(0);
+    expect(Object.keys(session.round).sort()).toEqual(["get", "subscribe"]); // read-only surface
+  });
+
+  it("the driver's sync is the only writer: a detached session does not update the mirror, even when the engine advances", () => {
+    const { session } = makeHarness(NEVER_CRASH);
+    const seeded = session.round.get();
+    const notify = vi.fn();
+    session.round.subscribe(notify);
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "diving"); // events fire; the round store has no listeners
+    expect(session.round.get()).toBe(seeded);
+    expect(notify).not.toHaveBeenCalled();
+    expect(session.wallet.get().participating).toBe(true); // settlement still ran
+  });
+
+  it("per frame, through a full jackpot round with a pick, the store equals the engine's public state; the ledger is unchanged", () => {
+    const { session, canvas } = makeHarness(NEVER_CRASH);
+    const clock = frameClock();
+    session.attachCanvas(canvas);
+    const phases = new Set<string>();
+    const check = () => {
+      expect(session.round.get()).toEqual(session.engine.getPublicState());
+      phases.add(session.round.get().phase);
+    };
+    session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clock, () => session.engine.state === "bonus", check);
+    expect(session.round.get().participant).toEqual({
+      betAmount: 10,
+      cashedOut: true,
+      cashedOutAt: 100,
+      bonusEligible: true,
+    });
+    session.submit({ type: "pickChest", chestId: 1 });
+    stepUntil(clock, () => session.round.get().chosenChestId !== null, check);
+    expect(session.round.get().chosenChestId).toBe(1);
+    expect(session.wallet.get().balance).toBe(7490); // the U2 ledger: 1990 + (6500 − 1000)
+    stepUntil(clock, () => session.engine.state === "betting", check);
+    expect([...phases]).toEqual(["idle", "diving", "cashed", "bonus"]);
+    expect(session.round.get().participant).toBeNull();
+    expect(session.wallet.get().history).toEqual([
+      { mult: 650, crashed: false },
+      { mult: 100, crashed: false },
+    ]);
+  });
+
+  it("per frame, through a crash round, the store equals the engine's public state", () => {
+    const { session, canvas } = makeHarness(2);
+    const clock = frameClock();
+    session.attachCanvas(canvas);
+    const check = () => expect(session.round.get()).toEqual(session.engine.getPublicState());
+    session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clock, () => session.engine.state === "crashed", check);
+    expect(session.round.get()).toMatchObject({ phase: "crashed", multiplier: 2 });
+    stepUntil(clock, () => session.engine.state === "betting", check);
+    expect(session.wallet.get().history).toEqual([{ mult: 2, crashed: true }]);
+  });
+
+  it("quiet frames notify nobody: an unchanged engine frame keeps the stored snapshot by reference", () => {
+    const { session, canvas } = makeHarness(2);
+    const clock = frameClock();
+    session.attachCanvas(canvas);
+    stepUntil(clock, () => session.engine.state === "crashed");
+    clock.step();
+    const held = session.round.get();
+    const notify = vi.fn();
+    session.round.subscribe(notify);
+    // During the crash banner the multiplier is locked and no field moves;
+    // the engine still builds a new public-state object every frame.
+    const reads = new Set<unknown>();
+    for (let i = 0; i < 30; i++) {
+      clock.step();
+      reads.add(session.engine.getPublicState());
+      expect(session.engine.state).toBe("crashed");
+    }
+    expect(reads.size).toBe(30);
+    expect(notify).not.toHaveBeenCalled();
+    expect(session.round.get()).toBe(held);
+  });
+
+  it("a changed field notifies once per frame and keeps unchanged sub-objects by reference", () => {
+    const { session, canvas } = makeHarness(NEVER_CRASH);
+    const clock = frameClock();
+    session.attachCanvas(canvas);
+    session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clock, () => session.engine.state === "diving");
+    clock.step();
+    const before = session.round.get();
+    expect(before.participant).not.toBeNull();
+    const notify = vi.fn();
+    session.round.subscribe(notify);
+    clock.step(); // the multiplier moves; the participant does not
+    const after = session.round.get();
+    expect(after).not.toBe(before);
+    expect(after.multiplier).not.toBe(before.multiplier);
+    expect(after.participant).toBe(before.participant);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("the engine's live participant object never leaks into a stored snapshot", () => {
+    const { session, canvas } = makeHarness(NEVER_CRASH);
+    const clock = frameClock();
+    session.attachCanvas(canvas);
+    session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clock, () => session.engine.state === "diving");
+    const diving = session.round.get();
+    const live = session.engine.getPublicState().participant!;
+    expect(diving.participant).not.toBe(live);
+    expect(Object.isFrozen(diving.participant)).toBe(true);
+
+    // At impact the engine flips cashedOut/bonusEligible IN PLACE on that
+    // same live object; the snapshot taken during the dive must not change.
+    stepUntil(clock, () => session.engine.state === "impact");
+    expect(session.engine.getPublicState().participant).toBe(live); // the engine's object is reused…
+    expect(live.bonusEligible).toBe(true);
+    expect(diving.participant).toEqual({
+      betAmount: 10,
+      cashedOut: false,
+      cashedOutAt: null,
+      bonusEligible: false,
+    }); // …the old snapshot is untouched…
+    expect(session.round.get().participant).not.toBe(diving.participant); // …and the change was seen
+    expect(session.round.get().participant?.bonusEligible).toBe(true);
+  });
+
+  it("chests: the engine never mutates its array in place, and the store holds a frozen copy anyway", () => {
+    const { session, canvas } = makeHarness(NEVER_CRASH);
+    const clock = frameClock();
+    let revealed: unknown = null;
+    session.engine.events.on("chestsRevealed", ({ chests }) => {
+      revealed = chests;
+    });
+    session.attachCanvas(canvas);
+    session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clock, () => session.engine.state === "bonus");
+    clock.step();
+    const engineChests = session.engine.getPublicState().chests!;
+    expect(engineChests).toBe(revealed); // the engine hands the same array to listeners and to the projection
+    const contents = JSON.stringify(engineChests);
+    const stored = session.round.get().chests!;
+    expect(stored).not.toBe(engineChests);
+    expect(stored).toEqual(engineChests);
+    expect(Object.isFrozen(stored) && stored.every((c) => Object.isFrozen(c))).toBe(true);
+
+    // Through the pick and the result interval: same engine array, same
+    // contents (opened is never written), and the stored copy keeps its identity.
+    session.submit({ type: "pickChest", chestId: 2 });
+    stepUntil(
+      clock,
+      () => session.engine.state === "betting",
+      () => {
+        if (session.engine.getPublicState().chests !== null) {
+          expect(session.engine.getPublicState().chests).toBe(engineChests);
+          expect(JSON.stringify(engineChests)).toBe(contents);
+        }
+        expect(session.round.get().chests).toBe(stored);
+      },
+    );
+
+    // A listener holding the engine array can mutate it; the stored
+    // snapshot cannot change underneath its readers.
+    (engineChests as unknown as Array<{ multiplier: number }>)[0].multiplier = 999;
+    expect(stored[0].multiplier).toBe(2);
+  });
+
+  it("detach keeps the mirror; re-attach synchronizes once immediately, and notifies only if the engine moved", () => {
+    const { session, canvas } = makeHarness(NEVER_CRASH);
+    const clock = frameClock();
+    const detach = session.attachCanvas(canvas);
+    session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clock, () => session.engine.state === "diving");
+    detach();
+    const held = session.round.get();
+    const notify = vi.fn();
+    session.round.subscribe(notify);
+
+    // Production remount: nothing advanced while detached → no change, no notification.
+    const detach2 = session.attachCanvas(canvas);
+    expect(session.round.get()).toBe(held);
+    expect(notify).not.toHaveBeenCalled();
+    detach2();
+
+    // Test-only: the engine advanced while detached → the attach write
+    // brings the mirror up to date before any frame runs.
+    advanceFrames(session.engine, 30);
+    expect(session.round.get()).toBe(held);
+    session.attachCanvas(canvas);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(session.round.get()).toEqual(session.engine.getPublicState());
+  });
+
+  it("E-X1 timeout: an eligible player who never picks ends with chest 0 in the mirror and the unchanged ledger", () => {
+    const { session, canvas } = makeHarness(NEVER_CRASH);
+    const clock = frameClock();
+    session.attachCanvas(canvas);
+    session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clock, () => session.engine.state === "bonus");
+    expect(session.round.get().chosenChestId).toBeNull();
+    stepUntil(clock, () => session.round.get().chosenChestId !== null);
+    expect(session.round.get()).toMatchObject({ phase: "bonus", chosenChestId: 0 });
+    expect(session.wallet.get().balance).toBe(2990);
+    stepUntil(clock, () => session.engine.state === "betting");
+    expect(session.wallet.get().history).toEqual([
+      { mult: 200, crashed: false },
+      { mult: 100, crashed: false },
+    ]);
+  });
+
+  it("E-X1: manual-cashout players and spectators are never bonus-eligible in the mirror", () => {
+    // Manual cashout.
+    const a = makeHarness(NEVER_CRASH);
+    const clockA = frameClock();
+    a.session.attachCanvas(a.canvas);
+    a.session.submit({ type: "placeBet", amount: 10 });
+    stepUntil(clockA, () => a.session.engine.state === "diving");
+    for (let i = 0; i < 30; i++) clockA.step();
+    a.session.submit({ type: "cashOut" });
+    stepUntil(clockA, () => a.session.engine.state === "bonus");
+    expect(a.session.round.get().chests).not.toBeNull();
+    expect(a.session.round.get().participant).toMatchObject({
+      cashedOut: true,
+      bonusEligible: false,
+    });
+    stepUntil(
+      clockA,
+      () => a.session.engine.state === "betting",
+      () => {
+        expect(a.session.round.get().participant?.bonusEligible ?? false).toBe(false);
+        expect(a.session.round.get().chosenChestId).toBeNull();
+      },
+    );
+
+    // Spectator.
+    const b = makeHarness(NEVER_CRASH);
+    const clockB = frameClock();
+    b.session.attachCanvas(b.canvas);
+    stepUntil(clockB, () => b.session.engine.state === "bonus");
+    expect(b.session.round.get().participant).toBeNull();
+    stepUntil(
+      clockB,
+      () => b.session.engine.state === "betting",
+      () => {
+        expect(b.session.round.get().chosenChestId).toBeNull();
+      },
+    );
   });
 });

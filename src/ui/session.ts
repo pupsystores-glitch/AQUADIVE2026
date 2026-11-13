@@ -18,11 +18,12 @@
 // flash and its timer, subscribed here at construction for the session's
 // lifetime (delta V2), plus the dev-only rejection diagnostics.
 //
-// Mid-migration status (U4a, §17): the per-frame HUD mirror and display-only
-// chest state (chests, chosen chest) are still component-side.
-// attachCanvas therefore accepts the host's sync callback, and the engine
-// stays exposed for the component's display subscriptions; U4b replaces
-// both with the round store (§11).
+// Since U4b the session also owns the round store (§11): seeded here from one
+// engine public-state read, written only by the driver's per-frame sync,
+// which attachCanvas supplies itself (the host sync-callback parameter is
+// retired). It has no event subscriptions and no timers. Components read
+// round and bonus presentation state from it and no longer subscribe to the
+// engine; the engine stays exposed for tests and diagnostics only.
 
 import {
   EngineDriver,
@@ -30,7 +31,6 @@ import {
   LocalRoundAuthority,
   createMathRandomRng,
   type EngineCommand,
-  type EnginePublicState,
   type Rng,
   type RoundAuthority,
 } from "@/engine";
@@ -41,13 +41,8 @@ import {
   type NotificationStore,
   type RejectionLogger,
 } from "@/ui/store/notification-store";
+import { createRoundStore, type RoundStore } from "@/ui/store/round-store";
 import { createWalletStore, type WalletStore } from "@/ui/store/wallet-store";
-
-/**
- * Per-frame public-state sync (docs/06 delta D5). Transitional seam: the
- * component's HUD mirror until the round store becomes the sink half (U4).
- */
-export type PublicStateSync = (state: EnginePublicState) => void;
 
 /** The renderer surface the session drives — SceneRenderer in production, injectable for headless tests (§8 test seam). */
 export type CanvasRenderer = Pick<SceneRenderer, "resize" | "frame" | "dispose">;
@@ -67,23 +62,27 @@ export interface GameSessionDeps {
 }
 
 export interface GameSession {
-  /** The engine facade (docs/06 §13). Mid-migration surface: the component shell still subscribes to display-only events until U4; commands go through submit(). */
+  /** The engine facade (docs/06 §13). Exposed for tests and diagnostics; components read stores and send commands through submit(). */
   readonly engine: GameEngine;
   /** The settlement layer (§10): session-scoped, subscribed at construction. */
   readonly wallet: WalletStore;
   /** Win flashes + dev rejection diagnostics (§12): session-scoped, subscribed at construction. */
   readonly notifications: NotificationStore;
+  /** The engine public-state mirror (§11): read-only; its one writer is the driver's sync. */
+  readonly round: RoundStore;
   /** The rAF/wall-clock owner. Exposed for tests; production code attaches only via attachCanvas. */
   readonly driver: EngineDriver;
   /**
-   * Construct the renderer for this canvas and start the driver with
-   * frame = resize + render and sync = the host's public-state mirror.
-   * Returns the detach: pauses the driver and disposes the renderer —
-   * everything else survives, exactly as the driver guarantees
-   * (docs/06 §13). The renderer is per-canvas-mount (it holds the 2D
-   * context); the session is not.
+   * Construct the renderer for this canvas, write the round store once from
+   * the engine's current public state, and start the driver with
+   * frame = resize + render and sync = the round-store write. Returns the
+   * detach: pauses the driver and disposes the renderer — everything else
+   * survives, exactly as the driver guarantees (docs/06 §13). The renderer
+   * is per-canvas-mount (it holds the 2D context); the session and its
+   * stores are not. Re-attaching replaces the driver's sink, so there is
+   * never more than one writer.
    */
-  attachCanvas(canvas: HTMLCanvasElement, sync?: PublicStateSync): () => void;
+  attachCanvas(canvas: HTMLCanvasElement): () => void;
   /**
    * The single command edge for components (§8). placeBet is dropped unless
    * the wallet can afford it (§6 — the one wallet question); everything is
@@ -112,6 +111,11 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     { flashes: wallet, events: engine.events },
     { clock: deps.notificationClock, diagnostics: deps.diagnostics, log: deps.diagnosticsLog },
   );
+  // The round store last (§11): seeded from a pure engine read (no DOM, no
+  // timers — SSR-safe). It subscribes to no events; only the driver's sync
+  // below writes it, after the frame's events have reached the wallet and
+  // the notification store.
+  const round = createRoundStore(engine.getPublicState());
   const driver = new EngineDriver(engine);
   const createRenderer =
     deps.createRenderer ?? ((canvas: HTMLCanvasElement) => new SceneRenderer(canvas));
@@ -120,19 +124,25 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     engine,
     wallet,
     notifications,
+    round: round.store,
     driver,
     submit: (command) => {
       if (command.type === "placeBet" && !wallet.canAfford(command.amount)) return;
       engine.submit(command);
     },
-    attachCanvas: (canvas, sync) => {
+    attachCanvas: (canvas) => {
       const renderer = createRenderer(canvas);
+      // Synchronize once on attach. In production this changes nothing (the
+      // engine advances only inside driver frames, each followed by a sync),
+      // so it never notifies; it guarantees a remount cannot show a stale
+      // frame if the engine was advanced while detached.
+      round.write(engine.getPublicState());
       driver.attach({
         frame: (state, time) => {
           renderer.resize(canvas.clientWidth, canvas.clientHeight, window.devicePixelRatio || 1);
           renderer.frame(state, time);
         },
-        sync,
+        sync: round.write,
       });
       return () => {
         driver.detach();

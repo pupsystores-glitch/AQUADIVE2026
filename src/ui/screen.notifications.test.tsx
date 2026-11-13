@@ -32,8 +32,8 @@ describe("win flash — notification store (U4a)", () => {
     expect(flashShown()).toBe(true);
     expect(h.session.notifications.get().flash?.kind).toBe("cashFlash");
     expect(vi.getTimerCount()).toBe(1); // the store's one flash timer
-    // The component's subscriptions are the three chest listeners only.
-    expect(h.subscriptions.active).toBe(3);
+    // The component subscribes to nothing since U4b (C7: was the three chest listeners).
+    expect(h.subscriptions.active).toBe(0);
   });
 
   it("an active flash survives unmount/remount and expires on its original deadline", async () => {
@@ -68,7 +68,8 @@ describe("win flash — notification store (U4a)", () => {
     const { h } = await cashOutRound(true);
     expect(screen.getAllByText("CASHED OUT")).toHaveLength(1);
     expect(vi.getTimerCount()).toBe(1);
-    expect(h.subscriptions.active).toBe(3);
+    expect(h.subscriptions.active).toBe(0); // C7 (U4b): was 3
+    expect(h.renderers.filter((r) => !r.disposed)).toHaveLength(1); // one sink after the double-mount
     h.frames(framesFor(CASH_FLASH_MS) - 2);
     expect(flashShown()).toBe(true);
     h.frames(3);

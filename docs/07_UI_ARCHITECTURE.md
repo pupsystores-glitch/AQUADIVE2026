@@ -147,7 +147,7 @@ The four stores and their single writers:
 | Store | Writer | Contents |
 |---|---|---|
 | `wallet-store` | Engine settlement events only (§10) | `balance`, `roundBet` (locked basis), `participating`, `hasCashed`, `lastWin`, `history`, jackpot base |
-| `round-store` | Driver `sync` callback only (§11) | Mirror of `EnginePublicState`: `phase`, `countdownSeconds`, `multiplier`, `boost`, `chests`, `chosenChestId`, `participant` (whose `bonusEligible` gates the picker since E-X1) |
+| `round-store` | The session's round-store write only, by two paths: the driver's per-frame `sync` and the immediate write when `attachCanvas` attaches (§11) | Mirror of `EnginePublicState`: `phase`, `countdownSeconds`, `multiplier`, `boost`, `chests`, `chosenChestId`, `participant` (whose `bonusEligible` gates the picker since E-X1) |
 | `notification-store` | The wallet's flash trigger (`onFlash`), the round-transition events `bettingOpened`/`diveStarted`, its own timer; dev only: `commandRejected` (§12) | The active flash (kind + start + expiry; the amount is the wallet's `lastWin`), dev-only bounded rejection history |
 | `bet-input-store` | Betting-panel components only | The bet input value (survives remount like everything else; halve/double/quick-set logic lives here, verbatim) |
 
@@ -164,9 +164,10 @@ The four stores and their single writers:
 
 ## 11. The Round Store (Engine-State Mirror)
 
-`src/ui/store/round-store.ts` — the pull-model boundary (docs/06 §12) with one writer: the driver's `sync` callback.
+`src/ui/store/round-store.ts` — the pull-model boundary (docs/06 §12) with one writer, the session's round-store write, reached by exactly two synchronization paths: driver synchronization during frames, and immediate synchronization when the canvas attaches (below).
 
-- Snapshot = `EnginePublicState`, stored as received, once per frame while attached. No transformation, no interpretation — the projection map already speaks the UI's vocabulary (docs/06 §13).
+- Snapshot = `EnginePublicState`, **projected and normalized on write** (correction C6, U4b), once per frame while attached. No interpretation — the projection map already speaks the UI's vocabulary (docs/06 §13) — but three normalizations: `participant` is copied field by field (the engine mutates its own participant object in place, so a stored reference would change under the snapshot); chests are a frozen defensive copy, made only when their contents change (the engine never mutates its chest array in place, but the array comes from the injectable `RoundAuthority` and is handed by reference to every `chestsRevealed` listener); and a write whose fields are all unchanged keeps the previous snapshot by reference, so quiet frames notify nobody (§9), while unchanged sub-objects keep their identity across a changed write. Stored objects are frozen.
+- Synchronization (owner-approved with the U4b plan): seeded once at session construction from `engine.getPublicState()` (a pure read, SSR-safe), then written from `engine.getPublicState()` by exactly two paths. (1) **Driver synchronization during frames:** the driver's `sync`, which the session supplies itself (`attachCanvas(canvas)` no longer takes a host sync callback), runs once per rAF frame while attached, after that frame's `engine.advance()` and event dispatch, so the wallet and notification stores have already seen the frame's events. (2) **Immediate synchronization when attaching the canvas:** `attachCanvas` writes once synchronously, before `driver.attach`, so a remount never shows a stale snapshot if the engine advanced while detached; in production it is a no-op that notifies nobody (the engine advances only inside driver frames, each followed by a sync), and it consumes no tick. No event subscriptions, no timers, no other writer. A pick that the engine applied while the component was unmounted shows as revealed after the remount.
 - Derived reads live here as selectors: `potentialWin` (wallet `roundBet` × round `multiplier`, the two locked sources — computed in the screen from both stores, keeping stores independent), `canBet` (phase, countdown vs. `BET_CUTOFF_SECONDS`, participation, affordability — the action-matrix input, §13.3).
 - When detached (no canvas), the mirror simply stops updating — identical to today, where the sink is the only writer.
 - Lands in **U4b** (§17). Owner decision 2026-11-13: because the store mirrors `EnginePublicState` (whose `chests`, `chosenChestId` and `participant.bonusEligible` are engine state, not event history), the eligible chest picker **must be restored after a React component remount during `bonus`**. The component-side `chests`/`chosenChest` state and its three chest listeners are deleted in the same commit, and the U3 pin `PINNED UNTIL U4` in `src/ui/screen.remount.test.tsx` is updated there (its sanctioned step).
@@ -306,6 +307,8 @@ Sanctioned corrections recorded with the re-cut (the binding contracts are other
 - **C3** (§12, §17): the dismissible dev rejection banner moves from U4 to U6; U4a lands the dev log and the bounded history only.
 - **C4** (§13.2 consequence of V2): an active flash now survives a component remount (it was component state, lost on remount). Not a pinned behavior; covered by U4a's DOM tests.
 - **C5** (U3 harness constant, not a pin): the remount tests' `DISPLAY_SUBSCRIPTIONS` drops from 5 to 3 in U4a, because the flash subscriptions are session-owned. The 20 characterization pins are unchanged.
+- **C6** (§11, U4b): "stored as received" becomes "projected and normalized on write" — participant copied, chests defensively copied, unchanged writes keep the snapshot by reference (details in §11).
+- **C7** (U3 harness constants, not pins, U4b): `DISPLAY_SUBSCRIPTIONS` and the notification tests' subscription constants drop from 3 to 0, because the component no longer subscribes to engine events. The StrictMode "2× added" check, empty at 0, is replaced by sink assertions: one live renderer, one draw and one round-store write per rAF frame.
 
 ## 18. Multiplayer and Platform Readiness
 
