@@ -47,6 +47,7 @@ export default function AbyssAnchor() {
   const [multiplier, setMultiplier] = useState(1);
   const [chests, setChests] = useState<[BonusChest, BonusChest, BonusChest] | null>(null);
   const [chosenChest, setChosenChest] = useState<BonusChest | null>(null);
+  const [bonusEligible, setBonusEligible] = useState(false);
   const [boost, setBoost] = useState(0); // 0..1 short boost when goldfish
   const [cashFlash, setCashFlash] = useState(false);
   const [countdown, setCountdown] = useState(BETTING_WINDOW_SECONDS);
@@ -109,6 +110,7 @@ export default function AbyssAnchor() {
       setCountdown(s.countdownSeconds);
       setMultiplier(s.multiplier);
       setBoost(s.boost);
+      setBonusEligible(s.participant?.bonusEligible ?? false);
     });
 
     return () => {
@@ -122,6 +124,10 @@ export default function AbyssAnchor() {
   const isIdle = phase === "idle";
   const showCrash = phase === "crashed";
   const showBonus = phase === "bonus";
+  // E-X1 (docs/06 §5): only a bonus-eligible participant (auto-cashed at the
+  // jackpot) sees and can use the picker; manual-cashout players and
+  // spectators never do — the engine completes their bonus phase itself.
+  const showChestPicker = showBonus && bonusEligible;
   const canBet = isIdle && !participating && bet > 0 && bet <= balance && countdown > 0.2;
 
   // Displayed only while participating in a dive; based on the LOCKED bet
@@ -225,7 +231,7 @@ export default function AbyssAnchor() {
         )}
 
         {/* Bonus chests */}
-        {showBonus && chests && (
+        {showChestPicker && chests && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-end bg-black/40 pb-8 backdrop-blur-sm">
             <div className="mb-3 text-xs uppercase tracking-[0.3em] text-gold">Pirate Wreck — Pick a Chest</div>
             <div className="flex gap-4 px-6">

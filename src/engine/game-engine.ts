@@ -57,7 +57,7 @@ export interface EnginePublicState {
 }
 
 /** Snapshot schema version — bump on any breaking change to the §14 shape. */
-export const SNAPSHOT_SCHEMA_VERSION = 1;
+export const SNAPSHOT_SCHEMA_VERSION = 2;
 
 /**
  * The complete, serializable engine state (§14): the unit of restore,

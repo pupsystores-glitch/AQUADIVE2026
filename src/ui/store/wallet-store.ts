@@ -25,9 +25,11 @@
 //   a manual cashout excludes the jackpot and chest credits of that round,
 //   and the chest delta is paid only on top of this wallet's own jackpot
 //   auto-credit, at most once per round. Enforced here, in the settlement
-//   layer, independent of the chest picker's visibility — the engine still
-//   needs a pick to leave `bonus`, so spectators and cashed-out players can
-//   pick; their pick records history only.
+//   layer, independent of the chest picker's visibility. Only an eligible,
+//   jackpot-settled participation records a chest result: since E-X1 the
+//   engine never emits chestPicked for spectators or cashed-out players,
+//   and should one still arrive it is ignored entirely — no credit, no
+//   history entry.
 //
 // Flash triggers (§10: "flash triggers delegate to the notification
 // store"): the wallet decides WHEN a win flash is due — the jackpot flash
@@ -52,7 +54,7 @@ export interface WalletState {
   readonly hasCashed: boolean;
   /** Which payout settled this round's participation; null until one is applied (always null for spectators). */
   readonly settledBy: "cashout" | "jackpot" | null;
-  /** This round's chest result has been applied (credit if eligible, history either way) — the per-round idempotency guard. */
+  /** This round's eligible (jackpot-settled) chest result has been applied — the per-round idempotency guard. Stays false for ineligible rounds. */
   readonly chestSettled: boolean;
   /** Most recent win (manual cashout, jackpot, or chest total). */
   readonly lastWin: LastWin | null;
@@ -189,25 +191,22 @@ export function createWalletStore(events: WalletEventSource): WalletStore {
     // is ignored entirely (no second credit, no second history entry).
     if (w.chestSettled) return;
     // Eligible only when this wallet settled the participation through the
-    // jackpot path — a manual cashout or a spectator gets history only.
-    if (w.participating && w.settledBy === "jackpot") {
-      // The previous jackpot win was already credited; add the delta from multiplying it.
-      const jackpot = w.jackpotMultiplier;
-      const prevWin = +(w.roundBet * jackpot).toFixed(2);
-      const totalWin = +(w.roundBet * finalMultiplier).toFixed(2);
-      const delta = +(totalWin - prevWin).toFixed(2);
-      update({
-        balance: +(w.balance + delta).toFixed(2),
-        lastWin: { amount: totalWin, mult: finalMultiplier },
-        history: pushHistory(w.history, { mult: finalMultiplier, crashed: false }),
-        chestSettled: true,
-      });
-    } else {
-      update({
-        history: pushHistory(w.history, { mult: finalMultiplier, crashed: false }),
-        chestSettled: true,
-      });
-    }
+    // jackpot path. E-X1 safeguard: a manual cashout or a spectator gets
+    // nothing — no credit and no synthetic chest history entry (the engine
+    // no longer emits chestPicked for them; this guard keeps the ledger
+    // correct even if such an event reached the wallet).
+    if (!w.participating || w.settledBy !== "jackpot") return;
+    // The previous jackpot win was already credited; add the delta from multiplying it.
+    const jackpot = w.jackpotMultiplier;
+    const prevWin = +(w.roundBet * jackpot).toFixed(2);
+    const totalWin = +(w.roundBet * finalMultiplier).toFixed(2);
+    const delta = +(totalWin - prevWin).toFixed(2);
+    update({
+      balance: +(w.balance + delta).toFixed(2),
+      lastWin: { amount: totalWin, mult: finalMultiplier },
+      history: pushHistory(w.history, { mult: finalMultiplier, crashed: false }),
+      chestSettled: true,
+    });
   });
 
   return {

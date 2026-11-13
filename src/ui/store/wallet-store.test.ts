@@ -175,7 +175,7 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     expect(wallet.get().lastWin).toEqual({ amount: 1.03, mult: 3.45 });
   });
 
-  it("spectator round: no debit or credit on any path; history still records results", () => {
+  it("spectator round: no debit or credit on any path; history records the jackpot only (E-X1: no chest entry)", () => {
     dive();
     impact(77.7);
     reveal();
@@ -186,10 +186,7 @@ describe("wallet store — settlement paths (golden ledger)", () => {
       participating: false,
       hasCashed: false,
       lastWin: null,
-      history: [
-        { mult: 155.4, crashed: false },
-        { mult: 77.7, crashed: false },
-      ],
+      history: [{ mult: 77.7, crashed: false }],
     });
     expect(flashes).toEqual([]);
   });
@@ -300,9 +297,8 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
       balance: 1010,
       lastWin: { amount: 20, mult: 2 },
       settledBy: "cashout",
-      chestSettled: true,
+      chestSettled: false, // E-X1 safeguard: an ineligible pick is ignored entirely
       history: [
-        { mult: 780, crashed: false },
         { mult: 120, crashed: false },
         { mult: 2, crashed: false },
       ],
@@ -385,11 +381,9 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
       participating: false,
       hasCashed: false,
       settledBy: null,
+      chestSettled: false,
       lastWin: null,
-      history: [
-        { mult: 155.4, crashed: false },
-        { mult: 77.7, crashed: false },
-      ],
+      history: [{ mult: 77.7, crashed: false }],
     });
     expect(flashes).toEqual([]);
   });
@@ -400,7 +394,7 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
     cashOut(2); // 1010
     impact(120);
     reveal();
-    pick(1, 6.5, 780); // history only
+    pick(1, 6.5, 780); // ineligible: ignored (E-X1 safeguard)
     openBetting();
     expect(wallet.get()).toMatchObject({ settledBy: null, chestSettled: false, hasCashed: false });
 
@@ -417,6 +411,95 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
       chestSettled: true,
     });
     expect(flashes).toEqual(["cashFlash", "jackpotFlash"]);
+  });
+});
+
+describe("wallet store — E-X1 chest history safeguard (only an eligible jackpot settlement records a chest result)", () => {
+  it("spectator chestPicked: no credit, no history entry, no lastWin, no flash, chestSettled stays false", () => {
+    dive();
+    impact(120);
+    reveal();
+    const before = wallet.get();
+    pick(2, 30, 3600);
+    expect(wallet.get()).toBe(before); // no snapshot written at all
+    expect(wallet.get()).toMatchObject({
+      balance: DEFAULT_BALANCE,
+      lastWin: null,
+      chestSettled: false,
+      history: [{ mult: 120, crashed: false }],
+    });
+    expect(flashes).toEqual([]);
+  });
+
+  it("manual-cashout chestPicked: the cashout and jackpot history entries stand; no chest entry, no credit", () => {
+    bet(10);
+    dive();
+    cashOut(2);
+    impact(120);
+    reveal();
+    const before = wallet.get();
+    pick(0, 2, 240);
+    pick(1, 6.5, 780);
+    expect(wallet.get()).toBe(before);
+    expect(wallet.get()).toMatchObject({
+      balance: 1010,
+      lastWin: { amount: 20, mult: 2 },
+      settledBy: "cashout",
+      chestSettled: false,
+      history: [
+        { mult: 120, crashed: false },
+        { mult: 2, crashed: false },
+      ],
+    });
+    expect(flashes).toEqual(["cashFlash"]);
+  });
+
+  it("chestPicked before any settlement (participating, no jackpot yet): ignored", () => {
+    bet(10);
+    dive();
+    pick(0, 2, 4);
+    expect(wallet.get()).toMatchObject({
+      balance: 990,
+      settledBy: null,
+      chestSettled: false,
+      lastWin: null,
+      history: [],
+    });
+  });
+
+  it("eligible jackpot settlement still records exactly one chest entry, credited once", () => {
+    bet(10);
+    dive();
+    impact(120);
+    reveal();
+    pick(0, 2, 240); // the E-X1 timeout path applies chest 0
+    pick(0, 2, 240);
+    expect(wallet.get()).toMatchObject({
+      balance: 3390, // 990 + 1200 + (2400 - 1200)
+      lastWin: { amount: 2400, mult: 240 },
+      settledBy: "jackpot",
+      chestSettled: true,
+      history: [
+        { mult: 240, crashed: false },
+        { mult: 120, crashed: false },
+      ],
+    });
+    expect(flashes).toEqual(["jackpotFlash"]);
+  });
+
+  it("an ignored ineligible pick does not leak into the next round's eligible settlement", () => {
+    dive(); // spectating
+    impact(50);
+    reveal();
+    pick(1, 6.5, 325); // ignored
+    openBetting();
+    bet(10); // 990
+    dive();
+    impact(120); // +1200 → 2190
+    reveal();
+    pick(1, 6.5, 780); // +6600 → 8790
+    expect(wallet.get().balance).toBe(8790);
+    expect(wallet.get().history.map((h) => h.mult)).toEqual([780, 120, 50]);
   });
 });
 

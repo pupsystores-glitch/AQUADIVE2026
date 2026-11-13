@@ -21,6 +21,13 @@ export const SHIP_IMPACT_TO_CHESTS_MS = 1400;
 /** Delay between picking a chest and returning to the betting window. */
 export const CHEST_RESULT_TO_IDLE_MS = 2200;
 
+/**
+ * Bonus pick window for a bonus-eligible participant (engine freeze
+ * exception E-X1, docs/06 §5): 6 s = 360 ticks at 60 Hz. On expiry the
+ * engine applies chest 0 through the normal pick path.
+ */
+export const BONUS_PICK_WINDOW_MS = 6000;
+
 // ----- Game loop / physics limits -----
 
 /** Max simulation step per frame (seconds) — clamps rAF gaps after tab switches. */

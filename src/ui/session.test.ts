@@ -269,9 +269,9 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
     });
   });
 
-  it("real engine: cashout → seabed → bonus → chest pick settles the cashout only; the round still completes", () => {
+  it("real engine (E-X1): cashout → seabed → bonus: pick rejected, no chestPicked, cashout stands alone; the round completes", () => {
     const { session } = makeHarness(NEVER_CRASH);
-    const log = recordEvents(session.engine, ["chestPicked", "roundEnded"]);
+    const log = recordEvents(session.engine, ["chestPicked", "roundEnded", "commandRejected"]);
     session.submit({ type: "placeBet", amount: 10 });
     advanceUntilState(session.engine, "diving");
     advanceFrames(session.engine, 30);
@@ -284,15 +284,19 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
     advanceUntilState(session.engine, "impact");
     expect(session.wallet.get().balance).toBe(afterCashout);
     advanceUntilState(session.engine, "bonus");
+    expect(session.engine.getPublicState().participant?.bonusEligible).toBe(false);
     session.submit({ type: "pickChest", chestId: 2 }); // 100 × 30 — must not be credited
     advanceFrames(session.engine, 1);
-    expect(log.filter((e) => e.name === "chestPicked")).toHaveLength(1); // the pick is still accepted
+    expect(log.filter((e) => e.name === "commandRejected").map((e) => e.payload)).toEqual([
+      { roundId: 1, command: { type: "pickChest", chestId: 2 }, reason: "not-bonus-eligible" },
+    ]);
     expect(session.wallet.get()).toMatchObject({
       balance: afterCashout,
       lastWin: { amount: +(10 * m).toFixed(2), mult: m },
     });
 
-    advanceUntilState(session.engine, "betting"); // bonus is left: no stuck round
+    advanceUntilState(session.engine, "betting"); // bonus completes on its own: no stuck round
+    expect(log.filter((e) => e.name === "chestPicked")).toEqual([]);
     expect(log.filter((e) => e.name === "roundEnded")).toEqual([
       { name: "roundEnded", payload: { roundId: 1, outcome: "jackpot" } },
     ]);
@@ -300,16 +304,23 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
       balance: afterCashout,
       settledBy: null,
       chestSettled: false,
+      // No chest entry: the cashout and the round's jackpot result only.
+      history: [
+        { mult: 100, crashed: false },
+        { mult: m, crashed: false },
+      ],
     });
   });
 
-  it("real engine: spectator → bonus → chest pick: no credit; the round still completes", () => {
+  it("real engine (E-X1): spectator → bonus: pick rejected, no chestPicked, no credit; the round completes", () => {
     const { session } = makeHarness(NEVER_CRASH);
-    const log = recordEvents(session.engine, ["chestPicked", "roundEnded"]);
+    const log = recordEvents(session.engine, ["chestPicked", "roundEnded", "commandRejected"]);
     advanceUntilState(session.engine, "bonus");
     session.submit({ type: "pickChest", chestId: 2 });
     advanceFrames(session.engine, 1);
-    expect(log.filter((e) => e.name === "chestPicked")).toHaveLength(1);
+    expect(log.filter((e) => e.name === "commandRejected").map((e) => e.payload)).toEqual([
+      { roundId: 1, command: { type: "pickChest", chestId: 2 }, reason: "not-bonus-eligible" },
+    ]);
     expect(session.wallet.get()).toMatchObject({
       balance: DEFAULT_BALANCE,
       participating: false,
@@ -317,8 +328,73 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
       lastWin: null,
     });
     advanceUntilState(session.engine, "betting");
+    expect(log.filter((e) => e.name === "chestPicked")).toEqual([]);
     expect(log.filter((e) => e.name === "roundEnded")).toHaveLength(1);
     expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
+    expect(session.wallet.get().history).toEqual([{ mult: 100, crashed: false }]); // no chest entry
+  });
+
+  it("real engine (E-X1): eligible player never picks → chest 0 auto-applied and credited by the unchanged delta formula", () => {
+    const { session } = makeHarness(NEVER_CRASH);
+    const log = recordEvents(session.engine, ["chestPicked"]);
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "bonus");
+    expect(session.wallet.get().balance).toBe(1990); // 990 + 10 × 100
+    advanceUntilState(session.engine, "betting"); // nobody clicks
+    expect(log.map((e) => e.payload)).toEqual([
+      { roundId: 1, chestId: 0, chestMultiplier: 2, finalMultiplier: 200 },
+    ]);
+    // delta = +(10 × 200).toFixed(2) − +(10 × 100).toFixed(2) = 1000
+    expect(session.wallet.get()).toMatchObject({
+      balance: 2990,
+      lastWin: { amount: 2000, mult: 200 },
+      history: [
+        { mult: 200, crashed: false },
+        { mult: 100, crashed: false },
+      ],
+    });
+  });
+
+  it("real engine (E-X1): repeated rounds — the ledger follows the unchanged payout formulas on every path", () => {
+    const { session } = makeHarness(NEVER_CRASH);
+    const log = recordEvents(session.engine, ["chestPicked", "roundEnded"]);
+
+    // Round 1: eligible, manual pick chest 1 → 990 + 1000 + (6500 − 1000) = 7490
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "bonus");
+    session.submit({ type: "pickChest", chestId: 1 });
+    advanceUntilState(session.engine, "betting");
+    expect(session.wallet.get().balance).toBe(7490);
+
+    // Round 2: spectator — no movement.
+    advanceUntilState(session.engine, "bonus");
+    advanceUntilState(session.engine, "betting");
+    expect(session.wallet.get().balance).toBe(7490);
+
+    // Round 3: manual cashout → seabed — cashout only.
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "diving");
+    advanceFrames(session.engine, 30);
+    const m = session.engine.getPublicState().multiplier;
+    session.submit({ type: "cashOut" });
+    advanceUntilState(session.engine, "betting");
+    const afterRound3 = +(+(7490 - 10).toFixed(2) + +(10 * m).toFixed(2)).toFixed(2);
+    expect(session.wallet.get().balance).toBe(afterRound3);
+
+    // Round 4: eligible, auto-pick chest 0 → −10 + 1000 + (2000 − 1000)
+    session.submit({ type: "placeBet", amount: 10 });
+    advanceUntilState(session.engine, "bonus"); // nobody clicks
+    advanceUntilState(session.engine, "betting");
+    let expected = +(afterRound3 - 10).toFixed(2); // debit
+    expected = +(expected + 1000).toFixed(2); // jackpot auto-credit 10 × 100
+    expected = +(expected + 1000).toFixed(2); // chest delta 2000 − 1000
+    expect(session.wallet.get().balance).toBe(expected);
+
+    expect(log.filter((e) => e.name === "chestPicked").map((e) => e.payload)).toEqual([
+      { roundId: 1, chestId: 1, chestMultiplier: 6.5, finalMultiplier: 650 },
+      { roundId: 4, chestId: 0, chestMultiplier: 2, finalMultiplier: 200 },
+    ]);
+    expect(log.filter((e) => e.name === "roundEnded")).toHaveLength(4);
   });
 });
 

@@ -183,8 +183,7 @@ describe("GameEngine — RenderState projection (§15: byte-compatible with docs
     // Through bonus and back to betting the field clears with the round.
     advanceTicks(engine, 84 - 30); // impact → bonus
     expect(engine.state).toBe("bonus");
-    engine.submit({ type: "pickChest", chestId: 0 });
-    advanceTicks(engine, 1 + 132); // pick + result interval → betting
+    advanceTicks(engine, 132); // spectator (E-X1): no pick, result interval only → betting
     expect(engine.state).toBe("betting");
     expect(engine.getRenderState().shipImpact).toBeNull();
   });
@@ -222,6 +221,7 @@ describe("GameEngine — RenderTime + public-state projections (§13, D5)", () =
       betAmount: 25,
       cashedOut: false,
       cashedOutAt: null,
+      bonusEligible: false,
     });
 
     advanceTicks(engine, BETTING_TICKS - 1); // → diving
@@ -232,10 +232,12 @@ describe("GameEngine — RenderTime + public-state projections (§13, D5)", () =
     expect(ps.phase).toBe("diving"); // §5: cashout is not a transition
     expect(ps.participant?.cashedOut).toBe(true);
     expect(ps.participant?.cashedOutAt).toBeGreaterThan(1);
+    expect(ps.participant?.bonusEligible).toBe(false); // E-X1: manual cashout never makes it eligible
   });
 
   it("getPublicState: chests and the chosen chest id surface in bonus", () => {
     const engine = makeEngine(1e9);
+    engine.submit({ type: "placeBet", amount: 10 }); // E-X1: auto-cashed participant may pick
     advanceTicks(engine, BETTING_TICKS);
     advanceUntil(engine, 5000, () => engine.state !== "diving");
     advanceTicks(engine, 84); // impact → bonus
@@ -243,6 +245,7 @@ describe("GameEngine — RenderTime + public-state projections (§13, D5)", () =
     expect(ps.phase).toBe("bonus");
     expect(ps.chests).toHaveLength(3);
     expect(ps.chosenChestId).toBeNull();
+    expect(ps.participant?.bonusEligible).toBe(true);
 
     engine.submit({ type: "pickChest", chestId: 2 });
     advanceTicks(engine, 1);

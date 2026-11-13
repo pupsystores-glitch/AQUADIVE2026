@@ -128,6 +128,78 @@ describe("EngineSnapshot — §14 model", () => {
     expect(a.getPublicState().participant?.cashedOut).toBe(false);
   });
 
+  // E-X1 (docs/06 §5): bonus eligibility rides the participant slice and the
+  // pick window rides the single pending timer, so a restore mid-bonus
+  // continues the identical deterministic completion.
+  it("E-X1: restore mid pick-window continues to the identical auto-pick and round end", () => {
+    const a = makeEngine();
+    a.submit({ type: "placeBet", amount: 10 });
+    for (let i = 0; i < 10000 && a.state !== "bonus"; i++) a.advance(TICK_SECONDS);
+    expect(a.state).toBe("bonus");
+    advanceTicks(a, 100);
+
+    const s = a.snapshot();
+    expect(s.round.participant?.bonusEligible).toBe(true);
+    expect(s.round.timerTicks).toBe(360 - 100);
+    expect(s.round.chosenChestId).toBeNull();
+    expect(JSON.parse(JSON.stringify(s))).toEqual(s);
+
+    const b = makeEngine();
+    b.restore(JSON.parse(JSON.stringify(s)));
+    const picksA: unknown[] = [];
+    const picksB: unknown[] = [];
+    a.events.on("chestPicked", (p) => picksA.push(p));
+    b.events.on("chestPicked", (p) => picksB.push(p));
+
+    advanceTicks(a, 260);
+    advanceTicks(b, 260);
+    const expected = [{ roundId: 1, chestId: 0, chestMultiplier: 2, finalMultiplier: 240 }];
+    expect(picksA).toEqual(expected);
+    expect(picksB).toEqual(expected);
+    expect(b.snapshot()).toEqual(a.snapshot());
+
+    advanceTicks(a, 132);
+    advanceTicks(b, 132);
+    expect(a.state).toBe("betting");
+    expect(b.snapshot()).toEqual(a.snapshot());
+  });
+
+  it("E-X1: restore mid-bonus for an ineligible participant completes without a chestPicked", () => {
+    const a = makeEngine();
+    a.submit({ type: "placeBet", amount: 10 });
+    advanceTicks(a, BETTING_TICKS + 30);
+    a.submit({ type: "cashOut" });
+    for (let i = 0; i < 10000 && a.state !== "bonus"; i++) a.advance(TICK_SECONDS);
+    advanceTicks(a, 50);
+
+    const s = a.snapshot();
+    expect(s.round.participant?.bonusEligible).toBe(false);
+    expect(s.round.timerTicks).toBe(132 - 50);
+
+    const b = makeEngine();
+    b.restore(s);
+    const picks: unknown[] = [];
+    b.events.on("chestPicked", (p) => picks.push(p));
+    advanceTicks(b, 81);
+    expect(b.state).toBe("bonus");
+    advanceTicks(b, 1);
+    expect(b.state).toBe("betting");
+    expect(picks).toEqual([]);
+  });
+
+  it("E-X1: the participant shape change bumped the schema; a v1 snapshot is rejected", () => {
+    expect(SNAPSHOT_SCHEMA_VERSION).toBe(2);
+    const a = makeEngine();
+    const before = a.snapshot();
+    const errors: unknown[] = [];
+    a.events.on("engineError", (p) => errors.push(p));
+    a.restore({ ...before, schemaVersion: 1 });
+    advanceTicks(a, 1);
+    expect(errors).toEqual([
+      { roundId: 1, code: "snapshot-schema-mismatch", detail: { schemaVersion: 1 } },
+    ]);
+  });
+
   it("rejects an unknown schema version: engineError reported, state untouched (§18 ring 1)", () => {
     const a = makeEngine();
     advanceTicks(a, 10);

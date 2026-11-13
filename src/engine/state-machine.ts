@@ -24,6 +24,14 @@
 // computes `RenderState.shipImpact.elapsed = simTime − impactAt` on the
 // simulation clock (§8 — the component's performance.now() bookkeeping is
 // deleted); the machine's serializable slice is `RoundSnapshot` (§14).
+//
+// E-X1 (approved engine freeze exception, docs/06 §5): bonus eligibility and
+// deterministic completion. Only a participant auto-cashed at the jackpot
+// (no manual cashout) is bonus-eligible; it gets a BONUS_PICK_WINDOW and,
+// if it does not pick, chest 0 is applied through the same pick path.
+// Without an eligible local participant the bonus phase completes after the
+// result interval with no chestPicked event. This is a LOCAL single-player
+// rule: a Phase 8 server completes bonus independently of any one player.
 
 import type { Phase } from "@/rendering/scene-renderer";
 import { TICK_SECONDS } from "./clock";
@@ -31,6 +39,7 @@ import type { EngineCommand } from "./commands";
 import type { BonusChest } from "./domain/outcomes";
 import {
   BETTING_WINDOW_SECONDS,
+  BONUS_PICK_WINDOW_MS,
   CHEST_RESULT_TO_IDLE_MS,
   CRASH_BANNER_MS,
   SHIP_IMPACT_TO_CHESTS_MS,
@@ -54,6 +63,12 @@ export interface ParticipantRoundState {
   cashedOut: boolean;
   /** Multiplier locked at cashout (manual or jackpot auto-cash); null until then. */
   cashedOutAt: number | null;
+  /**
+   * E-X1: this participant may pick a bonus chest — set at entry(impact)
+   * iff it was auto-cashed at the jackpot (it did not cash out manually).
+   * Local-participant eligibility only; not the Phase 8 multiplayer rule.
+   */
+  bonusEligible: boolean;
 }
 
 /** Duration (ms) → whole simulation ticks (§8 quantization). */
@@ -164,9 +179,13 @@ export class RoundStateMachine {
         if (this.timerTicks !== null && --this.timerTicks <= 0) this.enterBonus();
         break;
       case "bonus":
-        // No timer until a chest is picked: an unpicked chest waits forever
-        // (§5, preserved as-is; the auto-pick timeout is reserved for Phase 8).
-        if (this.timerTicks !== null && --this.timerTicks <= 0) this.enterBetting("jackpot");
+        // E-X1: one timer, two meanings. Eligible and unpicked → it is the
+        // pick window, and expiry applies chest 0 (which schedules the
+        // result interval). Otherwise → it is the result interval → betting.
+        if (this.timerTicks !== null && --this.timerTicks <= 0) {
+          if (this.isLocalBonusEligible() && this._chosenChestId === null) this.applyChest(0);
+          else this.enterBetting("jackpot");
+        }
         break;
     }
   }
@@ -201,7 +220,12 @@ export class RoundStateMachine {
     if (this._state !== "betting") return this.reject(command, "not-in-betting");
     if (this._participant !== null) return this.reject(command, "already-participating");
     if (!(command.amount > 0)) return this.reject(command, "invalid-amount");
-    this._participant = { betAmount: command.amount, cashedOut: false, cashedOutAt: null };
+    this._participant = {
+      betAmount: command.amount,
+      cashedOut: false,
+      cashedOutAt: null,
+      bonusEligible: false,
+    };
     this.deps.events.emit("betPlaced", { roundId: this._roundId, amount: command.amount });
   }
 
@@ -219,18 +243,32 @@ export class RoundStateMachine {
   }
 
   // §5: bonus ──[pickChest]→ apply chest ──[CHEST_RESULT duration]→ betting.
+  // E-X1: only a bonus-eligible participant may pick.
   private applyPickChest(command: EngineCommand & { type: "pickChest" }): void {
     if (this._state !== "bonus" || this._chests === null) {
       return this.reject(command, "not-in-bonus");
     }
+    if (!this.isLocalBonusEligible()) return this.reject(command, "not-bonus-eligible");
     if (this._chosenChestId !== null) return this.reject(command, "chest-already-picked");
-    this._chosenChestId = command.chestId;
-    const chest = this._chests[command.chestId];
+    this.applyChest(command.chestId);
+  }
+
+  /** E-X1: the local participant's bonus eligibility (not the Phase 8 global rule). */
+  private isLocalBonusEligible(): boolean {
+    return this._participant !== null && this._participant.bonusEligible;
+  }
+
+  // The single chest-apply path, shared by a manual pick and the E-X1
+  // pick-window expiry (chest 0): same event, same math, same result timer.
+  private applyChest(chestId: 0 | 1 | 2): void {
+    if (this._chests === null) return;
+    this._chosenChestId = chestId;
+    const chest = this._chests[chestId];
     const finalMultiplier = +(this.jackpotMultiplier * chest.multiplier).toFixed(2);
     this.deps.sim.lockMultiplier(finalMultiplier);
     this.deps.events.emit("chestPicked", {
       roundId: this._roundId,
-      chestId: command.chestId,
+      chestId,
       chestMultiplier: chest.multiplier,
       finalMultiplier,
     });
@@ -280,6 +318,7 @@ export class RoundStateMachine {
     if (this._participant !== null && !this._participant.cashedOut) {
       this._participant.cashedOut = true;
       this._participant.cashedOutAt = this.jackpotMultiplier;
+      this._participant.bonusEligible = true; // E-X1: jackpot auto-cash ⇒ may pick
     }
     this.timerTicks = ticksFor(SHIP_IMPACT_TO_CHESTS_MS);
     this.transition("impact");
@@ -289,10 +328,14 @@ export class RoundStateMachine {
     });
   }
 
-  // entry(bonus), §5: the authority rolls the chests; then wait for the pick.
+  // entry(bonus), §5: the authority rolls the chests. E-X1: an eligible
+  // participant gets the pick window (expiry → chest 0); otherwise only the
+  // result interval runs and no chest is ever picked this round.
   private enterBonus(): void {
     this._chests = this.deps.authority.rollBonusChests();
-    this.timerTicks = null;
+    this.timerTicks = this.isLocalBonusEligible()
+      ? ticksFor(BONUS_PICK_WINDOW_MS)
+      : ticksFor(CHEST_RESULT_TO_IDLE_MS);
     this.transition("bonus");
     this.deps.events.emit("chestsRevealed", { roundId: this._roundId, chests: this._chests });
   }

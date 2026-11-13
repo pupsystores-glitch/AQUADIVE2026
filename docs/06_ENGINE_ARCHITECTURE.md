@@ -96,7 +96,12 @@ diving ──[worldY ≥ CHAIN_MAX_DEPTH]─────────────
 impact ──[timer]─────────────────────────────────────▶ bonus
           entry(bonus): RoundAuthority rolls chests; emit chestsRevealed
 
-bonus ──[pickChest command] → apply chest ──[CHEST_RESULT duration]──▶ betting
+          (E-X1) local participant bonus-eligible ⇒ schedule BONUS_PICK_WINDOW (6 s = 360 ticks)
+                 otherwise                         ⇒ schedule CHEST_RESULT duration (no pick, no chestPicked)
+
+bonus ──[pickChest command, eligible] → apply chest ──[CHEST_RESULT duration]──▶ betting
+bonus ──[pick window expired, eligible] → apply chest 0 (same path) ──[CHEST_RESULT duration]──▶ betting
+bonus ──[timer, not eligible]────────────────────────▶ betting      (E-X1: no chestPicked)
 
 crashed ──[timer]────────────────────────────────────▶ betting
           entry(betting): countdown := BETTING_WINDOW_SECONDS; emit bettingOpened
@@ -105,7 +110,12 @@ crashed ──[timer]───────────────────�
 Rules and notes:
 
 - **Manual cashout is not a transition.** It flips the participant's `cashedOut` flag while the state stays `diving` — exactly today's behavior (the anchor keeps descending after cashout).
-- **`bonus` has no timeout today** (an unpicked chest waits forever). Preserved as-is in the client version; a server-authoritative round cannot wait on one player, so an *auto-pick timeout* transition is reserved here for Phase 8 (server picks after N seconds). Documented now so it lands as a config value, not a redesign.
+- **Engine freeze exception E-X1 — bonus eligibility and deterministic completion** (owner-approved 2026-11-13, during the Sprint 4 engine freeze; supersedes the former "`bonus` has no timeout" note, under which an unpicked chest waited forever and spectators / manually cashed-out players had to pick to end the round):
+  - *Eligibility.* The local participant is **bonus-eligible** iff it placed a bet this round and was auto-cashed at the jackpot on entry(impact) — i.e. it did **not** cash out manually. Recorded as `ParticipantRoundState.bonusEligible`, set at entry(impact). Spectators (no participant) and manual-cashout participants are ineligible.
+  - *Eligible.* entry(bonus) schedules a pick window of `BONUS_PICK_WINDOW_MS` = 6 s = 360 ticks. A `pickChest` inside the window applies as before. If the window expires unpicked, the machine applies **chest 0** through the same apply path (same `chestPicked` event, same `finalMultiplier` math, same settlement), then the CHEST_RESULT interval → betting.
+  - *Ineligible.* `pickChest` is rejected (`"not-bonus-eligible"`); no `chestPicked` is ever emitted for the round; entry(bonus) schedules the CHEST_RESULT interval and the round ends (`roundEnded { outcome: "jackpot" }`) with the chests revealed but never opened.
+  - Jackpot and cashout settlement calculations are unchanged; the wallet's own exclusivity guards stay in force as defense in depth.
+  - **Limitation — not the multiplayer rule.** E-X1 is a *local single-player demo* compatibility fix: whether the bonus phase waits for a pick depends on the one local participant's eligibility. That is **not** the authoritative global rule. In Phase 8 the server-authoritative round must complete the bonus phase on its own schedule, independent of any single player's eligibility; per-player eligibility then decides only who may pick and who is credited, and a server-side auto-pick (or per-player default) replaces the local chest-0 rule.
 - Illegal transitions and commands invalid for the current state are rejected and reported (§12, §18) — never silently applied, never thrown across the tick boundary.
 - The `crashed`/`impact` double-fire race that exists today (both conditions can trigger in the same frame because the current tick body has no early exit) is resolved by the terminal-transition rule in §6. Sanctioned delta D3.
 
@@ -126,7 +136,7 @@ One full round, end to end:
    8. sea-floor check (`worldY ≥ CHAIN_MAX_DEPTH`) → transition, **end of pipeline for this tick**
    A terminal transition (steps 4, 8) ends the pipeline for that tick. Today the remaining steps still run once after a crash — a measure-zero, invisible difference (next frame's phase check stopped them anyway), removed because it is the source of the §5 double-fire race. Sanctioned delta D3.
 4. **Round end, path A: crash** — banner interval, then back to betting. If the participant hadn't cashed out, the settlement layer records the loss (the bet was already debited at `placeBet`).
-5. **Round end, path B: jackpot** — jackpot locked and (if participating and not yet cashed) auto-cashed at the jackpot multiplier; impact FX; chests revealed; pick multiplies the jackpot; result interval; back to betting.
+5. **Round end, path B: jackpot** — jackpot locked and (if participating and not yet cashed) auto-cashed at the jackpot multiplier; impact FX; chests revealed; pick multiplies the jackpot (E-X1: eligible participant only — chest 0 is applied if the 6 s window expires; no pick for ineligible participants or spectators, §5); result interval; back to betting.
 6. **Intermission = the next betting window.** There is no separate state; `betting` is both.
 
 Round identity: every round gets a monotonically increasing `roundId`, stamped on all events and snapshots. Today nothing consumes it; multiplayer, history, and provably-fair verification all key on it, so it exists from day one (it costs one integer).
@@ -225,7 +235,7 @@ Event map (payloads carry `roundId`; shapes finalized in the extraction commit t
 | `crashed { multiplier }` | entry(crashed) | Settlement (loss record), UI, history, FX/audio later |
 | `shipImpact { jackpotMultiplier }` | entry(impact) | Settlement (jackpot credit), UI, history; FX already ride `RenderState.shipImpact` per docs/05 §17 |
 | `chestsRevealed { chests }` | entry(bonus) | UI |
-| `chestPicked { chestId, chestMultiplier, finalMultiplier }` | accepted pick | Settlement (delta credit), UI, history |
+| `chestPicked { chestId, chestMultiplier, finalMultiplier }` | accepted pick, or pick-window expiry (chest 0) — eligible participant only (E-X1, §5) | Settlement (delta credit), UI, history |
 | `roundEnded { outcome }` | entry(betting) from crashed/bonus | History, analytics later |
 | `stateChanged { from, to }` | every transition | UI shell, debugging |
 | `engineError { code, detail }` | invariant violation (§18) | UI, monitoring later |
@@ -283,7 +293,7 @@ Contents (exact fields finalized in the extraction commit; categories fixed here
 - State-machine position: current state + remaining duration of its pending timer (if any) + countdown remaining
 - Round data: dive-start sim time, `crashAt`†, jackpot multiplier (once locked), chest values† (once rolled), `impactAt`
 - World: `worldY`, boost, spawn cursor (`nextSpawnAt`, next creature id), creature array
-- Participant state: bet amount, cashed-out flag + multiplier, chosen chest
+- Participant state: bet amount, cashed-out flag + multiplier, bonus eligibility (E-X1, §5), chosen chest
 - RNG stream positions (seeded mode) — so restore + replay continues the identical sequence
 
 † **Secrecy classes.** Fields marked † are *authority-secret*: they exist before they are publicly knowable (`crashAt` from dive start, chest values from reveal). Two snapshot views follow: **AuthoritySnapshot** (everything — local mode, server internal) and **PublicSnapshot** (secrets withheld until their disclosure event). The server broadcasts only PublicSnapshots; a client can never be handed the crash point early. In today's authority-mode client the distinction is latent (one process), but the shape is designed now so Phase 8 does not re-cut the snapshot.

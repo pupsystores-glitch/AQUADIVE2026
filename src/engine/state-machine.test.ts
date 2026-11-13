@@ -17,6 +17,7 @@ import type { BonusChest } from "./domain/outcomes";
 import type { EngineEventMap } from "./events";
 import { GameEngine } from "./game-engine";
 import type { RoundAuthority } from "./round-authority";
+import { BONUS_PICK_WINDOW_MS } from "./domain/tuning";
 import { ENGINE_STATE_TO_PHASE } from "./state-machine";
 
 const BETTING_TICKS = 300;
@@ -130,9 +131,10 @@ describe("round state machine — §5 transition table on the simulation clock (
     ]);
   });
 
-  it("jackpot path: sea floor → impact (84 ticks) → bonus (waits forever) → pick → result → betting", () => {
+  it("jackpot path: sea floor → impact (84 ticks) → bonus (E-X1 pick window) → pick → result → betting", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
-    advanceTicks(h.engine, BETTING_TICKS); // → diving
+    h.engine.submit({ type: "placeBet", amount: 10 }); // E-X1: only an auto-cashed participant may pick
+    advanceTicks(h.engine, BETTING_TICKS); // bet applied; → diving
 
     advanceUntil(h.engine, 5000, () => h.engine.state !== "diving");
     expect(h.engine.state).toBe("impact");
@@ -152,8 +154,9 @@ describe("round state machine — §5 transition table on the simulation clock (
       { name: "chestsRevealed", payload: { roundId: 1, chests: CHESTS } },
     ]);
 
-    advanceTicks(h.engine, 1000); // no timeout: an unpicked chest waits forever (§5)
+    advanceTicks(h.engine, 300); // inside the 360-tick pick window (E-X1): still waiting
     expect(h.engine.state).toBe("bonus");
+    expect(h.log.filter((e) => e.name === "chestPicked")).toEqual([]);
 
     // D4: the pick is a queued command, applied at the next tick boundary.
     h.engine.submit({ type: "pickChest", chestId: 1 });
@@ -286,6 +289,7 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
   it("rejects invalid pickChest commands and reports them without state change", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
     h.engine.submit({ type: "pickChest", chestId: 0 }); // still in betting
+    h.engine.submit({ type: "placeBet", amount: 10 }); // E-X1: participate so the bonus pick is eligible
     advanceTicks(h.engine, 1);
     expect(h.engine.state).toBe("betting");
     expect(h.log.filter((e) => e.name === "commandRejected")).toEqual([
@@ -384,5 +388,173 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
       { roundId: 1, amount: 25 },
       { roundId: 2, amount: 50 },
     ]);
+  });
+});
+
+// E-X1 (approved engine freeze exception, docs/06 §5): bonus eligibility and
+// deterministic completion. Only a participant auto-cashed at the jackpot is
+// bonus-eligible: it gets a 6 s = 360-tick pick window, and on expiry chest 0
+// is applied through the normal pick path. Without an eligible local
+// participant (spectator, manual cashout) the bonus phase runs only the
+// result interval and no chestPicked is ever emitted. Local single-player
+// rule — not the Phase 8 multiplayer rule.
+describe("E-X1 — bonus eligibility and deterministic completion", () => {
+  const PICK_WINDOW_TICKS = 360;
+
+  type Harness = ReturnType<typeof makeHarness>;
+  const picks = (h: Harness) => h.log.filter((e) => e.name === "chestPicked").map((e) => e.payload);
+  const rejections = (h: Harness) =>
+    h.log
+      .filter((e) => e.name === "commandRejected")
+      .map((e) => e.payload as EngineEventMap["commandRejected"]);
+
+  /** Run one round from the betting window to entry(bonus). */
+  function toBonus(h: Harness, opts: { bet?: number; cashOutAfterTicks?: number } = {}) {
+    if (opts.bet !== undefined) h.engine.submit({ type: "placeBet", amount: opts.bet });
+    advanceUntil(h.engine, 1000, () => h.engine.state === "diving");
+    if (opts.cashOutAfterTicks !== undefined) {
+      advanceTicks(h.engine, opts.cashOutAfterTicks);
+      h.engine.submit({ type: "cashOut" });
+    }
+    advanceUntil(h.engine, 5000, () => h.engine.state === "impact");
+    advanceTicks(h.engine, IMPACT_TICKS);
+    expect(h.engine.state).toBe("bonus");
+  }
+
+  it("pins the pick window: 6 s = 360 ticks", () => {
+    expect(Math.round(BONUS_PICK_WINDOW_MS / 1000 / TICK_SECONDS)).toBe(PICK_WINDOW_TICKS);
+  });
+
+  it("eligible: jackpot auto-cash marks the participant eligible; a manual pick in the window applies", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    toBonus(h, { bet: 10 });
+    expect(h.engine.getPublicState().participant).toEqual({
+      betAmount: 10,
+      cashedOut: true,
+      cashedOutAt: 120,
+      bonusEligible: true,
+    });
+    advanceTicks(h.engine, PICK_WINDOW_TICKS - 1); // the command lands on the window's final tick
+    h.engine.submit({ type: "pickChest", chestId: 2 });
+    advanceTicks(h.engine, 1);
+    expect(picks(h)).toEqual([
+      { roundId: 1, chestId: 2, chestMultiplier: 30, finalMultiplier: 3600 },
+    ]); // the manual pick wins the boundary tick — no auto-pick
+    expect(rejections(h)).toEqual([]);
+    advanceTicks(h.engine, CHEST_RESULT_TICKS - 2);
+    expect(h.engine.state).toBe("bonus");
+    advanceTicks(h.engine, 1);
+    expect(h.engine.state).toBe("betting");
+    expect(picks(h)).toHaveLength(1);
+  });
+
+  it("eligible: no pick within 360 ticks → chest 0 applied through the pick path, then the result interval", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    toBonus(h, { bet: 10 });
+    advanceTicks(h.engine, PICK_WINDOW_TICKS - 1);
+    expect(h.engine.state).toBe("bonus");
+    expect(picks(h)).toEqual([]);
+
+    advanceTicks(h.engine, 1); // window expires
+    expect(picks(h)).toEqual([
+      { roundId: 1, chestId: 0, chestMultiplier: 2, finalMultiplier: 240 }, // +(120·2).toFixed(2)
+    ]);
+    expect(h.engine.getPublicState().chosenChestId).toBe(0);
+    expect(h.engine.getPublicState().multiplier).toBe(240);
+    expect(h.engine.state).toBe("bonus");
+
+    advanceTicks(h.engine, CHEST_RESULT_TICKS - 1);
+    expect(h.engine.state).toBe("bonus");
+    advanceTicks(h.engine, 1);
+    expect(h.engine.state).toBe("betting");
+    expect(h.log.filter((e) => e.name === "roundEnded").map((e) => e.payload)).toEqual([
+      { roundId: 1, outcome: "jackpot" },
+    ]);
+  });
+
+  it("manual cashout → seabed: ineligible, pick rejected, no chestPicked, bonus completes after the result interval", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    toBonus(h, { bet: 10, cashOutAfterTicks: 30 });
+    expect(h.log.filter((e) => e.name === "cashedOut")).toHaveLength(1);
+    expect(h.engine.getPublicState().participant?.bonusEligible).toBe(false);
+    expect(h.log.filter((e) => e.name === "chestsRevealed")).toHaveLength(1); // round data still revealed
+
+    h.engine.submit({ type: "pickChest", chestId: 2 });
+    advanceTicks(h.engine, 1);
+    expect(rejections(h)).toEqual([
+      { roundId: 1, command: { type: "pickChest", chestId: 2 }, reason: "not-bonus-eligible" },
+    ]);
+    expect(h.engine.getPublicState().chosenChestId).toBeNull();
+    expect(h.engine.getPublicState().multiplier).toBe(120); // jackpot stays locked, never multiplied
+
+    advanceTicks(h.engine, CHEST_RESULT_TICKS - 2);
+    expect(h.engine.state).toBe("bonus");
+    advanceTicks(h.engine, 1);
+    expect(h.engine.state).toBe("betting");
+    expect(picks(h)).toEqual([]);
+    expect(h.log.filter((e) => e.name === "roundEnded").map((e) => e.payload)).toEqual([
+      { roundId: 1, outcome: "jackpot" },
+    ]);
+  });
+
+  it("spectator: no participant, pick rejected, no chestPicked, bonus completes after exactly 132 ticks", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    toBonus(h);
+    expect(h.engine.getPublicState().participant).toBeNull();
+    h.engine.submit({ type: "pickChest", chestId: 0 });
+    advanceTicks(h.engine, CHEST_RESULT_TICKS - 1);
+    expect(h.engine.state).toBe("bonus");
+    advanceTicks(h.engine, 1);
+    expect(h.engine.state).toBe("betting");
+    expect(picks(h)).toEqual([]);
+    expect(rejections(h)).toEqual([
+      { roundId: 1, command: { type: "pickChest", chestId: 0 }, reason: "not-bonus-eligible" },
+    ]);
+  });
+
+  it("duplicate protection: picks after the auto-pick are rejected", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    toBonus(h, { bet: 10 });
+    advanceTicks(h.engine, PICK_WINDOW_TICKS); // auto-pick chest 0
+    h.engine.submit({ type: "pickChest", chestId: 1 });
+    h.engine.submit({ type: "pickChest", chestId: 0 });
+    advanceTicks(h.engine, 1);
+    expect(picks(h)).toHaveLength(1);
+    expect(rejections(h).map((r) => r.reason)).toEqual([
+      "chest-already-picked",
+      "chest-already-picked",
+    ]);
+    expect(h.engine.getPublicState().chosenChestId).toBe(0);
+  });
+
+  it("repeated rounds: eligibility is per round and never leaks between rounds", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    const finish = () => advanceUntil(h.engine, 1000, () => h.engine.state === "betting");
+
+    toBonus(h, { bet: 10 }); // round 1: eligible, auto-pick
+    advanceTicks(h.engine, PICK_WINDOW_TICKS);
+    finish();
+    toBonus(h); // round 2: spectator
+    expect(h.engine.getPublicState().participant).toBeNull();
+    finish();
+    toBonus(h, { bet: 10, cashOutAfterTicks: 30 }); // round 3: manual cashout
+    expect(h.engine.getPublicState().participant?.bonusEligible).toBe(false);
+    finish();
+    toBonus(h, { bet: 10 }); // round 4: eligible, manual pick
+    expect(h.engine.getPublicState().chosenChestId).toBeNull(); // reset at entry(diving)
+    h.engine.submit({ type: "pickChest", chestId: 1 });
+    finish();
+
+    expect(picks(h)).toEqual([
+      { roundId: 1, chestId: 0, chestMultiplier: 2, finalMultiplier: 240 },
+      { roundId: 4, chestId: 1, chestMultiplier: 6.5, finalMultiplier: 780 },
+    ]);
+    expect(h.log.filter((e) => e.name === "roundEnded").map((e) => e.payload)).toEqual([
+      { roundId: 1, outcome: "jackpot" },
+      { roundId: 2, outcome: "jackpot" },
+      { roundId: 3, outcome: "jackpot" },
+      { roundId: 4, outcome: "jackpot" },
+    ]);
+    expect(rejections(h)).toEqual([]);
   });
 });
