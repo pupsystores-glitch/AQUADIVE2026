@@ -6,17 +6,16 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-
-
 export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
   preview: {
-    allowedHosts: true, // <-- გადააკეთეთ true-ზე, რომ ნებისმიერი ჰოსტი გაატაროს
+    allowedHosts: true,
     port: process.env.PORT ? parseInt(process.env.PORT) : 4173,
     host: true
   }
 });
+
 
 
