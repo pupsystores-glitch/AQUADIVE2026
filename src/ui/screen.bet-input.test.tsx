@@ -16,7 +16,7 @@
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { bootScreen, type ScreenHarness } from "@/ui/test/dom-harness";
-import { payoutOracle } from "@/ui/test/money-oracle";
+import { floorCentsBinary, payoutOracle } from "@/ui/test/money-oracle";
 
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
 const queryButton = (name: string | RegExp) => screen.queryByRole("button", { name });
@@ -224,6 +224,47 @@ describe("the action matrix in every phase (§13.3, D10)", () => {
     h.frames(30);
     const m = h.session.engine.getPublicState().multiplier;
     expect(button(`CASH OUT · ${payoutOracle(10, m).toFixed(2)}`)).toBeTruthy();
+  });
+});
+
+// MT-10 (docs/07 §23.7 "the displayed potentialWin equals the credit that
+// cashing out on that tick would produce"; §23.16). Both sides are read on
+// the same authoritative tick: the labels and the round store's multiplier
+// are captured after the last frame and before the click; the click only
+// queues the command, and the next tick drains it before stepping (D4), so
+// cashedOut carries that same multiplier. Nothing read after the click is
+// compared with the label: the post-cashout label follows the live
+// multiplier (D4, Q8c) and is covered by the characterization pin.
+describe("displayed potential ⇔ cashout credit on the same tick (MT-10)", () => {
+  it("MT-10: the Potential and CASH OUT labels equal the credit of cashing out on that tick, at the same multiplier", async () => {
+    const h = await bootScreen(); // never crashes
+    h.mount();
+    const cashed: number[] = [];
+    h.session.engine.events.on("cashedOut", ({ multiplier }) => cashed.push(multiplier));
+    await h.user.click(button("10"));
+    await h.user.click(button(/^PLACE BET/));
+    h.untilState("diving");
+    h.frames(30);
+
+    // Captured after the last frame, before the click.
+    const mShown = h.session.round.get().multiplier;
+    const potentialText = screen.getByText("Potential").textContent;
+    const cashLabel = button(/^CASH OUT · /).textContent;
+    const expected = payoutOracle(10, mShown);
+
+    await h.user.click(button(/^CASH OUT · /));
+    h.tick();
+
+    expect(cashed).toHaveLength(1);
+    expect(Object.is(cashed[0], mShown)).toBe(true); // the same authoritative multiplier, the same double
+    expect(potentialText).toBe(`Potential ${expected.toFixed(2)}`);
+    expect(cashLabel).toBe(`CASH OUT · ${expected.toFixed(2)}`);
+
+    const { lastWin, balance } = h.session.wallet.get();
+    expect(lastWin).toEqual({ amount: expected, mult: mShown });
+    expect(button(`SECURED +${expected.toFixed(2)} · WATCHING DIVE…`)).toBeTruthy();
+    // The balance change, in exact cents: 990 → balance.
+    expect(BigInt(Math.round(balance * 100)) - 99000n).toBe(floorCentsBinary(1000n, mShown));
   });
 });
 

@@ -28,6 +28,23 @@ export function exactBinary(x: number): { num: bigint; den: bigint } {
     : { num: mantissa, den: 1n << BigInt(-exponent) };
 }
 
+/**
+ * The doubles one step below and one step above a finite positive double
+ * (its bit pattern ∓ 1, same DataView access as exactBinary). Used for the
+ * "one float step away" cases of §23.7.
+ */
+export function adjacentDoubles(x: number): { below: number; above: number } {
+  if (!Number.isFinite(x) || x <= 0) throw new Error(`adjacentDoubles: ${x}`);
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  const bits = view.getBigUint64(0);
+  view.setBigUint64(0, bits - 1n);
+  const below = view.getFloat64(0);
+  view.setBigUint64(0, bits + 1n);
+  const above = view.getFloat64(0);
+  return { below, above };
+}
+
 /** ⌊stakeCents × m⌋ with m's exact binary value. */
 export function floorCentsBinary(stakeCents: bigint, m: number): bigint {
   const { num, den } = exactBinary(m);

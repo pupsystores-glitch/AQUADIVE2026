@@ -1391,6 +1391,56 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         );
       });
     }
+
+    // MT-07 (docs/07 §23.7 V2 block: "each case runs through all three
+    // settlement paths"; I9). Expected cents are integer literals, checked
+    // against the integer oracle ⌊k · N / 10^4⌋ (k = 1 cent, m = N / 10^4).
+    const minimumStakeCases: Array<[number, bigint, bigint]> = [
+      // multiplier, N = m · 10^4, expected cents
+      [1.5, 15000n, 1n],
+      [1.5014, 15014n, 1n], // V2: round-to-nearest paid 0.02
+      [2.4999, 24999n, 2n],
+    ];
+    for (const [m, n, expected] of minimumStakeCases) {
+      it(`MT-07: stake 0.01 at ${m}× pays ${expected} cent(s) by cashout, by jackpot, and as the chest total`, () => {
+        const centsOf = (amount: number) => BigInt(Math.round(amount * 100));
+        expect((1n * n) / 10000n).toBe(expected); // the literal is the integer oracle's value
+
+        // Cashout at m.
+        bet(0.01);
+        dive();
+        cashOut(m);
+        expect(wallet.get().lastWin).toEqual({ amount: Number(expected) / 100, mult: m });
+        expect(centsOf(wallet.get().balance)).toBe(100000n - 1n + expected);
+
+        // Jackpot auto-cash at m.
+        openBetting();
+        const beforeJackpot = centsOf(wallet.get().balance);
+        bet(0.01);
+        dive();
+        impact(m);
+        expect(wallet.get().lastWin).toEqual({ amount: Number(expected) / 100, mult: m });
+        expect(centsOf(wallet.get().balance)).toBe(beforeJackpot - 1n + expected);
+
+        // Chest: jackpot 1.5 (1 cent), then final m — total ⌊1 · m⌋, delta total − 1.
+        openBetting();
+        const beforeChest = centsOf(wallet.get().balance);
+        bet(0.01);
+        dive();
+        impact(1.5);
+        const jackpotCredit = centsOf(wallet.get().balance) - (beforeChest - 1n);
+        expect(jackpotCredit).toBe(1n);
+        reveal();
+        pick(1, m / 1.5, m); // the engine's finalMultiplier as emitted
+        const delta = centsOf(wallet.get().balance) - (beforeChest - 1n) - jackpotCredit;
+        expect(delta).toBe(expected - 1n);
+        expect(wallet.get().lastWin).toEqual({ amount: Number(expected) / 100, mult: m });
+        // Credits per participation sum to the rounded-down total.
+        expect(jackpotCredit + delta).toBe(expected);
+
+        expect(refusals).toEqual([]);
+      });
+    }
   });
 
   it("without onRefusal a refusal is silent and still writes nothing", () => {

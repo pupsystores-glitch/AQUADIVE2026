@@ -14,7 +14,7 @@
 // later step is sanctioned to change (docs/07 §7, §17); they are updated in
 // that step's commit, and only there.
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { bootScreen, type ScreenHarness } from "@/ui/test/dom-harness";
 import { payoutOracle } from "@/ui/test/money-oracle";
 
@@ -148,6 +148,40 @@ describe("component remount over the same session", () => {
     expect(h.session.betInput.get()).toBe(25);
     const m = h.session.engine.getPublicState().multiplier;
     expect(button(`CASH OUT · ${payoutOracle(25, m).toFixed(2)}`)).toBeTruthy(); // still the locked 25
+  });
+
+  // MT-09 (docs/07 §23.7 React remount: "a sub-cent typed value survives
+  // the remount still disabled").
+  it("MT-09: a sub-cent typed value survives a remount still disabled; nothing is placed until a whole-cent value is typed", async () => {
+    const h = await bootScreen();
+    const first = h.mount();
+    const placed: number[] = [];
+    h.session.engine.events.on("betPlaced", ({ amount }) => placed.push(amount));
+    fireEvent.change(betInput(), { target: { value: "0.005" } });
+    expect(betInput().value).toBe("0.005");
+
+    first.unmount();
+    h.mount();
+    expect(betInput().value).toBe("0.005"); // as typed — never rounded
+    expect(h.session.betInput.get()).toBe(0.005);
+    expect(button(/^PLACE BET/).hasAttribute("disabled")).toBe(true);
+
+    // Click and an Enter keypress: neither places a bet.
+    await h.user.click(button(/^PLACE BET/));
+    betInput().focus();
+    await h.user.keyboard("{Enter}");
+    h.tick();
+    expect(placed).toEqual([]);
+    expect(h.session.wallet.get()).toMatchObject({ balance: 1000, participating: false });
+    expect(balanceText()).toBe("1000.00");
+
+    fireEvent.change(betInput(), { target: { value: "0.01" } });
+    expect(button(/^PLACE BET/).hasAttribute("disabled")).toBe(false);
+    await h.user.click(button(/^PLACE BET/));
+    h.tick();
+    expect(placed).toEqual([0.01]);
+    expect(h.session.wallet.get()).toMatchObject({ balance: 999.99, roundBet: 0.01 }); // debit exactly one cent
+    expect(balanceText()).toBe("999.99");
   });
 
   it("a bet changed after the bet locked survives a remount without moving the locked basis", async () => {

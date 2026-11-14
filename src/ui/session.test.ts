@@ -7,12 +7,18 @@
 // frames with explicit timestamps.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineEventMap, EngineStateName, GameEngine, RoundAuthority } from "@/engine";
-import { CASH_FLASH_MS, JACKPOT_FLASH_MS } from "@/game/config";
+import { BET_CUTOFF_SECONDS, CASH_FLASH_MS, JACKPOT_FLASH_MS } from "@/game/config";
 import { DEFAULT_BALANCE, DEFAULT_BET } from "@/game/constants";
-import { canPlaceBet } from "./components/action-state";
-import { createGameSession, type CanvasRenderer, type GameSessionDeps } from "./session";
+import { actionStateFor, canPlaceBet } from "./components/action-state";
+import {
+  createGameSession,
+  type CanvasRenderer,
+  type GameSession,
+  type GameSessionDeps,
+} from "./session";
 import type { NotificationClock } from "./store/notification-store";
-import { payoutOracle } from "./test/money-oracle";
+import { isPlaceableStake, type WalletState } from "./store/wallet-store";
+import { adjacentDoubles, payoutOracle } from "./test/money-oracle";
 
 const stubAuthority = (crashPoint = 2): RoundAuthority => ({
   sampleCrashPoint: () => crashPoint,
@@ -1051,4 +1057,348 @@ describe("createGameSession — submit edge after U5 (D7, D8, D9)", () => {
     expect(log.map((e) => e.name)).toEqual(["betPlaced"]);
     expect(session.wallet.get().balance).toBe(990);
   });
+});
+
+// ----- MT-01: Button ⇔ submit over the session matrix (owner D1; docs/07 §23.7, §23.5; I3, I2, I8) -----
+//
+// For every cell (phase × participation × countdown point × balance) and
+// every value of the matrix:
+//   P1 (every cell): "the session forwards placeBet to the engine" equals
+//      isPlaceableStake(v, balance) equals wallet.canPlaceStake(v);
+//   P2 (every cell except the D9 window): PLACE BET enabled equals
+//      "forwarded and betPlaced emitted";
+//   P3 (D9 window): PLACE BET is disabled, and "accepted" equals "forwarded
+//      and not participating" — the one sanctioned asymmetry (the cutoff is
+//      UI-only);
+//   P4: an accepted bet debits exactly v in cents and I8 holds (the
+//      wallet's roundBet is the engine's betAmount); otherwise the wallet
+//      snapshot is unchanged.
+// The forwarding rule is read literally (P1): session.submit forwards in
+// every phase and the engine answers round-state questions (D4), so P2 uses
+// "forwarded and accepted", as the I3 test above does.
+
+describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.7, §23.5)", () => {
+  /** Crashes on the first diving tick (multiplier ≥ 1 at once). */
+  const INSTANT_CRASH = 1;
+
+  /** Per-round scripted authority: round n dives with crashPoints[n − 1] (the last entry repeats). */
+  const matrixSession = (crashPoints: number[]): GameSession => {
+    let round = 0;
+    return createGameSession({
+      authority: {
+        sampleCrashPoint: () => crashPoints[Math.min(round++, crashPoints.length - 1)],
+        sampleJackpot: () => 100,
+        rollBonusChests: () => [
+          { id: 0, multiplier: 2, opened: false },
+          { id: 1, multiplier: 6.5, opened: false },
+          { id: 2, multiplier: 30, opened: false },
+        ],
+      },
+      worldRng: { next: () => 0.5 },
+    });
+  };
+
+  const ONE_CENT = adjacentDoubles(0.01);
+  const STATIC_VALUES = [
+    0,
+    -0,
+    -1,
+    0.001,
+    0.004,
+    0.005,
+    0.009,
+    0.01,
+    0.02,
+    0.07,
+    0.1,
+    0.29,
+    0.3,
+    0.57,
+    1,
+    1.005,
+    1.15,
+    4.35,
+    5,
+    8.2,
+    999.99,
+    1000,
+    1e9,
+    1e21,
+    1e300,
+    Number.MAX_VALUE,
+    NaN,
+    Infinity,
+    -Infinity,
+    0.1 + 0.2,
+    ONE_CENT.below,
+    ONE_CENT.above,
+    1000.0000000000001,
+  ];
+  const centsOf = (amount: number) => BigInt(Math.round(amount * 100));
+  /** The static values plus b − 0.01, b and b + 0.01, computed in integer cents from the live balance b. */
+  const valuesFor = (balance: number) => {
+    const b = centsOf(balance);
+    return [...STATIC_VALUES, Number(b - 1n) / 100, Number(b) / 100, Number(b + 1n) / 100];
+  };
+  const label = (cell: string, balance: number, v: number) =>
+    `${cell} balance=${balance} v=${Object.is(v, -0) ? "-0" : String(v)}`;
+
+  type SpectatorBalance = 1000 | 0.01 | 0;
+  const SPECTATOR_BALANCES: SpectatorBalance[] = [1000, 0.01, 0];
+  /** Participating stakes: they leave 990, 0.01 and 0 after the debit. */
+  const STAKES = [10, 999.99, 1000];
+
+  /** Tick offsets from the start of a betting window (countdown 5.0 s), measured on a probe session. */
+  const windowOffsets = () => {
+    const { engine } = matrixSession([NEVER_CRASH]);
+    let k = 0;
+    while (engine.getPublicState().countdownSeconds > BET_CUTOFF_SECONDS) {
+      advanceFrames(engine, 1);
+      k++;
+    }
+    const firstAtOrBelowCutoff = k;
+    while (engine.state === "betting") {
+      advanceFrames(engine, 1);
+      k++;
+    }
+    return {
+      initial: 0,
+      lastAboveCutoff: firstAtOrBelowCutoff - 1,
+      firstAtOrBelowCutoff,
+      lastBetting: k - 1,
+    };
+  };
+
+  /**
+   * A spectator at the start of a betting window with `balance`. 1000 is round
+   * 1; 0.01 and 0 are reached by losing round 1 (999.99 or 1000 into an
+   * instant crash), and the cell is round 2. The cell round dives with `cellCrash`.
+   */
+  const spectatorAt = (balance: SpectatorBalance, cellCrash: number): GameSession => {
+    if (balance === 1000) return matrixSession([cellCrash]);
+    const session = matrixSession([INSTANT_CRASH, cellCrash]);
+    session.submit({ type: "placeBet", amount: balance === 0.01 ? 999.99 : 1000 });
+    advanceUntilState(session.engine, "crashed");
+    advanceUntilState(session.engine, "betting");
+    expect(session.wallet.get()).toMatchObject({ balance, participating: false });
+    return session;
+  };
+
+  /** A participant whose bet `stake` was accepted on the first tick of round 1. */
+  const participantIn = (stake: number, cellCrash: number): GameSession => {
+    const session = matrixSession([cellCrash]);
+    session.submit({ type: "placeBet", amount: stake });
+    advanceFrames(session.engine, 1);
+    expect(session.wallet.get()).toMatchObject({ participating: true, roundBet: stake });
+    return session;
+  };
+
+  /** I8: engine participant ⇔ wallet participating, and the wallet's locked bet is the engine's betAmount. */
+  const expectI8 = (session: GameSession, where: string) => {
+    const participant = session.engine.getPublicState().participant;
+    const w = session.wallet.get();
+    expect(participant !== null, `${where} (I8)`).toBe(w.participating);
+    if (participant) expect(w.roundBet, `${where} (I8)`).toBe(participant.betAmount);
+  };
+
+  /** P4. */
+  const expectP4 = (
+    session: GameSession,
+    before: WalletState,
+    v: number,
+    accepted: boolean,
+    where: string,
+  ) => {
+    expectI8(session, where);
+    const after = session.wallet.get();
+    if (accepted) {
+      expect(centsOf(before.balance) - centsOf(after.balance), `${where} (P4 debit)`).toBe(
+        centsOf(v),
+      );
+      expect(after.roundBet, `${where} (P4 roundBet)`).toBe(v);
+    } else {
+      expect(after, `${where} (P4 unchanged)`).toEqual(before);
+    }
+  };
+
+  /** C1/C2: one value on a fresh session (an acceptance changes the state). */
+  const probeOne = (session: GameSession, v: number, d9Window: boolean, where: string) => {
+    const { engine, wallet } = session;
+    const before = wallet.get();
+    const placeable = isPlaceableStake(v, before.balance);
+    expect(wallet.canPlaceStake(v), `${where} (P1)`).toBe(placeable);
+    const action = actionStateFor(engine.getPublicState(), before, v);
+    const enabled = action.kind === "placeBet" && action.enabled;
+
+    const placed: number[] = [];
+    engine.events.on("betPlaced", ({ amount }) => placed.push(amount));
+    const forwards = vi.spyOn(engine, "submit");
+    session.submit({ type: "placeBet", amount: v });
+    const forwarded = forwards.mock.calls.length === 1;
+    forwards.mockRestore();
+    advanceFrames(engine, 1);
+    const accepted = placed.length === 1;
+
+    expect(forwarded, `${where} (P1)`).toBe(placeable);
+    if (d9Window) {
+      expect(enabled, `${where} (P3 button)`).toBe(false);
+      expect(accepted, `${where} (P3 accepted)`).toBe(forwarded && !before.participating);
+    } else {
+      expect(enabled, `${where} (P2)`).toBe(forwarded && accepted);
+    }
+    expectP4(session, before, v, accepted, where);
+  };
+
+  /** C3–C12: nothing can be accepted, so every value goes in one batch, applied on one tick. */
+  const probeBatch = (
+    session: GameSession,
+    kind: ReturnType<typeof actionStateFor>["kind"],
+    where: string,
+  ) => {
+    const { engine, wallet } = session;
+    const before = wallet.get();
+    const pub = engine.getPublicState();
+    expect(actionStateFor(pub, before, DEFAULT_BET).kind, where).toBe(kind);
+
+    const placed: number[] = [];
+    engine.events.on("betPlaced", ({ amount }) => placed.push(amount));
+    const forwards = vi.spyOn(engine, "submit");
+    const rows = valuesFor(before.balance).map((v) => {
+      const at = label(where, before.balance, v);
+      const placeable = isPlaceableStake(v, before.balance);
+      expect(wallet.canPlaceStake(v), `${at} (P1)`).toBe(placeable);
+      const action = actionStateFor(pub, before, v);
+      const calls = forwards.mock.calls.length;
+      session.submit({ type: "placeBet", amount: v });
+      return {
+        at,
+        placeable,
+        enabled: action.kind === "placeBet" && action.enabled,
+        forwarded: forwards.mock.calls.length === calls + 1,
+      };
+    });
+    forwards.mockRestore();
+    advanceFrames(engine, 1);
+
+    expect(placed, `${where}: no betPlaced`).toEqual([]); // nothing was accepted
+    for (const r of rows) {
+      expect(r.forwarded, `${r.at} (P1)`).toBe(r.placeable);
+      expect(r.enabled, `${r.at} (P2: forwarded ∧ accepted is false)`).toBe(false);
+    }
+    expectP4(session, before, Number.NaN, false, where);
+  };
+
+  it("C1 — idle spectator above the cutoff (5.0 s, last tick above BET_CUTOFF_SECONDS), balances 1000 / 0.01 / 0: P1, P2, P4 per value", () => {
+    const at = windowOffsets();
+    expect(at.lastAboveCutoff).toBeGreaterThan(at.initial);
+    for (const balance of SPECTATOR_BALANCES) {
+      for (const offset of [at.initial, at.lastAboveCutoff]) {
+        for (const v of valuesFor(balance)) {
+          const session = spectatorAt(balance, NEVER_CRASH);
+          advanceFrames(session.engine, offset);
+          expect(session.engine.state).toBe("betting");
+          expect(session.engine.getPublicState().countdownSeconds).toBeGreaterThan(
+            BET_CUTOFF_SECONDS,
+          );
+          probeOne(session, v, false, label(`C1@${offset}`, balance, v));
+        }
+      }
+    }
+  }, 120_000);
+
+  it("C2 — idle spectator in the D9 window (first tick at or below the cutoff, last betting tick), balances 1000 / 0.01 / 0: P1, P3, P4 per value", () => {
+    const at = windowOffsets();
+    expect(at.lastBetting).toBeGreaterThan(at.firstAtOrBelowCutoff);
+    for (const balance of SPECTATOR_BALANCES) {
+      for (const offset of [at.firstAtOrBelowCutoff, at.lastBetting]) {
+        for (const v of valuesFor(balance)) {
+          const session = spectatorAt(balance, NEVER_CRASH);
+          advanceFrames(session.engine, offset);
+          expect(session.engine.state).toBe("betting");
+          expect(session.engine.getPublicState().countdownSeconds).toBeLessThanOrEqual(
+            BET_CUTOFF_SECONDS,
+          );
+          probeOne(session, v, true, label(`C2@${offset}`, balance, v));
+        }
+      }
+    }
+  }, 120_000);
+
+  it("C3 — idle participant (BET LOCKED) one point above and one below the cutoff, stakes 10 / 999.99 / 1000", () => {
+    const at = windowOffsets();
+    for (const stake of STAKES) {
+      for (const offset of [at.lastAboveCutoff, at.firstAtOrBelowCutoff]) {
+        const session = participantIn(stake, NEVER_CRASH);
+        advanceFrames(session.engine, offset - 1); // the bet applied on tick 1
+        expect(session.engine.state).toBe("betting");
+        probeBatch(session, "betLocked", `C3@${offset} stake=${stake}`);
+      }
+    }
+  }, 120_000);
+
+  it("C4–C6 — diving: participant not cashed (CASH OUT), participant cashed (SECURED), spectator (SPECTATING)", () => {
+    for (const stake of STAKES) {
+      const live = participantIn(stake, NEVER_CRASH);
+      advanceUntilState(live.engine, "diving");
+      advanceFrames(live.engine, 30);
+      probeBatch(live, "cashOut", `C4 stake=${stake}`);
+
+      const cashed = participantIn(stake, NEVER_CRASH);
+      advanceUntilState(cashed.engine, "diving");
+      advanceFrames(cashed.engine, 30);
+      cashed.submit({ type: "cashOut" });
+      advanceFrames(cashed.engine, 1);
+      expect(cashed.wallet.get().hasCashed).toBe(true);
+      probeBatch(cashed, "secured", `C5 stake=${stake}`);
+    }
+    for (const balance of SPECTATOR_BALANCES) {
+      const spectator = spectatorAt(balance, NEVER_CRASH);
+      advanceUntilState(spectator.engine, "diving");
+      advanceFrames(spectator.engine, 30);
+      probeBatch(spectator, "spectating", `C6 balance=${balance}`);
+    }
+  }, 120_000);
+
+  it("C7–C8 — crashed: lost participant and spectator (WAITING…)", () => {
+    for (const stake of STAKES) {
+      const lost = participantIn(stake, INSTANT_CRASH);
+      advanceUntilState(lost.engine, "crashed");
+      expect(lost.wallet.get()).toMatchObject({ participating: true, hasCashed: false });
+      probeBatch(lost, "waiting", `C7 stake=${stake}`);
+    }
+    for (const balance of SPECTATOR_BALANCES) {
+      const spectator = spectatorAt(balance, INSTANT_CRASH);
+      advanceUntilState(spectator.engine, "crashed");
+      probeBatch(spectator, "waiting", `C8 balance=${balance}`);
+    }
+  }, 120_000);
+
+  it("C9–C10 — impact (phase cashed): jackpot participant and spectator (WAITING…)", () => {
+    for (const stake of STAKES) {
+      const jackpot = participantIn(stake, NEVER_CRASH);
+      advanceUntilState(jackpot.engine, "impact");
+      expect(jackpot.engine.getPublicState().participant?.bonusEligible).toBe(true);
+      expect(jackpot.wallet.get()).toMatchObject({ hasCashed: true, settledBy: "jackpot" });
+      probeBatch(jackpot, "waiting", `C9 stake=${stake}`);
+    }
+    for (const balance of SPECTATOR_BALANCES) {
+      const spectator = spectatorAt(balance, NEVER_CRASH);
+      advanceUntilState(spectator.engine, "impact");
+      probeBatch(spectator, "waiting", `C10 balance=${balance}`);
+    }
+  }, 120_000);
+
+  it("C11–C12 — bonus: eligible participant and spectator (WAITING…)", () => {
+    for (const stake of STAKES) {
+      const eligible = participantIn(stake, NEVER_CRASH);
+      advanceUntilState(eligible.engine, "bonus");
+      expect(eligible.engine.getPublicState().participant?.bonusEligible).toBe(true);
+      probeBatch(eligible, "waiting", `C11 stake=${stake}`);
+    }
+    for (const balance of SPECTATOR_BALANCES) {
+      const spectator = spectatorAt(balance, NEVER_CRASH);
+      advanceUntilState(spectator.engine, "bonus");
+      probeBatch(spectator, "waiting", `C12 balance=${balance}`);
+    }
+  }, 120_000);
 });

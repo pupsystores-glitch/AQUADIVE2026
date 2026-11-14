@@ -6,7 +6,7 @@
 // src/ui/test/money-oracle.ts) — never from the function under test and
 // never from toFixed.
 import { describe, expect, it } from "vitest";
-import { exactBinary, floorCentsBinary } from "@/ui/test/money-oracle";
+import { adjacentDoubles, exactBinary, floorCentsBinary } from "@/ui/test/money-oracle";
 import {
   amountToCents,
   BALANCE_LIMIT_CENTS,
@@ -95,6 +95,43 @@ describe("payoutCents — unrounded cashout multipliers vs the exact binary orac
     }
     expect(differences).toBe(0);
   });
+});
+
+// MT-08 (docs/07 §23.7 decimal boundary cases, §23.13 verification limits,
+// Q8a). Expected values come only from the exact-binary oracle
+// (floorCentsBinary), never from payoutCents or toFixed.
+describe("payoutCents — neighbouring doubles one step around a cent-exact product (MT-08)", () => {
+  // stake, multiplier, String(below), String(above), oracle cents below, oracle cents above
+  const cases: Array<[number, number, string, string, bigint, bigint]> = [
+    [1, 1.15, "1.1499999999999997", "1.1500000000000001", 114n, 115n],
+    [1, 57.29, "57.28999999999999", "57.290000000000006", 5728n, 5729n],
+    [0.29, 2, "1.9999999999999998", "2.0000000000000004", 57n, 58n],
+    [100, 1.15, "1.1499999999999997", "1.1500000000000001", 11499n, 11500n],
+  ];
+  // §23.13: the multipliers whose doubles lie below their decimal. Meaning 1
+  // (the shortest decimal) pays exactly one cent more than the binary
+  // oracle (meaning 2) on these, and only on these.
+  const BELOW_DECIMAL = new Set([1.15, 57.29]);
+
+  for (const [stake, m, belowText, aboveText, belowCents, aboveCents] of cases) {
+    it(`${stake} × ${m}: one step below and above equal the binary oracle; at ${m} itself meaning 1 is asserted explicitly`, () => {
+      const cents = BigInt(Math.round(stake * 100));
+      const { below, above } = adjacentDoubles(m);
+      // String(x) determinism for every neighbour used.
+      expect(String(below)).toBe(belowText);
+      expect(String(above)).toBe(aboveText);
+      expect(below < m && m < above).toBe(true);
+
+      expect(floorCentsBinary(cents, below)).toBe(belowCents);
+      expect(floorCentsBinary(cents, above)).toBe(aboveCents);
+      expect(payoutCents(stake, below)).toBe(floorCentsBinary(cents, below));
+      expect(payoutCents(stake, above)).toBe(floorCentsBinary(cents, above));
+
+      const at = payoutCents(stake, m)!;
+      const binary = floorCentsBinary(cents, m);
+      expect(at - binary).toBe(BELOW_DECIMAL.has(m) ? 1n : 0n);
+    });
+  }
 });
 
 describe("payoutCents — W7 preconditions: nothing is computed, nothing coerced to zero", () => {
