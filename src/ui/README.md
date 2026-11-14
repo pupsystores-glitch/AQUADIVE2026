@@ -23,9 +23,11 @@ Status — Sprint 4 in progress:
 | `store/notification-store.ts` | U4a (approved 2026-11-13) | Win flash + its timer (session-owned, consumes `wallet.onFlash`; injectable clock); dev-only `commandRejected` log + bounded history (§12). Dev banner deferred to U6 |
 | `store/bet-input-store.ts` | U5 (implemented, awaiting owner review) | Bet amount, session-owned (starts at `DEFAULT_BET`, survives remounts); halve/double/quick-set/typed arithmetic verbatim; every write sanitized (non-finite → 0, negative → 0; a cleared field stays 0) (V4). Subscribes to nothing; `double` takes the balance as an argument |
 | `components/action-state.ts` | U5 (implemented, awaiting owner review) | Pure `actionStateFor` / `canPlaceBet` (§13.3): the action-button matrix outside JSX, proven equal to the pre-U5 conditional; uses `BET_CUTOFF_SECONDS` (UI-only) and the wallet's `isAffordable` |
-| `components/` (tree) | U6 (implemented, awaiting validation + owner review) | The §13 decomposition, markup verbatim from the shell: `GameScreen` (frame + composition; the route component), `TopBar`, `HistoryStrip`, `CanvasStage` (attach lifecycle), `MultiplierOverlay`, `CrashBanner`, `WinFlash`, `ChestPicker`, `BettingPanel` + `BetControls`/`QuickBets`/`ActionButton`, `icons.tsx`; per-slice `useStore` subscriptions (V3); the dev-only dismissible rejection banner (`DevRejectionBanner`, §12 C3, compiled out of production) |
-| `strings.ts` | U6 (implemented, awaiting validation + owner review) | The §14 strings seam: every user-facing string, typed, functions where text interpolates values; text byte-identical. Money displays render via `formatMoney` (new, `src/game/presentation.ts`), multipliers via `formatMultiplier` — identical output, one definition each |
-| responsive layout (§15) | U7 (pending) | Desktop breakpoint composition (V5) |
+| `components/` (tree) | U6 (`4440009`); E-X3 (`be10b19`) | The §13 decomposition, markup verbatim from the shell: `GameScreen` (frame + composition; the route component), `TopBar`, `HistoryStrip`, `CanvasStage` (attach lifecycle), `MultiplierOverlay`, `CrashBanner`, `WinFlash`, `ChestPicker`, `BettingPanel` + `BetControls`/`QuickBets`/`ActionButton`, `icons.tsx`; per-slice `useStore` subscriptions (V3); the dev-only dismissible rejection banner (`DevRejectionBanner`, §12 C3, compiled out of production). E-X3: `BettingPanel` composes two slot panels (BET 1, BET 2), and `BetControls`/`QuickBets`/`ActionButton` take a `slot` prop (§13.3) |
+| `strings.ts` | U6 (`4440009`) | The §14 strings seam: every user-facing string, typed, functions where text interpolates values; text byte-identical. Money displays render via `formatMoney` (new, `src/game/presentation.ts`), multipliers via `formatMultiplier` — identical output, one definition each |
+| `scene-fit.ts` | Sprint 4 QA fix D1 (uncommitted, pending owner acceptance) | Pure: the logical viewport the session passes to `renderer.resize` — a uniform zoom-out to ≥ 820 logical px on short stages so the idle ship stays visible; backing store at native resolution; renderer untouched |
+| `hooks/use-focus-rescue.ts` | Sprint 4 QA fixes D2–D3 (uncommitted, pending owner acceptance) | Keeps keyboard focus inside a slot panel or the chest picker when the focused control disables itself; reads no store |
+| responsive layout (§15) | U7 (`4440009`; gate 8 screenshot matrix pending) | `tab` / `desk` variants in `src/styles.css`; full-width tablet column; full-viewport landscape desktop grid with a right rail (V5, as corrected by the owner, §15) |
 
 Since U2, all money state and math live in the wallet store; components
 only read it via `useStore` and submit commands via `gameSession.submit`.
@@ -39,7 +41,10 @@ store and the action button's state comes from the pure `actionStateFor`.
 Since U6, the monolithic shell (`src/components/AbyssAnchor.tsx`) is
 deleted: the route mounts `GameScreen`, each §13 component reads exactly
 its own store slices (V3), and the only component-local `useState` is the
-dev banner's dismissal.
+dev banner's dismissal. Since E-X3 (Dual Bet, `be10b19`), the player holds
+two bet slots. The session owns `betInputs` (one per slot) and reserves the
+other slot's in-flight stake on `submit`. The wallet keeps per-slot state in
+`slots`, and the round store mirrors `participants` (docs/07 §8, §9, §23.17).
 
 Running the tests on Windows: start Vitest from PowerShell with an
 uppercase `C:\` working directory. From Git Bash (lowercase `c:\`) Vitest

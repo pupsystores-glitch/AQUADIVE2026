@@ -58,6 +58,8 @@ export const STRINGS = {
     title: "Pirate Wreck — Pick a Chest",
     hidden: "???",
     revealed: (multiplier: string) => `+${multiplier}`,
+    /** Accessible description telling the three chests apart (QA fix; not rendered as text). */
+    position: (n: number, of: number) => `Chest ${n} of ${of}`,
   },
   panel: {
     decrease: "−",
@@ -66,6 +68,8 @@ export const STRINGS = {
     betLabelPrefix: "Bet · ",
     /** E-X3: a bet slot's panel heading and accessible name (1-based). */
     slotLabel: (n: number) => `BET ${n}`,
+    /** Accessible name of a slot's amount field (QA fix; not rendered as text). */
+    stakeLabel: (n: number) => `BET ${n} stake`,
   },
   actions: {
     cashOut: (amount: string) => `CASH OUT · ${amount}`,

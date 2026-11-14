@@ -121,7 +121,9 @@ The only intended behavior changes of the entire sprint. Approval of this docume
 | V2 | Notification timing centralized; rejections surfaced | Flash `setTimeout`s live in listeners and die with the component; `commandRejected` ignored | Notification store owns durations (values unchanged: `CASH_FLASH_MS`, `JACKPOT_FLASH_MS`); rejections logged/shown in dev builds only | Fixes timer leaks; makes the engine's error reporting visible (docs/06 §12) |
 | V3 | Per-frame sync targets stores, components subscribe to slices | One component re-renders wholesale each frame | Only components whose slice changed re-render (equal-value bailout preserved) | Pure perf/structure; identical pixels |
 | V4 | Bet input sanitation | Negatives clamped to 0, non-finite numbers not rejected; a cleared field is 0 (not `NaN` — C8); `canAfford(NaN)` true; cutoff is a magic `0.2` | Every bet-input write sanitized: non-finite → 0, negative → 0, cleared field still 0; one affordability predicate (non-finite → false) shared by `canAfford` and the action state; cutoff named `BET_CUTOFF_SECONDS` with the same value, UI-only (U5, D1–D11) | Defense in depth on a money input; no honest-path change *(2026-11-13: describes U5 as landed. The M1 policy, §23, adds a separate sanctioned behavior change — sub-cent and below-minimum stakes are rejected — approved but not yet implemented.)* |
-| V5 | Responsive desktop layout | `max-w-md` phone strip at all widths | ≥ `lg` breakpoint: stage + side panel layout (§15); mobile byte-identical | The Phase 6 "Responsive Layout" objective — the sprint's one visual change |
+| V5 | Responsive desktop layout | `max-w-md` phone strip at all widths | ≥ `lg` breakpoint: stage + side panel layout (§15); mobile byte-identical *(as landed in U7, `4440009`, with two owner corrections: `tab` and `desk` variants replace `lg`, and the desktop stage is a full landscape region, not a fixed portrait aspect; §15)* | The Phase 6 "Responsive Layout" objective — the sprint's one visual change |
+
+*Dual Bet (E-X3, owner-approved 2026-11-14, `be10b19`) is an approved gameplay change outside V1–V5. It changes the betting panel's markup on every viewport, including phones (§13.3, §15). The mobile "byte-identical" rule therefore holds for U7 against U6, and not for the post-E-X3 betting panel.*
 
 ## 8. The Game Session Module
 
@@ -130,7 +132,8 @@ The only intended behavior changes of the entire sprint. Approval of this docume
 - Owns, at module scope (preserving today's SSR-safe module-singleton semantics exactly): the `world` Rng, `LocalRoundAuthority`, `GameEngine`, `EngineDriver`, and every store instance.
 - Wires, once at construction: the wallet store's settlement subscriptions (§10), the notification store's event subscriptions (§12), the round store as the driver's `sync` sink half (§11). These live for the session — never torn down by React (V1).
 - `attachCanvas(canvas: HTMLCanvasElement): () => void` — constructs the `SceneRenderer`, calls `driver.attach` with `frame` = resize + render (verbatim from today's sink) and `sync` = round-store write; returns the detach that disposes the renderer and pauses the driver. The renderer remains per-canvas-mount (it holds the 2D context); everything else survives detach, exactly as the driver already guarantees (docs/06 §13).
-- `submit(command: EngineCommand)` — the single command edge for components; routes `placeBet` through the wallet store's affordability check (§6) and everything else straight through. The engine remains the validator of all round-state questions (D4).
+- `submit(command: EngineCommand)` — the single command edge for components; routes `placeBet` through the wallet store's affordability check (§6) and everything else straight through. The engine remains the validator of all round-state questions (D4). *(E-X3, `be10b19`: a `placeBet` or `cashOut` without slot 0 or 1 is dropped. Every forwarded `placeBet` stays in flight until the engine answers it with `betPlaced` or `commandRejected`. A bet is forwarded only if it is a placeable stake against the balance minus the other slot's largest stake in flight. So two bets submitted before the next tick can never together exceed the balance, which keeps the engine and the wallet consistent (I8, §23.12). A slot's own repeated submissions are not reserved against each other, because the engine rejects all but one of them.)*
+- *E-X3:* the session owns one bet-input store per slot, `betInputs: [slot 0, slot 1]`, replacing the single `betInput`.
 - Test seam: the module-scope singleton is assembled by an exported `createGameSession(deps)` factory (engine deps injectable — scripted authority, deterministic Rngs, manual tick driver). Production uses the module singleton; tests construct their own session. This is what makes §21's UI tests deterministic, and it costs nothing at runtime.
 
 ## 9. Store Model
@@ -150,6 +153,8 @@ The four stores and their single writers:
 | `round-store` | The session's round-store write only, by two paths: the driver's per-frame `sync` and the immediate write when `attachCanvas` attaches (§11) | Mirror of `EnginePublicState`: `phase`, `countdownSeconds`, `multiplier`, `boost`, `chests`, `chosenChestId`, `participant` (whose `bonusEligible` gates the picker since E-X1) |
 | `notification-store` | The wallet's flash trigger (`onFlash`), the round-transition events `bettingOpened`/`diveStarted`, its own timer; dev only: `commandRejected` (§12) | The active flash (kind + start + expiry; the amount is the wallet's `lastWin`), dev-only bounded rejection history |
 | `bet-input-store` | Betting-panel handlers only (−, +, the field, quick bets); no event or store subscription | The bet input value, always finite and ≥ 0 (session-owned since U5, starts at `DEFAULT_BET`, survives remount like everything else; halve/double/quick-set logic lives here, verbatim; `double` takes the balance as an argument at click time) |
+
+*E-X3 (2026-11-14, `be10b19`):* the wallet's per-round fields (`roundBet`, `participating`, `hasCashed`, the settlement record, the slot's own `win`) move into `slots: [slot 0, slot 1]`. `balance`, `history`, `lastWin` (now the most recent event's combined credit) and the claims list stay shared. The round store mirrors `participants` (two entries) in place of `participant`. There are two bet-input stores, one per slot (`session.betInputs`). The single-writer rules are unchanged.
 
 ## 10. The Wallet Store (Settlement Layer)
 
@@ -194,7 +199,7 @@ All markup moves verbatim (class strings byte-identical, mobile) into `src/ui/co
 | `TopBar` | Logo block, balance chip | wallet: `balance` |
 | `HistoryStrip` | Round-result chips | wallet: `history` |
 | `CanvasStage` | The canvas element + attach lifecycle | session: `attachCanvas` |
-| `MultiplierOverlay` | Multiplier readout, potential win, spectating hint, countdown hint, boost badge | round: `phase`, `multiplier`, `countdownSeconds`, `boost`; wallet: `participating`, `roundBet` |
+| `MultiplierOverlay` | Multiplier readout, potential win, spectating hint, countdown hint, boost badge | round: `phase`, `multiplier`, `countdownSeconds`, `boost`; wallet: `participating`, `roundBet` (since E-X3: `slots`, §13.3) |
 
 ### 13.2 Overlays
 
@@ -214,6 +219,8 @@ All markup moves verbatim (class strings byte-identical, mobile) into `src/ui/co
 | `ActionButton` | The five-state action | derived action state (below) |
 
 The five-branch conditional becomes a typed derivation — `actionStateFor(round, wallet, betInput): ActionState` — a pure function in `src/ui/components/action-state.ts` returning a discriminated union (`placeBet | betLocked | cashOut | secured | spectating | waiting`), unit-tested exhaustively (§21). The component maps state → markup; the decision logic leaves JSX.
+
+**Dual Bet, as landed in E-X3 (`be10b19`).** `BettingPanel` composes two `BetSlotPanel`s, **BET 1** and **BET 2**. Each is a real engine slot with its own stake, PLACE BET and CASH OUT, and no simulated second panel exists. `BetControls`, `QuickBets` and `ActionButton` take a `slot` prop and read that slot's bet-input store and wallet slot. Phones and tablets show the two panels side by side, both always visible, with no collapsed or expandable BET 2. The desktop rail (`desk`) stacks them. On phones each panel is compact, and `QuickBets` is hidden below `tab`, so each panel keeps the stake field, the steppers and the action button. `actionStateFor` is unchanged and is evaluated once per slot, against `balance` and that slot's `participating` and `hasCashed`. The CASH OUT label is the slot's own rounded-down payout, and SECURED shows the slot's own credited win. `MultiplierOverlay`'s potential win is the sum of each slot's separately rounded-down payout: over the slots still riding, or over all participating slots once every slot is settled. `ChestPicker` is shown while any slot is bonus-eligible, and its one pick applies to every eligible slot. The slot heading text is `STRINGS.panel.slotLabel(n)`.
 
 As landed in U5: `actionStateFor({ phase, countdownSeconds }, { balance, participating, hasCashed }, bet)`. Only `placeBet` carries a flag (`enabled`, from `canPlaceBet`: betting window, not participating, `isAffordable(bet, balance)`, countdown strictly above `BET_CUTOFF_SECONDS`); `cashOut` is always enabled, the other four always disabled. The `cashed` (impact), `crashed` and `bonus` phases map to `waiting` with the bet controls still enabled, as before (D10). The bet controls are disabled during `diving` only. The derivation computes no money: label amounts stay display reads. It is proven equal to a verbatim transcription of the pre-U5 JSX over the full input cross product (`action-state.test.ts`).
 
@@ -239,6 +246,19 @@ The sprint's one visual change, landing in the final commit behind screenshot ap
 - **Desktop (≥ `lg`, 1024 px):** two-region layout — the canvas stage centered at a fixed portrait aspect (the world is designed portrait; docs/05's camera and layers assume a vertical stage), with the betting panel and history in a right-hand side rail (`TopBar` spanning). No canvas-content change: the stage keeps portrait proportions, so `RenderState` consumption and all docs/05 math are untouched — this is CSS-level composition only.
 - Breakpoint mechanics: Tailwind responsive variants on the existing classes; components are layout-agnostic (they fill their grid area), so the screen owns the entire responsive decision — one file to review.
 - Verification is visual: the §21 screenshot matrix. jsdom cannot assert layout; this commit's gate is explicitly manual.
+
+**As landed (U7, committed with U6 in `4440009`, 2026-11-14), after two owner corrections the same day.** These corrections are approved departures from the text above.
+
+- **Variants.** Two custom variants in `src/styles.css` replace `lg:`.
+  - `tab`: ≥ 768 px wide **and** ≥ 600 px tall. The phone column is released to full width, and the betting controls are centered at up to 38rem.
+  - `desk`: ≥ 1024 px **and landscape**. A portrait 1024×1366 iPad Pro therefore gets the `tab` column, not the rail.
+  - The owner requested this, and it changes 768×1024. Phones (below `tab`) keep the canonical column.
+- **Desktop (`desk`).** A full-viewport landscape grid. The canvas stage fills the whole left region with **no aspect lock**: about 67 % of the width at 1024 px, about 73 % at 1280–1440 px, about 76 % at 1920 px. A right rail sized `clamp(21rem, 25vw, 28rem)` stacks TopBar (brand + balance), a wrapping HistoryStrip and the BettingPanel card at its foot.
+  - The earlier 9:16 portrait stage is retired, at the owner's direction. This departs from "centered at a fixed portrait aspect" above.
+  - The renderer is unchanged. It reads the canvas's CSS size every frame at uniform 1:1 CSS pixels. Positions follow the width, sizes stay fixed in pixels, and there is no `RenderState` change.
+- **Ownership.** `GameScreen.tsx` owns the decision, by child position, as specified. Components carry only `tab:` size tokens, and the DOM is identical at every width.
+- **After E-X3 (`be10b19`).** The betting panel holds two slot panels (§13.3): side by side on phones and `tab`, stacked in the `desk` rail. Priority sizes for the dual panel are 375×667 and 390×844, with no horizontal overflow, no unnecessary vertical scroll, and a canvas that still shows the ship, chain, obstacles and gameplay without clipping (owner decision, docs/16). No owner verification of these sizes is recorded yet.
+- **Sprint 4 QA fix D1 — scene fit (2026-11-14; uncommitted, PENDING OWNER ACCEPTANCE).** The frozen renderer draws the idle ship 400 px above the anchor pin, so on stages shorter than about 800 px (every phone, and 768×1024) the ship was off-canvas. `src/ui/scene-fit.ts` makes the session pass the renderer a logical viewport of at least 820 px height, with the same aspect ratio and the backing store at native resolution: a uniform zoom-out below 820 px, unchanged above. The renderer and `RenderState` are unchanged. This departs from "sizes stay fixed in pixels" above, and from §22 item 7, on short stages. The QA fixes D2–D4 (keyboard focus rescue, chest-picker focus, stake-field names) are small `src/ui` changes against §20's a11y non-goal. Both need explicit owner acceptance (docs/15, close-out Step 2).
 
 ## 16. Target Folder Structure
 
@@ -269,6 +289,7 @@ src/ui/
     ActionButton.tsx
     action-state.ts             # pure action-matrix derivation (§13.3)
     icons.tsx
+    DevRejectionBanner.tsx      # dev-only rejection banner (§12, C3; landed in U6)
 ```
 
 `src/components/AbyssAnchor.tsx` is deleted when `GameScreen` takes over (U6). `src/game/` keeps its role (config, constants, presentation, types) — it is the UI's tuning/presentation dependency, not part of `src/ui`. A `src/ui/README.md` records the layer contract, as every extracted layer has.
@@ -324,6 +345,17 @@ Sanctioned corrections recorded with the re-cut (the binding contracts are other
 
 **Supersession note (owner decision M1-D6, 2026-11-13).** The U5 decisions above are kept as the historical record of what U5 landed. Two of them are superseded in part by the Money Integrity policy in §23: **D7** — its non-finite affordability protection stays valid, but affordability is no longer sufficient for a bet to be offered or submitted; **D11** — "no new decimal rounding or precision rule" is superseded for accepted monetary bets (at most two decimals of value, minimum 0.01, enforced by rejection, never by rounding). Details and what remains valid: §23.3. The superseding behavior is approved policy and is **not yet implemented**; the code still behaves as U5 recorded.
 
+**As landed after U5 (reconciliation 2026-11-14, documentation only).** The §17 order is kept. The commits:
+
+| Step | Commit (on `origin/develop`) | Notes |
+|---|---|---|
+| M1 (S1) | `e37b81c` | E-X2, M1-1, V2, W1–W11 and R2. M1 is **deferred by the owner, not closed** (§23) |
+| U6 + U7 | `4440009` | One combined commit, approved by the owner's Git decision of 2026-11-14. This re-cuts "one step per commit" for these two steps only. U6 is as specified (V3, strings, `formatMoney`, route flip, `AbyssAnchor.tsx` deleted, dev banner). U7 is as corrected in §15 |
+| M1 test suites | `e8b1b62` | The M1 test work held back from `e37b81c`. MT-06 seed 404 is replaced by 505, with no assertion removed |
+| E-X3 Dual Bet | `be10b19` | The owner-approved engine freeze exception (docs/06 §13.2), the per-slot wallet amendment (§23.17), the session in-flight reservation (§8), and the dual betting panel (§13.3, §15). This is an approved change outside the U-steps. It adds no phase and no new step to this table's order |
+
+Still open for these steps: §19 gate 7 (U6 mobile pixel-compare), the §19 gate 8 screenshot matrix (U7), and owner browser QA for Dual Bet. None is recorded as passed.
+
 ## 18. Multiplayer and Platform Readiness
 
 What this architecture buys Phase 8+, by construction:
@@ -342,11 +374,11 @@ Per-commit validation gate (the UI twin of docs/05 §21 / docs/06 §21):
 1. `tsc --noEmit` clean.
 2. Lint at the recorded baseline (9 errors + 6 warnings entering the sprint; moved/deleted component code is expected to retire pre-existing findings — the new baseline is recorded in the commit, never worsened).
 3. **All tests green** (83 entering the sprint; growing per §21). The engine determinism spot-check stays in force.
-4. **Engine/renderer freeze check**: `git diff --stat src/engine src/rendering src/shared` is empty for every Sprint 4 commit. Any needed platform change stops the commit and goes back to the owner (doc corrected first). **Approved exception E-X1** (2026-11-13; bonus eligibility and deterministic completion, docs/06 §5): the E-X1 commit may change only `src/engine/state-machine.ts`, `src/engine/game-engine.ts` (snapshot schema version), `src/engine/domain/tuning.ts` (`BONUS_PICK_WINDOW_MS`) and their engine tests; `src/rendering` and `src/shared` stay untouched. Its UI side: the chest picker is shown only to a bonus-eligible participant (`participant.bonusEligible`) — manual-cashout players and spectators never see or interact with it. **Proposed exception E-X2** (valid-stake enforcement, docs/06 §13.1; planning approved 2026-11-13 under M1-D4): **not approved for implementation** — until the owner approves its exact scope, E-X1 remains the only exception and this gate applies unchanged. *(2026-11-14: **E-X2 approved by the owner**, exactly as implemented. Its files are `src/shared/stake.ts`, `src/shared/stake.test.ts`, `src/engine/state-machine.ts` (the `isValidStake` import and the `applyPlaceBet` amount guard with its comment) and `src/engine/state-machine.test.ts`. For the M1 integration commit, `git diff --stat src/engine src/rendering src/shared` must list exactly these four files. The exception is not expanded: any other engine, rendering or shared-floor change still stops the commit.)*
+4. **Engine/renderer freeze check**: `git diff --stat src/engine src/rendering src/shared` is empty for every Sprint 4 commit. Any needed platform change stops the commit and goes back to the owner (doc corrected first). **Approved exception E-X1** (2026-11-13; bonus eligibility and deterministic completion, docs/06 §5): the E-X1 commit may change only `src/engine/state-machine.ts`, `src/engine/game-engine.ts` (snapshot schema version), `src/engine/domain/tuning.ts` (`BONUS_PICK_WINDOW_MS`) and their engine tests; `src/rendering` and `src/shared` stay untouched. Its UI side: the chest picker is shown only to a bonus-eligible participant (`participant.bonusEligible`) — manual-cashout players and spectators never see or interact with it. **Proposed exception E-X2** (valid-stake enforcement, docs/06 §13.1; planning approved 2026-11-13 under M1-D4): **not approved for implementation** — until the owner approves its exact scope, E-X1 remains the only exception and this gate applies unchanged. *(2026-11-14: **E-X2 approved by the owner**, exactly as implemented. Its files are `src/shared/stake.ts`, `src/shared/stake.test.ts`, `src/engine/state-machine.ts` (the `isValidStake` import and the `applyPlaceBet` amount guard with its comment) and `src/engine/state-machine.test.ts`. For the M1 integration commit, `git diff --stat src/engine src/rendering src/shared` must list exactly these four files. The exception is not expanded: any other engine, rendering or shared-floor change still stops the commit.)* *(2026-11-14: E-X2 landed in `e37b81c`. **Approved exception E-X3** (Dual Bet, owner-approved 2026-11-14, docs/06 §13.2) landed in `be10b19`. Its frozen-directory diff is exactly `src/engine/commands.ts`, `events.ts`, `state-machine.ts`, `game-engine.ts`, `index.ts` and the tests `state-machine.test.ts`, `game-engine.test.ts`, `snapshot.test.ts`; `src/rendering` and `src/shared` are untouched. Approved exceptions are now E-X1, E-X2 and E-X3. Each is limited to its own file list, and any other engine, rendering or shared-floor change still stops the commit.)*
 5. Production build passes; dev-server SSR smoke test (HTTP 200 with canvas markup — the session module-scope construction must stay SSR-safe).
 6. Console hygiene (no new warnings; U4 onward, `commandRejected` dev output only when commands are actually rejected).
 7. Manual gameplay pass (docs/18 step 2, developer): full loop — bet → dive → cash out → crash round → jackpot round → chest pick → spectate; plus per-commit focus items named in the commit message (U2: balance ledger through every settlement path incl. remount mid-round; U5: input edge cases; U6: pixel-compare against pre-commit screenshots on mobile width).
-8. U7 only: screenshot matrix at 375×667, 390×844, 768×1024, 1280×800, 1440×900 — mobile widths byte-identical to pre-U7 captures; desktop layouts approved by the owner before merge.
+8. U7 only: screenshot matrix at 375×667, 390×844, 768×1024, 1280×800, 1440×900 — mobile widths byte-identical to pre-U7 captures; desktop layouts approved by the owner before merge. *(2026-11-14: the pending matrix recorded with U7 in docs/16 is 375×667, 390×844, 768×1024, 1280×720, 1366×768, 1440×900 and 1920×1080. 768×1024 is no longer byte-identical: it takes the `tab` layout at the owner's request (§15). Not yet run. Not recorded as passed.)*
 
 Money-path verification is test-driven, not manual-only: the U2 replay suite is the gate that the extracted math is the same math (§21).
 
@@ -411,8 +443,8 @@ Sprint 4 is done when all of the following hold:
 | W10 / R2 — faulted participation as an unresolved claim | Implemented (2026-11-14): no refund, no forfeiture, no later credit; an append-only, session-lifetime claim list with round, stake, fault and amount already credited; a faulted participation is never recorded as a loss (§23.17) | Q9c, option R2, owner 2026-11-14 |
 | B-R — exact integer-cent ledger (Q1/Q11) | **Deferred to M2** (owner, 2026-11-14, roadmap return). Not implemented. The §23.20 design is kept as M2 input. *(Earlier the same day: approved in principle, design pending.)* | Owner, 2026-11-14 |
 | W11 — exact-cent credit envelope (§23.21) | **Implemented (2026-11-14), uncommitted**: every credit decided in exact integer cents below 2^44 units; an unrepresentable valid win becomes an R2 claim with rule `W11` and its exact `unpaidCents` | Owner, final M1 authorization, 2026-11-14 |
-| Integration commit | Strategy **S1** approved (one atomic commit). **No Git operation authorized**: nothing staged, committed or pushed | Owner, 2026-11-14 |
-| M1 closure | **Not closed.** Implementation complete; awaiting the owner's browser QA and the S1 commit authorization. *(2026-11-14: the owner reports 10 consolidated browser checks passed. That is distinct from the 19-item detailed checklist in docs/16, and the full browser QA gate stays pending. S1 is to be a local commit with no push, still awaiting a separate authorization.)* *(2026-11-14, later: the owner confirms **all 19/19 detailed browser QA checks passed** (U4b 6/6, U5 7/7, M1 6/6). The browser QA gate is closed. M1 closes with the S1 commit, which awaits the owner's separate authorization: local only, no push.)* | Owner, 2026-11-14 (QA) |
+| Integration commit | Strategy **S1** approved (one atomic commit). **No Git operation authorized**: nothing staged, committed or pushed *(Reconciliation 2026-11-14: S1 landed as `e37b81c`. The held-back M1 test suites landed separately as `e8b1b62`, at the owner's direction. Both are on `origin/develop`.)* | Owner, 2026-11-14 |
+| M1 closure | **Not closed.** Implementation complete; awaiting the owner's browser QA and the S1 commit authorization. *(2026-11-14: the owner reports 10 consolidated browser checks passed. That is distinct from the 19-item detailed checklist in docs/16, and the full browser QA gate stays pending. S1 is to be a local commit with no push, still awaiting a separate authorization.)* *(2026-11-14, later: the owner confirms **all 19/19 detailed browser QA checks passed** (U4b 6/6, U5 7/7, M1 6/6). The browser QA gate is closed. M1 closes with the S1 commit, which awaits the owner's separate authorization: local only, no push.)* *(Reconciliation 2026-11-14: the owner then **deferred M1** to the final stabilization phase. This is a scheduling exception: M1 is **not** closed, validated or formally accepted, and all M1 work is preserved. The S1 commit landing does not close it. **M2** (integer minor units, §23.10) and **B-R** (the integer-cent ledger, §23.20, now inside M2) are tracked separately and are not started. Dual Bet amended the wallet rules per slot (§23.17), but that does not change M1's status.)* | Owner, 2026-11-14 (QA; deferral) |
 
 Validation of the working tree (2026-11-14, after W11): `tsc --noEmit` clean; 427/427 tests green across 33 files; production build passes; targeted ESLint with end-of-line neutralized: changed files clean, only the 6 pre-existing `AbyssAnchor.tsx` JSX-formatting errors; `git diff --check` clean; the frozen directories differ only by the four E-X2 files; `src/routeTree.gen.ts` byte-identical to HEAD.
 
@@ -1394,6 +1426,17 @@ Tests: `wallet-store.test.ts`, "W10" and "R2".
 - Affordability cannot be enforced by the engine (L2; W3 only fails safe).
 
 W1–W9 make the wallet's own ledger idempotent, finite, nonnegative and atomic. They do not make it trustworthy against a modified client (L5).
+
+**Amendment for Dual Bet (E-X3, owner-approved 2026-11-14; implemented in `be10b19`).** This is the M1 rule amendment that the Dual Bet decision required (docs/16). It does not reopen or close M1.
+
+- Every per-round field and every rule W1–W11 applies **per bet slot**. Each slot has its own locked bet, settlement record, W10 fault marker and W11 withheld-chest flag. A fault in one slot never blocks or alters the other (per-slot fault isolation).
+- **W2** becomes per slot: a second `betPlaced` is refused only for a slot that already participates. The engine emits at most one per slot per round.
+- **W3** checks the balance left after the other slot's debit.
+- A `betPlaced` or `cashedOut` without a valid slot is refused (W1, W4).
+- Each slot's payout is rounded down separately, never on the combined stake (M1-D8, M1-D13 unchanged).
+- `shipImpact` auto-settles every payable slot of its round. A valid `chestPicked` settles each jackpot-settled slot.
+- `balance`, `history`, `lastWin` (the event's combined credit) and `unresolvedClaims()` stay shared. `WalletRefusal` and `SettlementFault` carry the slot they concern.
+- Engine–wallet consistency (I8) for two slots relies on the session's in-flight reservation (§8). The engine still knows no balance.
 
 ### 23.18 Revised implementation and commit plan — C4 (M1-D16 approved policy; plan PROPOSED, no stage authorized)
 

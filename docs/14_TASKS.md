@@ -30,8 +30,17 @@ TASK 007 active — Sprint 4 (Phase 6, User Interface per `docs/07_UI_ARCHITECTU
 - **Update 2026-11-14 — W11 approved (final M1 authorization) and implemented, uncommitted.** Every credit is decided in exact integer cents below the exclusive 2^44-unit envelope. A valid win outside it becomes an R2 unresolved claim, with rule `W11` and the exact `unpaidCents`, and a withheld jackpot's chest becomes one follow-up claim (docs/07 §23.21). No engine, rendering or shared file changed. Validation: 427/427 tests, tsc, build, lint at baseline, freeze scope, routeTree unchanged. M1 implementation is complete. Remaining: the owner's browser QA (M1, U4b, U5) and the S1 commit authorization.
 - **Update 2026-11-14 — browser QA reconciliation:** the owner reports 10 consolidated browser checks passed. That is distinct from the 19-item detailed checklist in docs/16, which is not recorded as passed. The remaining detailed items await the owner's confirmation, and the full QA gate stays pending. The S1 commit is to be local, with no push, and awaits a separate authorization. The W11 wording is clarified in docs/07 §23.21: the first *valid* chest settlement after a withheld jackpot creates the follow-up claim.
 - **Update 2026-11-14 — browser QA accepted (owner):** the owner confirms **all 19/19 detailed browser QA checks passed** (U4b 6/6, U5 7/7, M1 6/6). These are owner-performed checks; the agent ran no browser test. The temporary `// @refresh reset` line is confirmed absent from `src/components/AbyssAnchor.tsx`. The U4b and U5 browser QA is complete. M1's only remaining step is the owner's separate authorization of the single local S1 commit (27 files, `src/routeTree.gen.ts` excluded; no push). Nothing is staged or committed.
+- **Update 2026-11-14 — reconciliation (documentation only; supersedes the Git status above):**
+  - **M1:** S1 landed as `e37b81c`, and its held-back test suites as `e8b1b62`. The owner **deferred M1** to the final stabilization phase. It is **not closed**, validated or formally accepted, and its work is preserved.
+  - **M2 and B-R:** tracked separately, not started.
+  - **U6 + U7:** landed in one commit, `4440009`. U6 delivered componentization (V3). U7 delivered the responsive layout (V5) with the owner's `tab`/`desk` and full-landscape desktop corrections (docs/07 §15). Pending: the U6 mobile pixel-compare and the U7 screenshot matrix (docs/07 §19 gates 7–8).
+  - **E-X3 — Dual Bet:** an owner-approved engine freeze exception (docs/06 §13.2), with the per-slot wallet amendment (docs/07 §23.17). Landed in `be10b19`. Owner browser QA is not recorded.
+  - **Git:** all four commits are on `origin/develop`.
+  - **Working tree:** uncommitted renderer changes (`src/rendering/draw/chain.ts`, `src/rendering/theme.ts`, untracked `src/rendering/draw/chain.test.ts`) are preserved untouched. They are outside every approved freeze exception (docs/07 §19 gate 4).
+  - **Next:** the Sprint 4 close-out. Step 1 is this documentation reconciliation.
+- **Update 2026-11-14 — close-out Step 2 (uncommitted):** agent-run browser QA at all 7 matrix sizes passes after four `src/ui`-only QA fixes (D1 scene fit, ship visible on phones; D2–D4 keyboard focus and accessible names). 539/539 tests, `tsc` clean, lint 0 + 6 (end-of-line neutralized), build passes. **Awaiting owner acceptance:** D1–D4, §19 gates 7–8, and a decision on the uncommitted renderer work. Details in `docs/15_PROGRESS.md`.
 
-U6 not started
+U6 and U7 committed (`4440009`); Dual Bet E-X3 committed (`be10b19`); M1 deferred, not closed; Sprint 4 close-out QA done, awaiting owner acceptance
 
 ---
 
@@ -129,8 +138,16 @@ Active (started 2026-08-17) — Blueprint `docs/07_UI_ARCHITECTURE.md` approved 
 - **Update 2026-11-14 — W11 approved (final M1 authorization) and implemented, uncommitted.** Every credit is decided in exact integer cents below the exclusive 2^44-unit envelope. A valid win outside it becomes an R2 unresolved claim, with rule `W11` and the exact `unpaidCents`, and a withheld jackpot's chest becomes one follow-up claim (docs/07 §23.21). No engine, rendering or shared file changed. Validation: 427/427 tests, tsc, build, lint at baseline, freeze scope, routeTree unchanged. M1 implementation is complete. Remaining: the owner's browser QA (M1, U4b, U5) and the S1 commit authorization.
 - **Update 2026-11-14 — browser QA reconciliation:** the owner reports 10 consolidated browser checks passed. That is distinct from the 19-item detailed checklist in docs/16, which is not recorded as passed. The remaining detailed items await the owner's confirmation, and the full QA gate stays pending. The S1 commit is to be local, with no push, and awaits a separate authorization. The W11 wording is clarified in docs/07 §23.21: the first *valid* chest settlement after a withheld jackpot creates the follow-up claim.
 - **Update 2026-11-14 — browser QA accepted (owner):** the owner confirms **all 19/19 detailed browser QA checks passed** (U4b 6/6, U5 7/7, M1 6/6). These are owner-performed checks; the agent ran no browser test. The temporary `// @refresh reset` line is confirmed absent from `src/components/AbyssAnchor.tsx`. The U4b and U5 browser QA is complete. M1's only remaining step is the owner's separate authorization of the single local S1 commit (27 files, `src/routeTree.gen.ts` excluded; no push). Nothing is staged or committed.
+- **Update 2026-11-14 — reconciliation (documentation only; supersedes the Git status above):**
+  - **M1:** S1 landed as `e37b81c`, and its held-back test suites as `e8b1b62`. The owner **deferred M1** to the final stabilization phase. It is **not closed**, validated or formally accepted, and its work is preserved.
+  - **M2 and B-R:** tracked separately, not started.
+  - **U6 + U7:** landed in one commit, `4440009`. U6 delivered componentization (V3). U7 delivered the responsive layout (V5) with the owner's `tab`/`desk` and full-landscape desktop corrections (docs/07 §15). Pending: the U6 mobile pixel-compare and the U7 screenshot matrix (docs/07 §19 gates 7–8).
+  - **E-X3 — Dual Bet:** an owner-approved engine freeze exception (docs/06 §13.2), with the per-slot wallet amendment (docs/07 §23.17). Landed in `be10b19`. Owner browser QA is not recorded.
+  - **Git:** all four commits are on `origin/develop`.
+  - **Working tree:** uncommitted renderer changes (`src/rendering/draw/chain.ts`, `src/rendering/theme.ts`, untracked `src/rendering/draw/chain.test.ts`) are preserved untouched. They are outside every approved freeze exception (docs/07 §19 gate 4).
+  - **Next:** the Sprint 4 close-out. Step 1 is this documentation reconciliation.
 
-U6 not started
+U6 and U7 committed (`4440009`); Dual Bet E-X3 committed (`be10b19`); M1 deferred, not closed
 
 ---
 

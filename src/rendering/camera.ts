@@ -4,12 +4,18 @@
 //   screenY = h * ANCHOR_SCREEN_Y_FRAC + (worldY − (followY + ANCHOR_WORLD_OFFSET_PX))
 // X is untransformed by design; the camera stays vertical-only until a
 // feature demands otherwise.
+//
+// Presentation offset (docs/05 §6 extension point: an additive offset applied
+// inside worldToScreenY): the pre-dive view shifts the world down on short
+// viewports so the surface ship is fully visible (layers/presentation.ts).
+// It is 0 during normal diving, which leaves the transform bit-identical.
 
 import { ANCHOR_WORLD_OFFSET_PX } from "@/shared/world";
 import { ANCHOR_SCREEN_Y_FRAC } from "./constants";
 
 export class Camera {
   private followY = 0;
+  private offsetY = 0;
 
   readonly viewport = { w: 0, h: 0 };
 
@@ -24,9 +30,16 @@ export class Camera {
     this.followY = worldY;
   }
 
+  /** Owner-only: additive screen-Y offset for the pre-dive presentation (0 = none). */
+  setPresentationOffset(dy: number) {
+    this.offsetY = dy;
+  }
+
   worldToScreenY(worldY: number): number {
     return (
-      this.viewport.h * ANCHOR_SCREEN_Y_FRAC + (worldY - (this.followY + ANCHOR_WORLD_OFFSET_PX))
+      this.viewport.h * ANCHOR_SCREEN_Y_FRAC +
+      (worldY - (this.followY + ANCHOR_WORLD_OFFSET_PX)) +
+      this.offsetY
     );
   }
 

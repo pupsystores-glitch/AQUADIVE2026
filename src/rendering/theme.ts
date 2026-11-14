@@ -12,23 +12,42 @@
 // ----- Surface ship (draw/ship.ts) -----
 
 export const SHIP_THEME = {
-  waterLine: "rgba(180, 220, 255, 0.5)",
-  hullFill: "#2a1a0e",
-  hullStroke: "#a47148",
-  plankLine: "rgba(164, 113, 72, 0.5)",
-  mast: "#7a4b2a",
-  sail: "#f3ead4",
-  sailorSkin: "#f0c9a0",
-  sailorShirt: "#c44b3a",
-  sailorHat: "#1a3a6a",
+  // Water surface
+  waterLine: "rgba(200, 232, 255, 0.6)",
+  surfaceLight: "rgba(120, 196, 255, 0.16)",
+  // White hull, seen from the side through the water
+  hullAlpha: 0.94,
+  hullTop: "#f6f9ff",
+  hullMid: "#e4e8fa",
+  hullLow: "#cfd3f0",
+  hullKeel: "#b9bde6",
+  deck: "#ffffff",
+  deckShade: "rgba(120, 132, 190, 0.45)",
+  chine: "rgba(255, 255, 255, 0.55)",
+  hullOutline: "rgba(96, 108, 176, 0.55)",
+  underwaterTint: "rgba(92, 84, 220, 0.2)",
+  // Lifebuoy
+  buoy: "#e2475f",
+  buoyBand: "#f7b7a4",
+  buoyShade: "rgba(104, 24, 60, 0.55)",
+  buoyShadow: "rgba(60, 60, 120, 0.28)",
+  // Chain attachment (hawse hole)
+  hawseHole: "#141a26",
+  hawseRim: "#8b97ad",
+  hawseRimLight: "rgba(226, 236, 248, 0.85)",
 } as const;
 
 // ----- Chain (draw/chain.ts) -----
 
 export const CHAIN_THEME = {
-  outerLink: "rgba(32, 38, 46, 0.95)",
-  midLink: "rgba(150, 160, 172, 0.95)",
-  highlight: "rgba(240, 246, 255, 0.85)",
+  // Dark gunmetal steel
+  deepShadow: "rgba(11, 17, 24, 0.94)",
+  darkSteel: "#202C38",
+  gunmetal: "#354554",
+  edge: "#718493",
+  highlight: "rgba(165, 181, 191, 0.92)",
+  weldShadow: "rgba(11, 17, 24, 0.6)",
+  weldLight: "rgba(113, 132, 147, 0.55)",
 } as const;
 
 // ----- Anchor (draw/anchor.ts) -----

@@ -56,6 +56,7 @@ import {
 } from "@/engine";
 import { DEFAULT_BET } from "@/game/constants";
 import { SceneRenderer } from "@/rendering/scene-renderer";
+import { fitScene, type SceneViewport } from "@/ui/scene-fit";
 import { createBetInputStore, type BetInputStore } from "@/ui/store/bet-input-store";
 import {
   createNotificationStore,
@@ -210,9 +211,23 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
       // so it never notifies; it guarantees a remount cannot show a stale
       // frame if the engine was advanced while detached.
       round.write(engine.getPublicState());
+      // Scene fit (Sprint 4 QA fix): short canvases get a zoomed-out logical
+      // viewport so the idle ship and the anchor both stay on screen
+      // (src/ui/scene-fit.ts). Memoized on the measured inputs, so a steady
+      // size costs one comparison per frame.
+      let fitKey = "";
+      let fit: SceneViewport = { width: 0, height: 0, dpr: 1 };
       driver.attach({
         frame: (state, time) => {
-          renderer.resize(canvas.clientWidth, canvas.clientHeight, window.devicePixelRatio || 1);
+          const w = canvas.clientWidth;
+          const h = canvas.clientHeight;
+          const ratio = window.devicePixelRatio || 1;
+          const key = `${w}x${h}@${ratio}`;
+          if (key !== fitKey) {
+            fitKey = key;
+            fit = fitScene(w, h, ratio);
+          }
+          renderer.resize(fit.width, fit.height, fit.dpr);
           renderer.frame(state, time);
         },
         sync: round.write,

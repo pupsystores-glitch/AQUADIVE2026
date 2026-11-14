@@ -130,7 +130,14 @@ describe("createGameSession — construction order (§8, §20 risk 5)", () => {
     fire(1100);
     expect(reads).toHaveBeenCalledTimes(3);
     expect(renderers[0].frames).toBe(2);
-    expect(renderers[0].resizes[0]).toEqual([375, 667, 2]); // CSS size + window.devicePixelRatio
+    // Scene fit (Sprint 4 QA fix): a 667 px canvas is shorter than
+    // MIN_SCENE_HEIGHT, so the renderer gets a zoomed-out logical viewport
+    // (zoomed out no further than MIN_SCENE_SCALE, 0.84: 667 / 0.84 tall)
+    // whose backing store is still the native 750 × 1334 (CSS size × dpr 2).
+    const [w, h, dpr] = renderers[0].resizes[0];
+    expect(h).toBeCloseTo(667 / 0.84, 9);
+    expect(w * dpr).toBe(750);
+    expect(h * dpr).toBe(1334);
     expect(session.engine.tickCount).toBeGreaterThan(0); // 100 ms advanced = 6 ticks
     expect(session.round.get()).toEqual(session.engine.getPublicState()); // the store holds this frame's state
   });

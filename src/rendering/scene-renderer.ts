@@ -16,6 +16,7 @@ import { actorLayer } from "./layers/actor";
 import { backgroundLayer } from "./layers/background";
 import { effectsLayer } from "./layers/effects";
 import { environmentLayer } from "./layers/environment";
+import { presentationOffsetY, presentState } from "./layers/presentation";
 import { worldLayer } from "./layers/world";
 import type { RenderLayer, RenderState, RenderTime } from "./render-state";
 
@@ -81,11 +82,15 @@ export class SceneRenderer {
 
     // Camera is updated once per frame from RenderState.worldY before any
     // layer renders (§6); layers never write to it.
+    // While betting is open the layers draw the surface view
+    // (layers/presentation.ts); in every other phase `view` is `state`.
+    const view = presentState(state);
     this.camera.setViewport(w, h);
-    this.camera.follow(state.worldY);
+    this.camera.follow(view.worldY);
+    this.camera.setPresentationOffset(presentationOffsetY(view.worldY, h));
 
     for (const layer of this.layers) {
-      layer.render(ctx, state, this.camera, time);
+      layer.render(ctx, view, this.camera, time);
     }
 
     if (import.meta.env.DEV) this.recordFrameTime(performance.now() - meterStart);

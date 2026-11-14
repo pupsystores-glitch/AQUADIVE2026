@@ -33,6 +33,17 @@ Engine freeze exception E-X2 is proposed, not approved. M2 (integer minor units)
 
 M2 (the rest of integer minor units) is still deferred.
 
+**Reconciliation 2026-11-14 (documentation only) — supersedes the statements above as a description of the repository.**
+
+- **On `origin/develop`:**
+  - `e37b81c`: M1, S1.
+  - `4440009`: U6 + U7.
+  - `e8b1b62`: the M1 test suites.
+  - `be10b19`: Dual Bet, E-X3.
+- **M1** is **deferred** by the owner to the final stabilization phase. It is not closed. **M2**, which includes B-R, is tracked separately and not started.
+- **Freeze:** the approved engine freeze exceptions are E-X1, E-X2 and E-X3. The renderer and the shared floor are frozen.
+- **Working tree:** it holds uncommitted renderer changes (chain visuals). They are preserved, but they are not part of any approved exception.
+
 ---
 
 ## TASK 007 — Sprint 4: User Interface (IN PROGRESS, started 2026-08-17)
@@ -55,7 +66,110 @@ Tracking note (process deviation, recorded for provenance): Commit U1 (`140790f`
 - Architectural decisions: per §8/§9 as specified — factory + module singleton so tests construct deterministic sessions while production initialization order is unchanged (§20 risk 5); the renderer factory is injectable because `SceneRenderer` needs a real 2D context; `attachCanvas` accepts the host sync callback as a documented U1→U4 seam.
 - Risks: none open. Validation (per the commit and re-verified by the 2026-08-17 U2 audit): `tsc --noEmit` clean; **93/93 tests green** (10 new: 6 store-primitive semantics — set/subscribe/Object.is bailout incl. NaN, unsubscribe isolation; 4 session tests — inert construction, attach drives resize/frame/sync, optional sync, detach/re-attach remount semantics with engine state surviving); engine/renderer freeze check clean (`140790f` touches only `src/components` and `src/ui`); working tree clean after commit. Manual gameplay pass: owner approved 2026-08-17.
 
+### Sprint 4 close-out — Step 2: browser QA, QA fixes and quality gates (2026-11-14) — UNCOMMITTED; AWAITING OWNER ACCEPTANCE
+
+- **Scope.** TASK 007 / Sprint 4 only. The tree under test is `be10b19` plus the uncommitted Sprint 4 QA fixes below, **plus the owner's uncommitted renderer work** (`src/rendering/draw/chain.ts`, `src/rendering/theme.ts`, untracked `src/rendering/draw/chain.test.ts`). The renderer work was present for every browser run and every gate, and it was not reviewed, changed, staged or stashed. Its SHA-256 hashes were checked before and after and are unchanged. **`be10b19` without the renderer work was not browser-tested separately.**
+- **Method.** Agent-run browser QA: headless Chrome driven over the DevTools protocol against `npm run dev` (port 5180). Phones and tablets are emulated with mobile metrics at DPR 2, desktops at DPR 1. Outcomes are forced only by a harness-side `Math.random` wrapper that answers the engine's outcome samplers (crash 2.5×; crash 200× with a 60× jackpot and 2.00× chests). No application code takes part in the forcing. Inputs are real mouse and keyboard events (no touch emulation). **These are agent-run checks. They are not the owner's manual gameplay pass (§19 gate 7) and not the owner's screenshot approval (§19 gate 8).**
+- **Earlier QA, collected and evaluated (not repeated).** Two earlier sessions on 2026-11-14 ran the layout probe and the gameplay matrix before and after the fixes, but recorded no report. Their results (375×667, 390×844, 768×1024, 1366×768, 1920×1080) were re-read and evaluated here. The 375×667 and 390×844 gameplay runs had been interrupted (empty result files). Their completed reruns (21:08–21:12, after the last source edit at 19:13) are the recorded results. This step added only the two missing matrix sizes, 1280×720 and 1440×900.
+- **Defects confirmed and fixed (uncommitted, `src/ui` only):**
+  1. **D1, the surface ship was off-canvas on every phone and portrait-tablet stage.** The frozen renderer draws the idle ship 400 px above the anchor pin (pinned at 55 % of the canvas height), so any stage shorter than about 800 px cut it off. That was 427 px at 375×667, 604 px at 390×844 and 694 px at 768×1024, after Dual Bet. This violated the owner's Dual Bet requirement that the canvas show the ship. **Fix:** `src/ui/scene-fit.ts` (new, pure) plus `session.ts`. Below 820 logical px the session passes the renderer a zoomed-out logical viewport with the same aspect ratio. The backing store stays at native resolution (an exact `length × dpr` product, so the renderer never re-allocates per frame). Canvases 820 px and taller pass through unchanged. No renderer file changed. Evidence: `before-375x667-dive` shows no ship; after the fix, the ship is fully visible at all 7 sizes (layout probe).
+  2. **D2, keyboard focus was lost after a bet.** When the focused control disabled itself (PLACE BET → BET LOCKED, CASH OUT → SECURED / WAITING…, stake field locked for the dive), the browser dropped focus to `<body>`. **Fix:** `src/ui/hooks/use-focus-rescue.ts` (new). Each slot panel is a focus scope (`tabIndex={-1}`), and focus moves to the panel instead.
+  3. **D3, the chest picker was not reachable by keyboard in time.** **Fix:** the picker is a named group and a focus scope. When it opens while focus is parked, focus moves to the first chest, and it returns when the picker closes. Each chest has a "Chest n of 3" description.
+  4. **D4, the stake fields had no accessible name and no visible focus indicator.** **Fix:** `aria-label` "BET n stake" and a gold `focus-within` ring.
+  - Tests: `src/ui/scene-fit.test.ts` and `src/ui/screen.a11y.test.tsx` (new). In `src/ui/session.test.ts`, one resize assertion is rewritten for the scene fit. Strings are added in `strings.ts` (`stakeLabel`, `chests.position`), and `src/ui/README.md` is updated.
+  - **Scope flags for the owner.** D1 changes the canvas content on phones and portrait tablets (a uniform zoom-out of about 0.52 at 375×667, 0.74 at 390×844 and 0.85 at 768×1024). That departs from §22 item 7 ("mobile byte-identical") and from the §15 note that sizes stay fixed in pixels. D2–D4 touch §20's non-goal "no accessibility overhaul". All four fixes are small and stay inside `src/ui`, but each needs the owner's explicit acceptance (docs/07 §15 note).
+- **Browser QA results (after the fixes):**
+
+| Check | 375×667 | 390×844 | 768×1024 | 1280×720 | 1366×768 | 1440×900 | 1920×1080 |
+|---|---|---|---|---|---|---|---|
+| No horizontal or vertical overflow, no overlapping regions, no off-screen buttons | Pass | Pass | Pass | Pass | Pass | Pass | Pass |
+| Ship fully visible at idle; anchor and chain visible | Pass | Pass | Pass | Pass | Pass | Pass | Pass |
+| Dual Bet: both PLACE BET → both debited (−3.00 for 1 + 2) | Pass | Pass | Pass | Pass | Pass | Pass | Pass |
+| Independent cashout: BET 1 cashes; BET 2 keeps CASH OUT and rides to the crash | Pass | Pass | Pass | Pass | Pass | Pass | Pass |
+| Crash: the uncashed slot loses its stake; the final balance equals start − stakes + the BET 1 win | Pass | Pass | Pass | Pass | Pass | Pass | Pass |
+| Jackpot (60×) → BET 2 auto-cashed, chest picked by keyboard, chest credit once (+60.00) | Pass | Pass | not run | Pass | Pass | Pass | not run |
+| Keyboard: Tab order, accessible names, focus kept in the slot after PLACE BET and into the dive | Pass | Pass | Pass | Pass | Pass | Pass | Pass |
+| Console during play | favicon 404 only | favicon 404 only | favicon 404 only | favicon 404 only | favicon 404 only | favicon 404 only | favicon 404 only |
+
+  - Button timeline at every size: `PLACE BET` → `BET LOCKED · DIVE IN` → `CASH OUT · x` → `SECURED +x · WATCHING DIVE…` (the cashed slot, while the other stays `CASH OUT`) → `WAITING…` (crash, impact, bonus) → `PLACE BET`.
+  - **Harness notes, evaluated as false alarms.** At 390×844 (1.77 at a sampled 1.7626×) and in the 390 and 1366 jackpot runs, a payout was above `floor(stake × the multiplier sampled after the cashout)`. The multiplier includes a decaying goldfish-boost bonus (`src/engine/simulation.ts`), so it can fall after the cashout tick. The payout used the tick-authoritative value, and the other slot's label (for example `CASH OUT · 3.52` = floor(2 × 1.7626)) is consistent. Where the note shows a win below the later sample, the multiplier simply kept rising.
+  - **Console.** The only error is `Failed to load resource: 404` for `/favicon.ico` (no `public/` directory, no icon link). It is logged once per fresh browser profile and was confirmed with `curl`. It is cosmetic and not fixed (adding an asset is outside Sprint 4's scope); the owner decides.
+  - **Not covered by this pass:** real devices and touch input; a real-browser remount during Dual Bet; a spectator bonus and the 6 s chest auto-pick in the browser (both are covered by the automated suites, and by the owner's earlier U4b-6 check, which predates Dual Bet); BET 2 cashing before BET 1 (covered by `screen.dual.test.tsx`); quick-bet clicks on `tab`/`desk`; jackpot at 768×1024 and 1920×1080.
+- **Quality gates (working tree as above):**
+
+| Gate | Result |
+|---|---|
+| Vitest, full suite (PowerShell, `C:\`) | **539/539 passed, 39/39 files** (256 s). An earlier Git Bash run that "failed" all 39 files at load is the known lowercase-drive environment issue, not a test result |
+| `tsc --noEmit` | Clean |
+| ESLint, full project, raw | **Fails, 7,861 problems.** Prettier end-of-line errors from CRLF working-tree files (open recovery item 1) |
+| ESLint, end-of-line neutralized | **0 errors, 6 warnings**, all pre-existing (`react-refresh/only-export-components` in shadcn `src/components/ui`). Below the recorded 7 + 6 baseline |
+| ESLint, raw, the 10 changed and new `src/ui` files | Clean |
+| Production build | Passes (one Nitro config warning: `inlineDynamicImports` ignored) |
+| SSR smoke (dev server) | HTTP 200, canvas markup, title present |
+| `git diff --check` | Clean outside `src/rendering`. `src/rendering/theme.ts` fails it, because the owner's renderer work rewrote the file with CRLF line endings. Not touched |
+| Freeze audit | `src/engine` and `src/shared`: no diff. `src/rendering`: only the owner's pre-existing renderer work. The QA fixes import `MAX_DPR` from `@/rendering/constants` (read-only) |
+
+- **Git.** Nothing staged, committed, pushed or stashed. `develop` = `origin/develop` = `be10b19`.
+
+### Sprint 4 completion report — DRAFT (2026-11-14), awaiting owner acceptance; Phase 6 NOT closed
+
+Compared with docs/07 §22 (Definition of Done):
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `src/ui/` per §16; `AbyssAnchor.tsx` deleted; the route mounts `GameScreen` | Met in `4440009`. The QA fixes add `src/ui/scene-fit.ts` and `src/ui/hooks/use-focus-rescue.ts` (not in §16; to be recorded on acceptance) |
+| 2 | Deltas V1–V5 landed; no other behavior change | V1–V5 landed (V5 with the owner's corrections, §15). Additional changes are owner-approved (E-X1, E-X2, E-X3, M1). The QA fixes D1–D4 are **pending acceptance** |
+| 3 | Money math in one module, settlement session-scoped | Met (`wallet-store.ts` + `payout.ts`, M1-D8). Dual Bet settlements verified in the browser at 7 sizes |
+| 4–6 | One owner per displayed value; notifications via the store; strings in `strings.ts` | Met in U4–U6 (validated then; not re-audited in this step). The new a11y strings are in `strings.ts` |
+| 7 | Mobile byte-identical (screenshot-verified); desktop owner-approved (§19.8) | **Open.** Mobile has changed by owner decision (Dual Bet panel) and by D1 (pending). Agent screenshots exist for all 7 sizes; the **owner's visual approval is required** |
+| 8 | Every commit passed the §19 gate | `be10b19` has no recorded validation. The current tree passes gates 1–6 (above). **Gate 7 (owner manual gameplay) and gate 8 (owner screenshot approval) are open** |
+| 9 | Test tiers 1–3; final count recorded | Met: 539 tests across 39 files (including the renderer WIP's `chain.test.ts`) |
+| 10 | Docs current | Updated in this step (04, 07, 14, 15, 16, `src/ui/README.md`) |
+| 11 | Close-out + retrospective in PROGRESS, with the minor-units decision | Minor units: decided (M1 deferred to final stabilization, not closed; M2 with B-R tracked separately). **The retrospective follows the owner's acceptance** |
+
+**Blockers to closing Sprint 4 / Phase 6 (owner actions):**
+
+1. **Acceptance of the QA fixes D1–D4**, including the scope flags above, and Git approval to commit them. Until then, `origin/develop` still hides the ship on phones.
+2. **§19 gate 7:** the owner's manual gameplay pass on the Dual Bet build (full loop, plus 375×667 and 390×844).
+3. **§19 gate 8:** the owner's approval of the screenshot matrix (7 sizes).
+4. **The renderer work in the working tree** (frozen directory, no exception covers it): the owner decides whether it becomes a separately approved exception, stays out of Sprint 4, or is dropped. The browser QA above ran with it present.
+
+**Non-blocking, tracked separately:** the favicon 404; M1 deferred, not closed; M2 / B-R; recovery items 1–3 (line endings, a stable `main`, scaffold leftovers); the Phase 8 limitation of E-X1.
+
+### Engine freeze exception E-X3 — Dual Bet — COMMITTED (`be10b19`) AND PUSHED
+
+- Date: 2026-11-14. Owner-approved engine freeze exception (docs/06 §13.2). The commit message is `feat: update engine and UI state handling` and does not name E-X3. The commit is already on `origin/develop`, so it is not amended (AGENTS.md).
+- Summary: the local player holds two independent bets per round, BET 1 and BET 2.
+  - **Engine:** `placeBet`/`cashOut` carry a mandatory `slot`. Guards apply per slot, and `invalid-slot` is a new reason. Impact auto-cash is per slot. There is one chest pick per round, applied to every eligible slot. `participants` replaces `participant`, and the snapshot schema is v3.
+  - **Wallet:** every M1 rule applies per slot, with per-slot fault isolation. W2 and W3 are amended per slot (docs/07 §23.17).
+  - **Session:** `betInputs` per slot, and the in-flight stake reservation on `submit` (docs/07 §8).
+  - **UI:** the dual betting panel (docs/07 §13.3, §15).
+- Files modified (35):
+  - **Engine:** `src/engine/commands.ts`, `events.ts`, `state-machine.ts`, `game-engine.ts`, `index.ts`, plus three engine test files.
+  - **UI:** `src/ui/session.ts`, `src/ui/strings.ts`, `src/ui/store/wallet-store.ts`, `src/ui/store/round-store.ts`, and the components `ActionButton`, `BetControls`, `BettingPanel`, `ChestPicker`, `MultiplierOverlay`, `QuickBets`, `action-state.ts`.
+  - **Tests and harness:** new `src/ui/session.dual.test.ts`, `src/ui/store/wallet-store.dual.test.ts`, `src/ui/screen.dual.test.tsx`, `src/ui/test/wallet-view.ts`; updated UI suites and harness.
+  - **Not touched:** `src/rendering` and `src/shared`.
+- Architectural decisions: slot identity lives in the command and event payloads. The engine stays balance-free, and the two-bet affordability is a session-edge reservation. The single-bet behavior is preserved for one slot.
+- Validation: **not recorded.** The commit message lists no results, and no test, type-check, build or browser QA run for this commit is documented. Owner browser QA for Dual Bet, at the priority sizes 375×667 and 390×844, is pending.
+- Risks: per-slot money paths are new settlement surface. They are covered by the new dual suites, but no run of those suites is recorded here. Phase 8 must carry slot identity into the server bet identity.
+
+### Commit — M1 money-integrity test suites (`e8b1b62`) — COMMITTED AND PUSHED
+
+- Date: 2026-11-14. The M1 test work held back from `e37b81c`: session-level money integration (MT-06 scale runs, invalid stakes, W10/W11 and R2 claim paths), MT-09, MT-10, payout and wallet-store cases, and the binary floor-cents oracle. MT-06 seed 404 is replaced by 505, because 404 has no chest pick, so its path-coverage check could not pass. No assertion was removed.
+- Validation (from the commit message): tsc clean, 469/469 tests, lint clean on the changed files, validated in isolation on top of `4440009`.
+- M1 remains deferred and **not closed**; this commit adds tests only.
+
+### Commit U6 + U7 — Componentization (V3) and responsive layout (V5) — COMMITTED (`4440009`) AND PUSHED
+
+- Date: 2026-11-14. One combined commit, by the owner's Git decision of 2026-11-14.
+- **U6 summary:** `AbyssAnchor.tsx` is split into `src/ui/components/`: `GameScreen`, `TopBar`, `HistoryStrip`, `CanvasStage`, `MultiplierOverlay`, `CrashBanner`, `WinFlash`, `ChestPicker`, `BettingPanel`, `BetControls`, `QuickBets`, `ActionButton`, `icons`, `DevRejectionBanner`. It brings per-slice subscriptions, `src/ui/strings.ts` and `formatMoney`. The route and the DOM harness mount `GameScreen`, and `AbyssAnchor.tsx` is deleted. The 20 characterization pins pass unchanged.
+- **U7 summary:** `tab` and `desk` custom variants in `src/styles.css`, a full-width tablet column, and a full-viewport landscape desktop grid with a right betting rail. These are approved departures from docs/07 §15's `lg` and portrait-aspect wording, recorded there.
+- Validation (from the commit message): validated on the exact staged tree in an isolated worktree. tsc clean, 427/427 tests, targeted lint clean, production build passes, engine, rendering and shared unchanged.
+- Pending: §19 gate 7, the owner's U6 mobile pixel-compare, and gate 8, the U7 screenshot matrix. Neither is recorded as passed.
+
 ### Stage M1 — implementation (E-X2 + M1-1 + settlement integrity + R2) — IMPLEMENTED IN THE WORKING TREE 2026-11-14; NOT COMMITTED; NOT CLOSED
+
+*Reconciliation 2026-11-14: committed afterwards as `e37b81c` (S1), with its tests in `e8b1b62`. M1 was then **deferred** by the owner and is **not closed**.*
 
 - Date: 2026-11-14. Nothing staged, committed or pushed. Integration strategy S1 is approved (one atomic commit). Staging, committing and pushing each need the owner's separate authorization.
 - Owner decisions, 2026-11-14:

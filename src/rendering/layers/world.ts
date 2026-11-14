@@ -7,10 +7,12 @@
 // is now the named constant SHIP_WORLD_Y (§8).
 
 import { ANCHOR_WORLD_OFFSET_PX, CHAIN_MAX_DEPTH, SHIP_WORLD_Y } from "@/shared/world";
+import { SHIP_CHAIN_ATTACH_DY, SHIP_CULL_MARGIN_TOP } from "../constants";
 import { drawCreature } from "../draw/creatures";
 import { drawSeaFloor } from "../draw/sea-floor";
 import { drawShip } from "../draw/ship";
 import type { RenderLayer } from "../render-state";
+import { launchProgress } from "./presentation";
 
 export const worldLayer: RenderLayer = {
   name: "world",
@@ -27,8 +29,10 @@ export const worldLayer: RenderLayer = {
 
     // Surface ship (only visible near surface)
     const shipScreenY = camera.worldToScreenY(SHIP_WORLD_Y);
-    if (camera.isVisibleY(SHIP_WORLD_Y, 120, 80)) {
-      drawShip(ctx, w / 2, shipScreenY, time.animTime);
+    if (camera.isVisibleY(SHIP_WORLD_Y, SHIP_CULL_MARGIN_TOP, 80)) {
+      // The ship's floating motion settles as the anchor launches (Actor layer).
+      const motion = 1 - launchProgress(state.worldY, h);
+      drawShip(ctx, w / 2, shipScreenY, time.animTime, w, SHIP_CHAIN_ATTACH_DY, motion);
     }
 
     // Sea floor + shipwreck — drawn BEFORE the anchor so the anchor visibly lands on top.

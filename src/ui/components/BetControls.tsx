@@ -8,6 +8,12 @@
 // takes the balance at click time (read from the store, not subscribed: the
 // button's rendering does not depend on it). Controls are disabled during
 // the dive only (D10).
+//
+// Accessibility (Sprint 4 QA fix): the amount field is named "BET n stake"
+// (it had no accessible name), and since it hides the native outline its
+// box shows a gold focus ring instead. The steppers keep their "−" / "+"
+// names (the characterization pins look them up by those names); the slot
+// panel's group name gives them their context.
 
 import type { BetSlot } from "@/engine";
 import { chainTier } from "@/game/presentation";
@@ -32,13 +38,14 @@ export function BetControls({ slot }: { slot: BetSlot }) {
       >
         {STRINGS.panel.decrease}
       </button>
-      <div className="flex min-w-0 flex-1 flex-col items-center rounded-md border border-border bg-secondary py-0.5 tab:py-1">
+      <div className="flex min-w-0 flex-1 flex-col items-center rounded-md border border-border bg-secondary py-0.5 focus-within:border-gold/70 focus-within:ring-2 focus-within:ring-gold/40 tab:py-1">
         <div className="max-w-full truncate text-[9px] uppercase tracking-widest text-muted-foreground tab:text-[10px]">
           {STRINGS.panel.betLabelPrefix}
           {chainTier(bet)}
         </div>
         <input
           type="number"
+          aria-label={STRINGS.panel.stakeLabel(slot + 1)}
           value={bet}
           onChange={(e) => betInput.input(e.target.value)}
           disabled={inDive}

@@ -28,6 +28,13 @@ Sprints are the execution units of this roadmap; each sprint delivers into one o
   - M1 (Money Integrity) is implemented, including W11 (approved and implemented 2026-11-14, docs/07 §23.21). Its browser QA passed (19/19, owner-confirmed 2026-11-14). It is uncommitted and not closed, pending only the owner's separate authorization of the local S1 commit (no push).
   - M2 is deferred. It includes the integer-cent ledger, B-R.
   - Next: U6, then U7, each after owner approval. *(Original line: "Sprint 4 — next: … status: proposed; its review/approval is Sprint 4's Commit 1".)*
+  - *Reconciliation (2026-11-14), current state:*
+    - **M1** landed as `e37b81c` (S1), with its held-back test suites in `e8b1b62`. The owner then **deferred M1** to the final stabilization phase. It is **not closed**. **M2**, which now includes **B-R**, is tracked separately and not started.
+    - **U6 and U7** landed together in `4440009`. U7 includes the owner's two layout corrections (docs/07 §15). The U6 mobile pixel-compare and the U7 screenshot matrix are still pending (docs/07 §19 gates 7–8).
+    - **Dual Bet (E-X3)**, an owner-approved engine freeze exception (docs/06 §13.2), landed in `be10b19`. Its owner browser QA is not yet recorded.
+    - All of these commits are on `origin/develop`.
+    - Next, in the original order: the Sprint 4 close-out. Phase 7 follows only after Sprint 4 closes and the owner approves.
+  - *Close-out Step 2 (2026-11-14):* agent-run browser QA at all 7 matrix sizes, four `src/ui` QA fixes (uncommitted) and all automated gates are green. A draft completion report is in docs/15. **Phase 6 stays In Progress until the owner accepts** (QA fixes, §19 gates 7–8, the renderer-work decision).
 
 ---
 
@@ -128,7 +135,7 @@ Production-ready Game Engine.
 
 # PHASE 6 — USER INTERFACE
 
-Status: Pending
+Status: 🔄 In Progress (Sprint 4, TASK 007, per `docs/07_UI_ARCHITECTURE.md`. U1–U7 are committed; Sprint 4 close-out is pending. *Reconciled 2026-11-14: this line read "Pending", which was stale.*)
 
 Objectives
 

@@ -7,8 +7,16 @@
 // compact. Desktop rail (`desk`): stacked, full controls. Pure composition:
 // subscribes to nothing; each slot panel's children read their own slices
 // (V3).
+//
+// Each slot panel is a focus-rescue scope (Sprint 4 QA fix): when the
+// focused control disables itself as the round moves on (PLACE BET → BET
+// LOCKED, CASH OUT → SECURED / WAITING…, the dive locking the stake field),
+// focus moves to the panel instead of falling back to the page, so Tab
+// continues inside the same slot. tabIndex={-1} keeps it out of the Tab order.
 
+import { useRef } from "react";
 import type { BetSlot } from "@/engine";
+import { useFocusRescue } from "@/ui/hooks/use-focus-rescue";
 import { STRINGS } from "@/ui/strings";
 import { ActionButton } from "./ActionButton";
 import { BetControls } from "./BetControls";
@@ -16,10 +24,15 @@ import { QuickBets } from "./QuickBets";
 
 function BetSlotPanel({ slot }: { slot: BetSlot }) {
   const label = STRINGS.panel.slotLabel(slot + 1);
+  const ref = useRef<HTMLElement | null>(null);
+  useFocusRescue(ref);
   return (
     <section
+      ref={ref}
       role="group"
       aria-label={label}
+      tabIndex={-1}
+      data-focus-scope=""
       className="flex min-w-0 flex-col rounded-lg border border-border/60 bg-background/30 p-2 tab:p-3"
     >
       <div

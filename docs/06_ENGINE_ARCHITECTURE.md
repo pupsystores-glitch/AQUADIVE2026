@@ -116,6 +116,7 @@ Rules and notes:
   - *Ineligible.* `pickChest` is rejected (`"not-bonus-eligible"`); no `chestPicked` is ever emitted for the round; entry(bonus) schedules the CHEST_RESULT interval and the round ends (`roundEnded { outcome: "jackpot" }`) with the chests revealed but never opened.
   - Jackpot and cashout settlement calculations are unchanged; the wallet's own exclusivity guards stay in force as defense in depth.
   - **Limitation — not the multiplayer rule.** E-X1 is a *local single-player demo* compatibility fix: whether the bonus phase waits for a pick depends on the one local participant's eligibility. That is **not** the authoritative global rule. In Phase 8 the server-authoritative round must complete the bonus phase on its own schedule, independent of any single player's eligibility; per-player eligibility then decides only who may pick and who is credited, and a server-side auto-pick (or per-player default) replaces the local chest-0 rule.
+- **Engine freeze exception E-X3 — Dual Bet** (owner-approved 2026-11-14; committed in `be10b19`; §13.2). The local player holds up to **two independent bets per round**, one per slot (`BetSlot = 0 | 1`). Eligibility above applies **per slot**: at entry(impact) every participating slot that has not cashed out is auto-cashed at the jackpot and becomes bonus-eligible. The bonus phase still has **one** pick per round. It is offered (pick window scheduled) while **any** slot is eligible, and the single `chestPicked` applies to every eligible slot; settlement is per slot, in the wallet. With no eligible slot, the ineligible path above applies unchanged.
 - Illegal transitions and commands invalid for the current state are rejected and reported (§12, §18) — never silently applied, never thrown across the tick boundary.
 - The `crashed`/`impact` double-fire race that exists today (both conditions can trigger in the same frame because the current tick body has no early exit) is resolved by the terminal-transition rule in §6. Sanctioned delta D3.
 
@@ -123,7 +124,7 @@ Rules and notes:
 
 One full round, end to end:
 
-1. **Betting** — countdown from `BETTING_WINDOW_SECONDS`, decremented per tick. `placeBet` commands accepted (one per participant per round). Countdown is *engine state* read by the UI each frame; the UI's 100 ms display interval is deleted (delta D5).
+1. **Betting** — countdown from `BETTING_WINDOW_SECONDS`, decremented per tick. `placeBet` commands accepted (one per participant per round; since E-X3, one per **slot** per round, two slots, §13.2). Countdown is *engine state* read by the UI each frame; the UI's 100 ms display interval is deleted (delta D5).
 2. **Dive start** — automatic on countdown expiry (rounds run whether or not anyone bet — spectating already exists and stays). `RoundAuthority` fixes `crashAt`; the world resets (worldY = 0, creatures cleared, spawn cursor reset, boost = 0, multiplier = 1).
 3. **Per-tick pipeline while `diving`** (fixed order, preserved verbatim from today's tick body):
    1. advance simulation clock
@@ -235,11 +236,13 @@ Event map (payloads carry `roundId`; shapes finalized in the extraction commit t
 | `crashed { multiplier }` | entry(crashed) | Settlement (loss record), UI, history, FX/audio later |
 | `shipImpact { jackpotMultiplier }` | entry(impact) | Settlement (jackpot credit), UI, history; FX already ride `RenderState.shipImpact` per docs/05 §17 |
 | `chestsRevealed { chests }` | entry(bonus) | UI |
-| `chestPicked { chestId, chestMultiplier, finalMultiplier }` | accepted pick, or pick-window expiry (chest 0) — eligible participant only (E-X1, §5) | Settlement (delta credit), UI, history |
+| `chestPicked { chestId, chestMultiplier, finalMultiplier }` | accepted pick, or pick-window expiry (chest 0) — eligible participant only (E-X1, §5); since E-X3 one per round, applying to every eligible slot | Settlement (delta credit), UI, history |
 | `roundEnded { outcome }` | entry(betting) from crashed/bonus | History, analytics later |
 | `stateChanged { from, to }` | every transition | UI shell, debugging |
 | `engineError { code, detail }` | invariant violation (§18) | UI, monitoring later |
 | *(reserved)* `goldfishConsumed`, `boostExpired` | collision/boost systems | future FX/audio triggers — the docs/05 §17 event channel |
+
+*E-X3 (2026-11-14, §13.2):* `betPlaced` is `{ roundId, slot, amount }` and `cashedOut` is `{ roundId, slot, multiplier }`, one event per slot. `shipImpact` and `chestPicked` keep their shapes. `commandRejected` gains the reason `"invalid-slot"`.
 
 Rules:
 
@@ -255,9 +258,11 @@ One facade, one driver, mirroring the `SceneRenderer` convention (only the facad
 
 ```ts
 // Commands — the input edge. These shapes ARE the future protocol messages.
+// E-X3 (2026-11-14, §13.2): placeBet and cashOut carry a mandatory slot.
+type BetSlot = 0 | 1;
 type EngineCommand =
-  | { type: "placeBet"; amount: number }
-  | { type: "cashOut" }
+  | { type: "placeBet"; slot: BetSlot; amount: number }
+  | { type: "cashOut"; slot: BetSlot }
   | { type: "pickChest"; chestId: 0 | 1 | 2 };
 
 class GameEngine {
@@ -271,7 +276,9 @@ class GameEngine {
   getRenderState(): RenderState;             // projection, docs/05 §4 shape, byte-compatible
   getRenderTime(): RenderTime;               // { animTime: simTime, frameDt }
   getPublicState(): EnginePublicState;       // phase, countdownSeconds, multiplier, boost,
-                                             // participant {betAmount, cashedOut, cashedOutAt} | null,
+                                             // participants: [slot 0, slot 1], each
+                                             //   {betAmount, cashedOut, cashedOutAt, bonusEligible} | null
+                                             //   (E-X3; was the single `participant`),
                                              // chests, chosenChestId, roundId
   snapshot(): EngineSnapshot;                // §14
   restore(snapshot: EngineSnapshot): void;   // §14
@@ -283,7 +290,9 @@ class GameEngine {
 - **Command queue.** Commands are validated against the state *at the tick they apply*, not at submit time. Rejections emit `commandRejected` — commands never throw. This single mechanism gives determinism (commands are part of the replayable input log) and is wire-shaped for Phase 8: in replica mode `submit` forwards to the server and the authoritative accept/reject comes back as an event.
 - `EngineConfig` carries the tuning currently in `src/game/config.ts`/`constants.ts` (injected, not imported ambient) — the future server-configurable surface (admin panel, Phase 9) and the white-label hook on the gameplay side.
 
-### 13.1 Engine freeze exception E-X2 — valid-stake enforcement (proposed 2026-11-13; APPROVED BY THE OWNER 2026-11-14, AS IMPLEMENTED; uncommitted)
+### 13.1 Engine freeze exception E-X2 — valid-stake enforcement (proposed 2026-11-13; APPROVED BY THE OWNER 2026-11-14, AS IMPLEMENTED; committed in `e37b81c`)
+
+*Reconciliation (2026-11-14, documentation only):* E-X2 landed in the M1 S1 commit `e37b81c`, which is on `origin/develop`. In that commit, `src/engine src/rendering src/shared` differ by exactly the four E-X2 files. Where the paragraphs below say "uncommitted", they record the state before that commit.
 
 **Current status (2026-11-14).** The owner explicitly approved the E-X2 change already implemented in the working tree: the shared stake-validation predicate, the engine `placeBet` validation, their tests and the UI re-export. The freeze exception is **not expanded** beyond the files below. The change is uncommitted. Under owner decision Q14 = S1 it lands inside the single atomic M1 integration commit, and only after the owner separately authorizes the Git operation (docs/07 §23.9, §23.18). The status paragraphs that follow ("not approved", "planning only") are kept as the record of 2026-11-13. They no longer describe the authorization.
 
@@ -369,6 +378,36 @@ Explicitly **not** in the candidate scope: `src/engine/game-engine.ts` (no state
 
 **Why it remains proposed.** The engine is a frozen, binding contract for Sprint 4 (docs/07 §19 gate 4). The owner's M1-D4 decision approves planning E-X2 and requires a separate, explicit approval of the final implementation scope. The scope above is a candidate for that approval; open questions Q1, Q2 and Q4 must be answered first. Q1 (a technical stake ceiling) remains **open**: no bound is adopted, and the candidates are analyzed in docs/07 §23.11. *(2026-11-13, M1-D10: stake, balance and payout ceilings all stay unresolved until each is supported by mathematical analysis and approved by the owner. E-X2's predicate therefore carries no ceiling unless Q1 is decided first.)*
 
+### 13.2 Engine freeze exception E-X3 — Dual Bet (owner-approved 2026-11-14; committed in `be10b19`)
+
+**Status.** The owner approved E-X3 on 2026-11-14, after the Dual Bet mobile layout decision (docs/16). That decision had recorded that Dual Bet was blocked on a frozen-contract exception plus an M1 rule amendment. E-X3 is the exception. The M1 wallet amendment (W2 and W3 per slot) is recorded in docs/07 §23.17. Both landed in `be10b19`, which is on `origin/develop`; that commit's message (`feat: update engine and UI state handling`) does not name E-X3. The file scope below is recorded from that commit. No separate pre-implementation scope document existed.
+
+**Rule.** The local player holds up to two independent bets per round, one per slot (`BetSlot = 0 | 1`, exported with `BET_SLOTS` from the facade).
+
+- `placeBet { slot, amount }` and `cashOut { slot }` carry a **mandatory** slot. A slot other than 0 or 1 is rejected as `"invalid-slot"`, checked first. After that, every existing guard applies **per slot**: `not-in-betting`, `already-participating` (this slot), `invalid-amount` (E-X2 predicate, unchanged), `not-diving`, `not-participating`, `already-cashed-out`.
+- `betPlaced` and `cashedOut` carry the slot (§12). Each manual cashout is its own event.
+- entry(impact): every participating slot that has not cashed out is auto-cashed at the jackpot and marked `bonusEligible` (E-X1 per slot, §5).
+- Bonus: **one** chest pick per round. The pick window is scheduled while any slot is eligible, and the one `chestPicked` applies to every eligible slot. `pickChest` keeps its shape.
+- entry(betting) clears both slots.
+- The engine still never sees a balance (§3). It can accept two bets whose sum exceeds the balance, so the session's submit path reserves the other slot's in-flight stake before forwarding a bet (docs/07 §8). Settlement, rounding and fault isolation are per slot, in the wallet (docs/07 §23.17).
+
+**Public state and snapshot.** `EnginePublicState.participant` and `RoundSnapshot.participant` become the per-slot tuple `participants: [slot 0 | null, slot 1 | null]` (type `ParticipantSlots`). `SNAPSHOT_SCHEMA_VERSION` is bumped from 2 to 3. Snapshots are in-memory only, so a v2 snapshot is rejected by `restore()` as a schema mismatch.
+
+**File scope as committed (`be10b19`).** `git diff --stat` over `src/engine src/rendering src/shared` lists exactly these eight engine files, and nothing in `src/rendering` or `src/shared`:
+
+| File | Change |
+|---|---|
+| `src/engine/commands.ts` | `BetSlot`, `BET_SLOTS`; `slot` on `placeBet` and `cashOut` |
+| `src/engine/events.ts` | `slot` on `betPlaced` and `cashedOut`; doc comments on `shipImpact` and `chestPicked` |
+| `src/engine/state-machine.ts` | Per-slot `_participants`, `invalid-slot` guard, per-slot place and cashout, per-slot impact auto-cash, any-slot eligibility, snapshot and restore copies |
+| `src/engine/game-engine.ts` | `participants` in `EnginePublicState`; schema version 3 |
+| `src/engine/index.ts` | Facade exports `BET_SLOTS`, `BetSlot`, `ParticipantSlots` |
+| `src/engine/state-machine.test.ts`, `src/engine/game-engine.test.ts`, `src/engine/snapshot.test.ts` | Updated and new slot cases |
+
+Not touched: `src/engine/domain/*`, `src/engine/simulation.ts`, `src/engine/driver.ts`, `src/rendering`, `src/shared`. The exception is not expanded beyond this list.
+
+**Limitations.** E-X3 is a local single-player rule, like E-X1. In Phase 8, slot identity becomes part of the server bet identity (§16, docs/07 §23.12). The recorded validation for `be10b19` is the commit itself: its message records no test, type-check or build results, and no owner browser QA for Dual Bet is recorded yet.
+
 ## 14. Snapshot Model
 
 A snapshot is the complete, serializable, plain-data state of the engine — the unit of restore, reconnect, spectator join, replay, and testing.
@@ -379,7 +418,7 @@ Contents (exact fields finalized in the extraction commit; categories fixed here
 - State-machine position: current state + remaining duration of its pending timer (if any) + countdown remaining
 - Round data: dive-start sim time, `crashAt`†, jackpot multiplier (once locked), chest values† (once rolled), `impactAt`
 - World: `worldY`, boost, spawn cursor (`nextSpawnAt`, next creature id), creature array
-- Participant state: bet amount, cashed-out flag + multiplier, bonus eligibility (E-X1, §5), chosen chest
+- Participant state: bet amount, cashed-out flag + multiplier, bonus eligibility (E-X1, §5), chosen chest. Since E-X3 (§13.2) this is held per bet slot (`participants`, two entries), and the schema version is 3
 - RNG stream positions (seeded mode) — so restore + replay continues the identical sequence
 
 † **Secrecy classes.** Fields marked † are *authority-secret*: they exist before they are publicly knowable (`crashAt` from dive start, chest values from reveal). Two snapshot views follow: **AuthoritySnapshot** (everything — local mode, server internal) and **PublicSnapshot** (secrets withheld until their disclosure event). The server broadcasts only PublicSnapshots; a client can never be handed the crash point early. In today's authority-mode client the distinction is latent (one process), but the shape is designed now so Phase 8 does not re-cut the snapshot.
