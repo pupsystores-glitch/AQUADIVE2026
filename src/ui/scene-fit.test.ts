@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { ANCHOR_SCREEN_Y_FRAC, ANCHOR_DRAW_H, MAX_DPR } from "@/rendering/constants";
+import { shipScale } from "@/rendering/draw/ship";
 import { presentedShipRestY } from "@/rendering/layers/presentation";
 import { ANCHOR_WORLD_OFFSET_PX, SHIP_WORLD_Y } from "@/shared/world";
 import { MIN_SCENE_HEIGHT, MIN_SCENE_SCALE, fitScene, sceneHeightFor } from "./scene-fit";
@@ -71,7 +72,9 @@ describe("fitScene", () => {
     ]) {
       const v = fitScene(w, h, 2);
       // The renderer's pre-dive presentation shifts the ship into view on short viewports.
-      expect(presentedShipRestY(v.height) - 22 - 8).toBeGreaterThan(0); // hull top, with heave
+      // Hull top: 62 px above the chain attachment (40 below the origin) at full size.
+      const hullTop = presentedShipRestY(v.width, v.height) + 40 - 62 * shipScale(v.width);
+      expect(hullTop - 8).toBeGreaterThan(0); // with heave
       expect(v.height * ANCHOR_SCREEN_Y_FRAC + ANCHOR_DRAW_H / 2).toBeLessThan(v.height); // anchor above the bottom edge
     }
     // Without the fit the ship is off screen on these canvases (the defect).

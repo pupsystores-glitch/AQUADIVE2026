@@ -10,10 +10,10 @@
 // Layout, relative to the ship's origin (cx, cy):
 //   y = WATERLINE   water surface (unchanged from the previous ship)
 //   (0, attachDy)   chain attachment — the Actor layer starts the chain here
-// On wide scenes the hull runs from 41 % of its length left of the origin
-// (stern) to 59 % right of it (bow). On narrow scenes the stern is shorter, so
-// the hull sits right of centre and leaves the upper-left corner of the scene
-// clear.
+// The hull is one fixed shape, HULL_LENGTH long, running from 41 % of its
+// length left of the origin (stern) to 59 % right of it (bow). On a scene too
+// narrow for it the whole ship is scaled down uniformly around the chain
+// attachment (`shipScale`), so it looks identical at every screen size.
 
 import { SHIP_THEME } from "../theme";
 
@@ -23,6 +23,14 @@ type Ctx = CanvasRenderingContext2D;
 const WATERLINE = 20;
 
 const HULL_TOP = -22; // gunwale at the stern
+const HULL_LENGTH = 600;
+const HULL_STERN = HULL_LENGTH * 0.41; // extent left of the origin
+const HULL_BOW = HULL_LENGTH - HULL_STERN; // extent right of the origin
+
+/** Uniform ship scale for a viewport width: 1 where the full hull fits, smaller on narrow scenes. */
+export function shipScale(w: number): number {
+  return Math.max(0.3, Math.min(1, (w / 2 - 10) / HULL_BOW));
+}
 
 // ----- Floating motion (px / rad at motion = 1) -----
 
@@ -40,31 +48,21 @@ export interface ShipOffset {
 
 /**
  * The chain attachment (hawse hole) relative to the ship's origin at time
- * `t`, written into `out`. With `motion` 0 it is exactly (0, attachDy).
+ * `t` for a ship drawn at `scale`, written into `out`. With `motion` 0 it
+ * is exactly (0, attachDy) at every scale.
  */
 export function shipChainAttach(
   t: number,
   motion: number,
   attachDy: number,
+  scale: number,
   out: ShipOffset,
 ): ShipOffset {
   const r = roll(t) * motion;
-  const arm = attachDy - WATERLINE;
+  const arm = (attachDy - WATERLINE) * scale; // attachment below the roll pivot
   out.x = surge(t) * motion - Math.sin(r) * arm;
-  out.y = heave(t) * motion + WATERLINE + Math.cos(r) * arm;
+  out.y = heave(t) * motion + attachDy + (Math.cos(r) - 1) * arm;
   return out;
-}
-
-/** Hull extent left of the origin (stern) for a viewport width. */
-function sternExtent(w: number): number {
-  const full = Math.min(600, Math.max(400, w * 0.8)) * 0.41;
-  const narrow = Math.max(0.19 * w - 10, 127 + (w - 720) * 0.458);
-  return Math.max(80, Math.min(full, narrow));
-}
-
-/** Hull extent right of the origin (bow): large, but always inside the scene. */
-function bowExtent(w: number): number {
-  return Math.max(140, Math.min(Math.min(600, Math.max(400, w * 0.8)) * 0.59, w / 2 - 10));
 }
 
 /** Hull silhouette in ship-local coordinates, from the stern at `xs`. */
@@ -92,11 +90,11 @@ function fillBand(ctx: Ctx, xs: number, xb: number, yLeft: number, yRight: numbe
 }
 
 /** Water surface polyline across the viewport, in screen coordinates. */
-function traceSurface(ctx: Ctx, cx: number, cy: number, t: number, w: number) {
+function traceSurface(ctx: Ctx, cx: number, surfaceY: number, t: number, w: number) {
   const from = -Math.ceil(cx / 8) * 8 - 8;
   const to = w - cx + 8;
   for (let x = from; x <= to; x += 8) {
-    const y = cy + WATERLINE + Math.sin(t * 1.5 + x * 0.08) * 2;
+    const y = surfaceY + Math.sin(t * 1.5 + x * 0.08) * 2;
     if (x === from) ctx.moveTo(cx + x, y);
     else ctx.lineTo(cx + x, y);
   }
@@ -111,19 +109,24 @@ export function drawShip(
   attachDy: number,
   motion: number,
 ) {
-  const xs = -sternExtent(w);
-  const xb = bowExtent(w);
-  const len = xb - xs;
+  const xs = -HULL_STERN;
+  const xb = HULL_BOW;
+  const len = HULL_LENGTH;
+  const k = shipScale(w);
   const dx = surge(t) * motion;
   const dy = heave(t) * motion;
   const r = roll(t) * motion;
+  // The ship is scaled around the chain attachment, so the hawse hole stays at
+  // (0, attachDy) and the roll pivot — the waterline — sits `arm` above it.
+  const arm = (attachDy - WATERLINE) * k;
+  const surfaceY = cy + attachDy - arm;
 
   ctx.save();
 
   // Lit water above the surface, behind the hull
   ctx.fillStyle = SHIP_THEME.surfaceLight;
   ctx.beginPath();
-  traceSurface(ctx, cx, cy, t, w);
+  traceSurface(ctx, cx, surfaceY, t, w);
   ctx.lineTo(w + 8, -8);
   ctx.lineTo(-16, -8);
   ctx.closePath();
@@ -131,8 +134,9 @@ export function drawShip(
 
   // ----- Hull (ship-local coordinates) -----
   ctx.save();
-  ctx.translate(cx + dx, cy + dy + WATERLINE);
+  ctx.translate(cx + dx, surfaceY + dy);
   ctx.rotate(r);
+  ctx.scale(k, k);
   ctx.translate(0, -WATERLINE);
   ctx.globalAlpha = SHIP_THEME.hullAlpha;
   traceHull(ctx, xs, len);
@@ -175,10 +179,9 @@ export function drawShip(
   ctx.stroke();
 
   // Lifebuoy on the hull side, straddling the waterline, left of the chain
-  const k = Math.min(1, Math.max(0.8, -xs / 200)); // smaller on a short stern
-  const ringR = 24 * k; // centreline radius
-  const ringW = 18 * k; // tube width
-  const bx = -Math.max(-xs * 0.28, ringR + ringW / 2 + 16);
+  const ringR = 24; // centreline radius
+  const ringW = 18; // tube width
+  const bx = -HULL_STERN * 0.28;
   const by = WATERLINE + 2;
   ctx.lineCap = "butt";
   ctx.strokeStyle = SHIP_THEME.buoyShadow;
@@ -210,15 +213,17 @@ export function drawShip(
   // Submerged part seen through the water
   // (level with the water, not with the rolling hull)
   ctx.translate(0, WATERLINE);
+  ctx.scale(1 / k, 1 / k);
   ctx.rotate(-r);
-  ctx.translate(0, -WATERLINE - dy);
+  ctx.translate(0, -dy);
   ctx.fillStyle = SHIP_THEME.underwaterTint;
-  ctx.fillRect(xs - 40, WATERLINE, len + 80, 180);
+  ctx.fillRect(xs - 40, 0, len + 80, 180);
   ctx.restore(); // clip, alpha and hull transform
 
   ctx.save();
-  ctx.translate(cx + dx, cy + dy + WATERLINE);
+  ctx.translate(cx + dx, surfaceY + dy);
   ctx.rotate(r);
+  ctx.scale(k, k);
   ctx.translate(0, -WATERLINE);
   ctx.strokeStyle = SHIP_THEME.hullOutline;
   ctx.lineWidth = 1.5;
@@ -226,18 +231,21 @@ export function drawShip(
   traceHull(ctx, xs, len);
   ctx.stroke();
 
-  // Chain attachment: a dark hawse hole with a steel rim
+  // Chain attachment: a dark hawse hole with a steel rim. Kept at full size
+  // on a scaled-down ship — the chain that runs through it is not scaled.
+  ctx.translate(0, attachDy);
+  ctx.scale(1 / k, 1 / k);
   ctx.fillStyle = SHIP_THEME.hawseHole;
   ctx.strokeStyle = SHIP_THEME.hawseRim;
   ctx.lineWidth = 2.2;
   ctx.beginPath();
-  ctx.ellipse(0, attachDy, 9, 7.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 9, 7.5, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.strokeStyle = SHIP_THEME.hawseRimLight;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.ellipse(0, attachDy, 9.6, 8.1, 0, Math.PI * 1.05, Math.PI * 1.6);
+  ctx.ellipse(0, 0, 9.6, 8.1, 0, Math.PI * 1.05, Math.PI * 1.6);
   ctx.stroke();
   ctx.restore();
 
@@ -245,7 +253,7 @@ export function drawShip(
   ctx.strokeStyle = SHIP_THEME.waterLine;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  traceSurface(ctx, cx, cy, t, w);
+  traceSurface(ctx, cx, surfaceY, t, w);
   ctx.stroke();
 
   ctx.restore();

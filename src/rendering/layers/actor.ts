@@ -3,7 +3,8 @@
 // moved as one unit from the component's drawScene (§20 risk 4): pendulum X,
 // sway angle, ring-position trig, chain endpoints — all formulas verbatim,
 // derived only from the animation clock and the viewport. Draw order within
-// the layer: chain → anchor.
+// the layer: anchor → chain (owner request, 2026-11-15: the chain's last link
+// lies over the anchor's shackle ring, not under it).
 //
 // The pendulum X and pinned screen-Y are exported as pure helpers so the
 // Effects layer can anchor impact FX to the swaying anchor without
@@ -18,19 +19,21 @@
 import { SHIP_WORLD_Y } from "@/shared/world";
 import {
   ANCHOR_DRAW_H,
+  ANCHOR_REST_CHAIN_HULL_PX,
   ANCHOR_REST_CHAIN_PX,
   ANCHOR_REST_SWING,
   ANCHOR_REST_SWING_2,
   ANCHOR_REST_SWING_SPEED,
   ANCHOR_RING_Y_FRAC,
   ANCHOR_SCREEN_Y_FRAC,
+  CHAIN_RING_GRIP_PX,
   SHIP_CHAIN_ATTACH_DY,
 } from "../constants";
 import { assets } from "../assets";
 import type { Camera } from "../camera";
 import { drawAnchor } from "../draw/anchor";
 import { drawChain } from "../draw/chain";
-import { shipChainAttach, type ShipOffset } from "../draw/ship";
+import { shipChainAttach, shipScale, type ShipOffset } from "../draw/ship";
 import type { RenderLayer } from "../render-state";
 import { launchProgress, presentedShipRestY } from "./presentation";
 
@@ -44,8 +47,10 @@ export function anchorPinY(h: number): number {
   return h * ANCHOR_SCREEN_Y_FRAC;
 }
 
-/** Radius of the anchor's shackle ring (px); the chain ends at the ring's top. */
+/** Radius of the anchor's shackle ring (px). */
 const RING_R = 9;
+/** Chain end above the ring's centre: just inside the ring, so the last link hooks over its top bar. */
+const CHAIN_END_ABOVE_RING = RING_R - CHAIN_RING_GRIP_PX;
 
 /** How far (seconds) the hanging anchor trails the ship's movement. */
 const ANCHOR_FOLLOW_LAG = 0.45;
@@ -64,7 +69,7 @@ export interface AnchorPose {
   /** Chain top: the hull's attachment point. */
   chainStartX: number;
   chainStartY: number;
-  /** Chain bottom: the top of the anchor's shackle ring. */
+  /** Chain bottom: just inside the top of the anchor's shackle ring. */
   chainEndX: number;
   chainEndY: number;
   /** True while the anchor is launching and the chain starts at the hull's attachment point. */
@@ -91,7 +96,7 @@ const pose: AnchorPose = {
 export function anchorPose(worldY: number, camera: Camera, animTime: number): AnchorPose {
   const { w, h } = camera.viewport;
   const shipScreenY = camera.worldToScreenY(SHIP_WORLD_Y);
-  const launch = launchProgress(worldY, h);
+  const launch = launchProgress(worldY, w, h);
 
   const pinY = anchorPinY(h);
   const fullX = anchorSwayX(animTime, w);
@@ -105,8 +110,17 @@ export function anchorPose(worldY: number, camera: Camera, animTime: number): An
     // Chain from the hull's attachment point, which floats with the ship. The
     // ship's motion and the anchor's response fade out as the launch completes.
     const motion = 1 - launch;
-    shipChainAttach(animTime, motion, SHIP_CHAIN_ATTACH_DY, attachNow);
-    shipChainAttach(animTime - ANCHOR_FOLLOW_LAG, motion, SHIP_CHAIN_ATTACH_DY, attachLagged);
+    const scale = shipScale(w);
+    shipChainAttach(animTime, motion, SHIP_CHAIN_ATTACH_DY, scale, attachNow);
+    shipChainAttach(
+      animTime - ANCHOR_FOLLOW_LAG,
+      motion,
+      SHIP_CHAIN_ATTACH_DY,
+      scale,
+      attachLagged,
+    );
+    // Rest chain: just long enough to clear the (possibly scaled-down) hull.
+    const restChain = ANCHOR_REST_CHAIN_PX - ANCHOR_REST_CHAIN_HULL_PX * (1 - scale);
     pose.chainStartX = w / 2 + attachNow.x;
     pose.chainStartY = shipScreenY + attachNow.y;
     // Rest pose: a pendulum hanging from the hawse hole at depth 0. It swings
@@ -117,9 +131,9 @@ export function anchorPose(worldY: number, camera: Camera, animTime: number): An
         Math.sin(animTime * 0.71 + 1.1) * ANCHOR_REST_SWING_2 +
         ((attachLagged.x - attachNow.x) * ANCHOR_FOLLOW_GAIN) / ANCHOR_REST_CHAIN_PX) *
       motion;
-    const reach = ANCHOR_REST_CHAIN_PX + RING_R + ringOffsetFromCenter; // pivot → sprite centre
+    const reach = restChain + CHAIN_END_ABOVE_RING + ringOffsetFromCenter; // pivot → sprite centre
     const pivotX = w / 2 + attachNow.x;
-    const pivotY = presentedShipRestY(h) + attachNow.y;
+    const pivotY = presentedShipRestY(w, h) + attachNow.y;
     const restX = pivotX + Math.sin(theta) * reach;
     const restY = pivotY + Math.cos(theta) * reach;
     // Launch: ease from the rest pose to the pinned, swaying diving pose.
@@ -135,7 +149,7 @@ export function anchorPose(worldY: number, camera: Camera, animTime: number): An
   }
 
   pose.chainEndX = pose.x + Math.sin(pose.swayAngle) * ringOffsetFromCenter;
-  pose.chainEndY = pose.y - Math.cos(pose.swayAngle) * ringOffsetFromCenter - RING_R;
+  pose.chainEndY = pose.y - Math.cos(pose.swayAngle) * ringOffsetFromCenter - CHAIN_END_ABOVE_RING;
   return pose;
 }
 
@@ -144,7 +158,20 @@ export const actorLayer: RenderLayer = {
   render(ctx, state, camera, time) {
     const p = anchorPose(state.worldY, camera, time.animTime);
 
-    // Chain from the ship down to the anchor's shackle ring. While the ship is
+    // Anchor sprite (in front of shipwreck so it lands ON the ship)
+    drawAnchor(
+      ctx,
+      p.x,
+      p.y,
+      p.swayAngle,
+      state.crashed,
+      state.boost,
+      ANCHOR_DRAW_H,
+      assets.get("anchor"),
+    );
+
+    // Chain from the ship down to the anchor's shackle ring, drawn over the
+    // anchor so its last link hooks over the ring. While the ship is
     // on screen the chain is cut at the hull's hawse hole, so it visibly comes
     // out of the hole instead of overlapping the hull above it.
     if (p.fromHull) {
@@ -158,17 +185,5 @@ export const actorLayer: RenderLayer = {
     } else {
       drawChain(ctx, p.chainStartX, p.chainStartY, p.chainEndX, p.chainEndY, time.animTime);
     }
-
-    // Anchor sprite (in front of shipwreck so it lands ON the ship)
-    drawAnchor(
-      ctx,
-      p.x,
-      p.y,
-      p.swayAngle,
-      state.crashed,
-      state.boost,
-      ANCHOR_DRAW_H,
-      assets.get("anchor"),
-    );
   },
 };

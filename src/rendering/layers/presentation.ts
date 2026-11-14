@@ -16,8 +16,9 @@
 //
 // 3. Ship in view. On a viewport shorter than 820 px (phones) the pinned
 //    camera would put the ship above the top edge. `presentationOffsetY`
-//    shifts the camera down so the ship rests at SHIP_REST_MIN_Y, and eases
-//    that shift to 0 over the same launch — no jump, and 0 in normal diving.
+//    shifts the camera down so the ship rests at `presentedShipRestY`, and
+//    eases that shift to 0 over the same launch — no jump, and 0 in normal
+//    diving. A scaled-down ship (narrow scene) rests a little lower still.
 
 import { ANCHOR_WORLD_OFFSET_PX, SHIP_WORLD_Y } from "@/shared/world";
 import {
@@ -25,7 +26,9 @@ import {
   ANCHOR_SCREEN_Y_FRAC,
   SHIP_CULL_MARGIN_TOP,
   SHIP_REST_MIN_Y,
+  SHIP_REST_NARROW_DROP,
 } from "../constants";
+import { shipScale } from "../draw/ship";
 import type { RenderCreature, RenderState } from "../render-state";
 
 const NO_CREATURES: readonly RenderCreature[] = [];
@@ -42,27 +45,31 @@ export function shipRestScreenY(h: number): number {
   return h * ANCHOR_SCREEN_Y_FRAC + (SHIP_WORLD_Y - ANCHOR_WORLD_OFFSET_PX);
 }
 
-/** The ship's screen Y at depth 0 as presented: never above SHIP_REST_MIN_Y. */
-export function presentedShipRestY(h: number): number {
-  return Math.max(shipRestScreenY(h), SHIP_REST_MIN_Y);
+/** The ship's screen Y at depth 0 as presented: never above SHIP_REST_MIN_Y, lower for a scaled-down ship. */
+export function presentedShipRestY(w: number, h: number): number {
+  const min = SHIP_REST_MIN_Y + (1 - shipScale(w)) * SHIP_REST_NARROW_DROP;
+  return Math.max(shipRestScreenY(h), min);
 }
 
 /**
- * Launch progress for viewport height `h`: 0 (anchor at rest under the ship)
- * to 1 (normal diving pose), eased. It reaches 1 at the depth where the ship
- * is culled above the top edge.
+ * Launch progress for a `w` × `h` viewport: 0 (anchor at rest under the
+ * ship) to 1 (normal diving pose), eased. It reaches 1 at the depth where the
+ * ship is culled above the top edge.
  */
-export function launchProgress(worldY: number, h: number): number {
+export function launchProgress(worldY: number, w: number, h: number): number {
   if (!(worldY > 0)) return 0;
-  const range = Math.max(ANCHOR_LAUNCH_MIN_RANGE_PX, presentedShipRestY(h) + SHIP_CULL_MARGIN_TOP);
+  const range = Math.max(
+    ANCHOR_LAUNCH_MIN_RANGE_PX,
+    presentedShipRestY(w, h) + SHIP_CULL_MARGIN_TOP,
+  );
   const p = worldY / range;
   if (!(p < 1)) return 1;
   return p * p * (3 - 2 * p);
 }
 
 /** Camera presentation offset (px) at depth `worldY`: shifts the ship into view, eased out by the launch. */
-export function presentationOffsetY(worldY: number, h: number): number {
-  const shift = presentedShipRestY(h) - shipRestScreenY(h);
+export function presentationOffsetY(worldY: number, w: number, h: number): number {
+  const shift = presentedShipRestY(w, h) - shipRestScreenY(h);
   if (!(shift > 0)) return 0;
-  return shift * (1 - launchProgress(worldY, h));
+  return shift * (1 - launchProgress(worldY, w, h));
 }

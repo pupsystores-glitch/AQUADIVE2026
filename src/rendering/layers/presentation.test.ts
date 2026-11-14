@@ -8,14 +8,14 @@ import { Camera } from "../camera";
 import {
   ANCHOR_DRAW_H,
   ANCHOR_LAUNCH_MIN_RANGE_PX,
+  ANCHOR_REST_CHAIN_HULL_PX,
   ANCHOR_REST_CHAIN_PX,
   ANCHOR_RING_Y_FRAC,
   SHIP_CHAIN_ATTACH_DY,
   SHIP_CULL_MARGIN_TOP,
-  SHIP_REST_MIN_Y,
 } from "../constants";
 import type { RenderState } from "../render-state";
-import { shipChainAttach } from "../draw/ship";
+import { shipChainAttach, shipScale } from "../draw/ship";
 import { anchorPinY, anchorPose, anchorSwayX } from "./actor";
 import {
   launchProgress,
@@ -43,13 +43,17 @@ function cameraAt(w: number, h: number, worldY: number): Camera {
   const camera = new Camera();
   camera.setViewport(w, h);
   camera.follow(worldY);
-  camera.setPresentationOffset(presentationOffsetY(worldY, h));
+  camera.setPresentationOffset(presentationOffsetY(worldY, w, h));
   return camera;
 }
 
 /** Depth at which the ship is culled and the launch is complete. */
-const launchRange = (h: number) =>
-  Math.max(ANCHOR_LAUNCH_MIN_RANGE_PX, presentedShipRestY(h) + SHIP_CULL_MARGIN_TOP);
+const launchRange = (w: number, h: number) =>
+  Math.max(ANCHOR_LAUNCH_MIN_RANGE_PX, presentedShipRestY(w, h) + SHIP_CULL_MARGIN_TOP);
+
+/** Rest chain length under a ship scaled for width `w`. */
+const restChain = (w: number) =>
+  ANCHOR_REST_CHAIN_PX - ANCHOR_REST_CHAIN_HULL_PX * (1 - shipScale(w));
 
 const snapshot = (worldY: number, w: number, h: number, t: number) => {
   const p = { ...anchorPose(worldY, cameraAt(w, h, worldY), t) };
@@ -96,14 +100,14 @@ describe("presentState", () => {
 
 describe("launchProgress", () => {
   it("is 0 at the surface, 1 from the ship's culling depth on, and never decreases", () => {
-    for (const [, h] of VIEWPORTS) {
-      const range = launchRange(h);
-      expect(launchProgress(0, h)).toBe(0);
-      expect(launchProgress(range, h)).toBe(1);
-      expect(launchProgress(range + 3000, h)).toBe(1);
+    for (const [w, h] of VIEWPORTS) {
+      const range = launchRange(w, h);
+      expect(launchProgress(0, w, h)).toBe(0);
+      expect(launchProgress(range, w, h)).toBe(1);
+      expect(launchProgress(range + 3000, w, h)).toBe(1);
       let prev = 0;
       for (let y = 0; y <= range; y += 1) {
-        const p = launchProgress(y, h);
+        const p = launchProgress(y, w, h);
         expect(p).toBeGreaterThanOrEqual(prev);
         prev = p;
       }
@@ -111,40 +115,46 @@ describe("launchProgress", () => {
   });
 
   it("is safe for non-finite or negative depths", () => {
-    expect(launchProgress(NaN, 820)).toBe(0);
-    expect(launchProgress(-5, 820)).toBe(0);
-    expect(launchProgress(Infinity, 820)).toBe(1);
+    expect(launchProgress(NaN, 907, 820)).toBe(0);
+    expect(launchProgress(-5, 907, 820)).toBe(0);
+    expect(launchProgress(Infinity, 907, 820)).toBe(1);
   });
 });
 
 describe("presentationOffsetY", () => {
-  it("rests the ship at SHIP_REST_MIN_Y on phone viewports, fully in view", () => {
+  it("rests the scaled-down ship fully in view on phone viewports, below the top-left corner", () => {
     for (const [w, h] of PHONES) {
+      const k = shipScale(w);
+      expect(k).toBeLessThan(1);
       expect(shipRestScreenY(h)).toBeLessThan(0); // pinned camera: ship above the top edge
       const shipY = cameraAt(w, h, 0).worldToScreenY(SHIP_WORLD_Y);
-      expect(shipY).toBeCloseTo(SHIP_REST_MIN_Y, 9);
-      expect(shipY - 22 - 8).toBeGreaterThan(0); // hull top, with heave, below the top edge
+      expect(shipY).toBeCloseTo(presentedShipRestY(w, h), 9);
+      // Hull top (gunwale 62 px above the attachment at full size), with heave:
+      // below the multiplier readout, which ends about 113 logical px down.
+      const hullTop = shipY + SHIP_CHAIN_ATTACH_DY - 62 * k - 6;
+      expect(hullTop).toBeGreaterThan(110);
     }
   });
 
-  it("is 0 on viewports 820 px and taller, so their view is unchanged", () => {
-    for (const [, h] of VIEWPORTS.slice(2)) {
-      for (const y of [0, 10, 100, 400]) expect(presentationOffsetY(y, h)).toBe(0);
+  it("is 0 on viewports 820 px and taller with a full-size ship, so their view is unchanged", () => {
+    for (const [w, h] of VIEWPORTS.slice(2)) {
+      expect(shipScale(w)).toBe(1);
+      for (const y of [0, 10, 100, 400]) expect(presentationOffsetY(y, w, h)).toBe(0);
     }
   });
 
   it("eases out over the launch: continuous, never increasing, 0 from the culling depth on", () => {
-    for (const [, h] of PHONES) {
-      const range = launchRange(h);
-      let prev = presentationOffsetY(0, h);
+    for (const [w, h] of PHONES) {
+      const range = launchRange(w, h);
+      let prev = presentationOffsetY(0, w, h);
       for (let y = 1; y <= range; y += 1) {
-        const o = presentationOffsetY(y, h);
+        const o = presentationOffsetY(y, w, h);
         expect(o).toBeLessThanOrEqual(prev);
         expect(prev - o).toBeLessThan(3); // per world px
         prev = o;
       }
-      expect(presentationOffsetY(range, h)).toBe(0);
-      expect(presentationOffsetY(4200, h)).toBe(0);
+      expect(presentationOffsetY(range, w, h)).toBe(0);
+      expect(presentationOffsetY(4200, w, h)).toBe(0);
     }
   });
 });
@@ -156,15 +166,15 @@ describe("anchorPose — betting (depth 0)", () => {
       for (const t of TIMES) {
         const p = snapshot(0, w, h, t);
         const shipY = cameraAt(w, h, 0).worldToScreenY(SHIP_WORLD_Y);
-        shipChainAttach(t, 1, SHIP_CHAIN_ATTACH_DY, attach);
+        shipChainAttach(t, 1, SHIP_CHAIN_ATTACH_DY, shipScale(w), attach);
         expect(p.fromHull).toBe(true);
         expect(p.chainStartX).toBe(w / 2 + attach.x);
         expect(p.chainStartY).toBe(shipY + attach.y);
         const len = Math.hypot(p.chainEndX - p.chainStartX, p.chainEndY - p.chainStartY);
-        expect(Math.abs(len - ANCHOR_REST_CHAIN_PX)).toBeLessThan(8); // short, never stretched far
+        expect(Math.abs(len - restChain(w))).toBeLessThan(4); // short, just clearing the hull
         // The whole anchor is on screen, above its pinned diving position.
         expect(p.y + ANCHOR_DRAW_H / 2).toBeLessThan(h);
-        expect(p.y).toBeLessThan(anchorPinY(h) - 40);
+        expect(p.y).toBeLessThan(anchorPinY(h));
       }
     }
   });
@@ -186,7 +196,7 @@ describe("anchorPose — betting (depth 0)", () => {
         expect(Math.abs(p.swayAngle - chainAngle)).toBeLessThan(0.06);
         prev = p;
       }
-      expect(maxX - minX).toBeGreaterThan(40); // clearly noticeable …
+      expect(maxX - minX).toBeGreaterThan(30); // clearly noticeable …
       expect(Math.max(w / 2 - minX, maxX - w / 2)).toBeLessThan(45); // … and still under the hull
       expect(maxAngle).toBeGreaterThan(0.15);
       expect(maxAngle).toBeLessThan(0.3);
@@ -213,7 +223,7 @@ describe("anchorPose — betting (depth 0)", () => {
 describe("anchorPose — launch", () => {
   it("moves continuously and only lengthens the chain as the dive deepens", () => {
     for (const [w, h] of VIEWPORTS) {
-      const range = launchRange(h);
+      const range = launchRange(w, h);
       for (const t of TIMES) {
         let prev = snapshot(0, w, h, t);
         // 2.5 world px per step ≈ one 60 Hz frame at the initial descent speed.
@@ -235,7 +245,7 @@ describe("anchorPose — launch", () => {
 
   it("hands over to normal diving without a jump when the ship is culled", () => {
     for (const [w, h] of VIEWPORTS) {
-      const range = launchRange(h);
+      const range = launchRange(w, h);
       for (const t of TIMES) {
         const before = snapshot(range - 0.01, w, h, t);
         const after = snapshot(range, w, h, t);
@@ -251,9 +261,9 @@ describe("anchorPose — launch", () => {
 });
 
 describe("anchorPose — normal diving (ship off screen)", () => {
-  it("is bit-identical to the previous Actor-layer formulas", () => {
+  it("is bit-identical to the previous Actor-layer formulas (chain end 4 px lower, inside the ring)", () => {
     for (const [w, h] of VIEWPORTS) {
-      for (const worldY of [launchRange(h), 400, 1234.5, 4200]) {
+      for (const worldY of [launchRange(w, h), 400, 1234.5, 4200]) {
         for (const t of TIMES) {
           const camera = cameraAt(w, h, worldY);
           const p = anchorPose(worldY, camera, t);
@@ -274,7 +284,7 @@ describe("anchorPose — normal diving (ship off screen)", () => {
           expect(p.chainStartX).toBe(w / 2);
           expect(p.chainStartY).toBe(Math.min(shipScreenY + 40, 0));
           expect(p.chainEndX).toBe(anchorRingX);
-          expect(p.chainEndY).toBe(anchorRingY - 9);
+          expect(p.chainEndY).toBe(anchorRingY - 5); // was − 9 (ring top): the last link now hooks over the ring
         }
       }
     }

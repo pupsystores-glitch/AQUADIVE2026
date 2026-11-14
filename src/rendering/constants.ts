@@ -31,8 +31,21 @@ export const SHIP_CHAIN_ATTACH_DY = 40;
 /** Top culling margin of the surface ship (px): it is drawn until its origin is this far above the top edge. */
 export const SHIP_CULL_MARGIN_TOP = 120;
 
-/** Chain length (px) between the hull attachment and the anchor's ring while the anchor rests under the ship. */
+/**
+ * Chain length (px) between the hull attachment and the anchor's ring while
+ * the anchor rests under a full-size ship: the hull below the attachment
+ * (ANCHOR_REST_CHAIN_HULL_PX, which shrinks with the ship's scale) plus a
+ * fixed clearance under the keel.
+ */
 export const ANCHOR_REST_CHAIN_PX = 58;
+export const ANCHOR_REST_CHAIN_HULL_PX = 44;
+
+/**
+ * How far (px) the chain's end reaches below the top of the anchor's shackle
+ * ring. The chain is drawn over the anchor, so its last link visibly hooks
+ * over the ring's top bar.
+ */
+export const CHAIN_RING_GRIP_PX = 4;
 
 /** Shortest dive depth (world px) over which the anchor eases from its rest pose to its pinned pose. */
 export const ANCHOR_LAUNCH_MIN_RANGE_PX = 140;
@@ -45,6 +58,13 @@ export const ANCHOR_LAUNCH_MIN_RANGE_PX = 140;
  * 820 px viewport. The shift eases out during the anchor's launch.
  */
 export const SHIP_REST_MIN_Y = 51;
+
+/**
+ * Extra drop (px) of the pre-dive ship per unit of ship down-scaling
+ * (1 − shipScale). A scaled-down ship spans almost the whole width of a narrow
+ * scene, so it rests lower, clear of the upper-left corner of the scene.
+ */
+export const SHIP_REST_NARROW_DROP = 185;
 
 /** Anchor pendulum before the dive: main swing (rad) and its angular speed (rad/s). */
 export const ANCHOR_REST_SWING = 0.15;

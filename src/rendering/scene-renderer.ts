@@ -87,7 +87,7 @@ export class SceneRenderer {
     const view = presentState(state);
     this.camera.setViewport(w, h);
     this.camera.follow(view.worldY);
-    this.camera.setPresentationOffset(presentationOffsetY(view.worldY, h));
+    this.camera.setPresentationOffset(presentationOffsetY(view.worldY, w, h));
 
     for (const layer of this.layers) {
       layer.render(ctx, view, this.camera, time);

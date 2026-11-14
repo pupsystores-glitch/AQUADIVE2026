@@ -12,6 +12,7 @@
 // nothing else in the codebase touches asset URLs.
 
 import anchorImgSrc from "@/assets/anchor.png";
+import seaFloorImgSrc from "@/assets/sea-floor.png";
 
 export interface AssetHandle {
   readonly image: HTMLImageElement | null;
@@ -64,8 +65,8 @@ class AssetManager {
   }
 }
 
-/** V1 manifest (§15): the anchor sprite is the only sprite-based asset. */
-const ASSET_MANIFEST = { anchor: anchorImgSrc } as const;
+/** Manifest (§15): the anchor sprite and the sea floor artwork (wreck, treasure, ocean floor). */
+const ASSET_MANIFEST = { anchor: anchorImgSrc, seaFloor: seaFloorImgSrc } as const;
 
 export type AssetKey = keyof typeof ASSET_MANIFEST;
 
