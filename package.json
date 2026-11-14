@@ -9,7 +9,7 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     
-     "start": "HOST=0.0.0.0 PORT=${PORT:-3000} node .output/server/index.mjs"$PORT"
+     "start": "bun x vinxi start --host 0.0.0.0"
 
     "test": "vitest run",
     "lint": "eslint .",
