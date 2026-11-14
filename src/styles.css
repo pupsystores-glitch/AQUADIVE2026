@@ -4,6 +4,13 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Game screen layout tiers (docs/07 §15, U7). `tab`: tablet-sized viewports
+   (>= 768 px wide and >= 600 px tall, so landscape phones stay on the phone
+   column). `desk`: >= 1024 px wide in landscape; portrait large tablets
+   (e.g. 1024x1366) keep the full-width tablet layout instead. */
+@custom-variant tab (@media (min-width: 48rem) and (min-height: 37.5rem));
+@custom-variant desk (@media (min-width: 64rem) and (orientation: landscape));
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

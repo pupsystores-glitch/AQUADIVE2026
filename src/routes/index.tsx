@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import AbyssAnchor from "@/components/AbyssAnchor";
+import GameScreen from "@/ui/components/GameScreen";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -13,8 +13,7 @@ export const Route = createFileRoute("/")({
       { property: "og:title", content: "AQUADIVE — Real-Time Crash Game" },
       {
         property: "og:description",
-        content:
-          "Plunge into the deep, ride the multiplier, cash out before the chain snaps.",
+        content: "Plunge into the deep, ride the multiplier, cash out before the chain snaps.",
       },
     ],
   }),
@@ -22,5 +21,5 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  return <AbyssAnchor />;
+  return <GameScreen />;
 }

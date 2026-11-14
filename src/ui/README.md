@@ -23,19 +23,23 @@ Status — Sprint 4 in progress:
 | `store/notification-store.ts` | U4a (approved 2026-11-13) | Win flash + its timer (session-owned, consumes `wallet.onFlash`; injectable clock); dev-only `commandRejected` log + bounded history (§12). Dev banner deferred to U6 |
 | `store/bet-input-store.ts` | U5 (implemented, awaiting owner review) | Bet amount, session-owned (starts at `DEFAULT_BET`, survives remounts); halve/double/quick-set/typed arithmetic verbatim; every write sanitized (non-finite → 0, negative → 0; a cleared field stays 0) (V4). Subscribes to nothing; `double` takes the balance as an argument |
 | `components/action-state.ts` | U5 (implemented, awaiting owner review) | Pure `actionStateFor` / `canPlaceBet` (§13.3): the action-button matrix outside JSX, proven equal to the pre-U5 conditional; uses `BET_CUTOFF_SECONDS` (UI-only) and the wallet's `isAffordable` |
-| `components/` (rest), `strings.ts` | U6–U7 (pending) | Component tree (§13), strings seam (§14), responsive layout (§15) |
+| `components/` (tree) | U6 (implemented, awaiting validation + owner review) | The §13 decomposition, markup verbatim from the shell: `GameScreen` (frame + composition; the route component), `TopBar`, `HistoryStrip`, `CanvasStage` (attach lifecycle), `MultiplierOverlay`, `CrashBanner`, `WinFlash`, `ChestPicker`, `BettingPanel` + `BetControls`/`QuickBets`/`ActionButton`, `icons.tsx`; per-slice `useStore` subscriptions (V3); the dev-only dismissible rejection banner (`DevRejectionBanner`, §12 C3, compiled out of production) |
+| `strings.ts` | U6 (implemented, awaiting validation + owner review) | The §14 strings seam: every user-facing string, typed, functions where text interpolates values; text byte-identical. Money displays render via `formatMoney` (new, `src/game/presentation.ts`), multipliers via `formatMultiplier` — identical output, one definition each |
+| responsive layout (§15) | U7 (pending) | Desktop breakpoint composition (V5) |
 
-Since U2, all money state and math live in the wallet store; the component
-shell (`src/components/AbyssAnchor.tsx`) only reads it via `useStore` and
-submits commands via `gameSession.submit`. Since U4a, the win flash and its
-timer live in the session's notification store (triggered by
-`wallet.onFlash`); the shell reads it via `useStore`. Since U4b, round and
-bonus presentation (`phase`, countdown, multiplier, boost, eligibility,
-`chests`, `chosenChestId`) is read from the session's round store; the
-shell subscribes to no engine events and its mount effect only attaches
-the canvas. Since U5, the bet amount is the session's bet-input store and
-the action button's state comes from the pure `actionStateFor`; the shell
-holds no `useState` at all.
+Since U2, all money state and math live in the wallet store; components
+only read it via `useStore` and submit commands via `gameSession.submit`.
+Since U4a, the win flash and its timer live in the session's notification
+store (triggered by `wallet.onFlash`). Since U4b, round and bonus
+presentation (`phase`, countdown, multiplier, boost, eligibility, `chests`,
+`chosenChestId`) is read from the session's round store; components
+subscribe to no engine events, and only `CanvasStage`'s mount effect
+attaches the canvas. Since U5, the bet amount is the session's bet-input
+store and the action button's state comes from the pure `actionStateFor`.
+Since U6, the monolithic shell (`src/components/AbyssAnchor.tsx`) is
+deleted: the route mounts `GameScreen`, each §13 component reads exactly
+its own store slices (V3), and the only component-local `useState` is the
+dev banner's dismissal.
 
 Running the tests on Windows: start Vitest from PowerShell with an
 uppercase `C:\` working directory. From Git Bash (lowercase `c:\`) Vitest

@@ -16,8 +16,9 @@
 //   test steps frames, so the flash timers keep their real relation to
 //   the round timeline.
 // - Assertions use visible text, roles and disabled state, plus a semantic
-//   outline (outline()) that ignores class names and wrappers. U6 moves the
-//   markup into GameScreen; these pins must stay green unchanged.
+//   outline (outline()) that ignores class names and wrappers. U6 moved the
+//   markup into GameScreen (byte-identically); these pins stay green
+//   unchanged, proving the decomposition rendered the same UI (§21 tier 3).
 
 import { StrictMode, createElement, type ComponentType } from "react";
 import { act, cleanup, render, type RenderResult } from "@testing-library/react";
@@ -102,7 +103,7 @@ export async function bootScreen(
   vi.resetModules();
   vi.doMock("@/ui/session", () => import("./session-mock"));
   armScriptedSession(options);
-  const Screen = (await import("@/components/AbyssAnchor")).default;
+  const Screen = (await import("@/ui/components/GameScreen")).default;
   const { session, renderers } = takeBuiltSession();
 
   const subscriptions = trackSubscriptions(session);

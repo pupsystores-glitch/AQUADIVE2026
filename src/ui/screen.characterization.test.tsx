@@ -1,11 +1,12 @@
 // DOM characterization pins for the game screen (Sprint 4, Commit U3;
 // docs/07_UI_ARCHITECTURE.md §17 U3, §20 risk 2, §21 tier 3).
 //
-// These pin the CURRENT rendered output of src/components/AbyssAnchor.tsx
-// per phase and participation state, driven by a scripted session (fixed
-// crash point, jackpot 100×, chests 2× / 6.5× / 30×) and a manual 60 Hz
-// frame clock (src/ui/test/dom-harness.tsx). They protect U4–U7: U6 must
-// keep every pin green against GameScreen. Assertions use visible text,
+// These pin the rendered output of the game screen (the AbyssAnchor.tsx
+// shell until U6; src/ui/components/GameScreen.tsx since U6's verbatim
+// decomposition) per phase and participation state, driven by a scripted
+// session (fixed crash point, jackpot 100×, chests 2× / 6.5× / 30×) and a
+// manual 60 Hz frame clock (src/ui/test/dom-harness.tsx). They protect
+// U4–U7: U6 must keep every pin green against GameScreen. Assertions use visible text,
 // roles and disabled state only — never class names — so a verbatim
 // markup move keeps them green.
 //
