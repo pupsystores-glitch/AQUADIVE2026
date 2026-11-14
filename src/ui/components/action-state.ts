@@ -21,13 +21,14 @@
 
 import { BET_CUTOFF_SECONDS } from "@/game/config";
 import type { RoundState } from "@/ui/store/round-store";
-import { isPlaceableStake, type WalletState } from "@/ui/store/wallet-store";
+import { isPlaceableStake, type WalletSlotState, type WalletState } from "@/ui/store/wallet-store";
 
 /** The round-store fields the matrix reads. */
 export type ActionRoundInput = Pick<RoundState, "phase" | "countdownSeconds">;
 
-/** The wallet-store fields the matrix reads. */
-export type ActionWalletInput = Pick<WalletState, "balance" | "participating" | "hasCashed">;
+/** The wallet-store fields the matrix reads: the balance and ONE bet slot's participation (E-X3). */
+export type ActionWalletInput = Pick<WalletState, "balance"> &
+  Pick<WalletSlotState, "participating" | "hasCashed">;
 
 /**
  * The six action states (§13.3). Only `placeBet` can be enabled or disabled;

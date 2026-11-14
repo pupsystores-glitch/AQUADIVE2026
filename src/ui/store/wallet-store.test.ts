@@ -18,6 +18,7 @@ import {
   type WalletRefusal,
   type WalletStore,
 } from "./wallet-store";
+import { slot0View } from "@/ui/test/wallet-view";
 
 const CHESTS: [BonusChest, BonusChest, BonusChest] = [
   { id: 0, multiplier: 2, opened: false },
@@ -44,9 +45,9 @@ const openBetting = () => {
   roundId++;
   emit("bettingOpened", {});
 };
-const bet = (amount: number) => emit("betPlaced", { amount });
+const bet = (amount: number) => emit("betPlaced", { slot: 0, amount });
 const dive = () => emit("diveStarted", {});
-const cashOut = (multiplier: number) => emit("cashedOut", { multiplier });
+const cashOut = (multiplier: number) => emit("cashedOut", { slot: 0, multiplier });
 const crash = (multiplier: number) => emit("crashed", { multiplier });
 const impact = (jackpotMultiplier: number) => emit("shipImpact", { jackpotMultiplier });
 const reveal = () => emit("chestsRevealed", { chests: CHESTS });
@@ -63,7 +64,7 @@ beforeEach(() => {
 
 describe("wallet store — initial state", () => {
   it("starts at the default balance with no round state, no history, jackpot base 1", () => {
-    expect(wallet.get()).toEqual({
+    expect(slot0View(wallet.get())).toEqual({
       balance: DEFAULT_BALANCE,
       roundBet: 0,
       participating: false,
@@ -80,14 +81,18 @@ describe("wallet store — initial state", () => {
 describe("wallet store — settlement paths (golden ledger)", () => {
   it("betPlaced: debits the accepted amount and locks it as the round bet", () => {
     bet(0.1);
-    expect(wallet.get()).toMatchObject({ balance: 999.9, roundBet: 0.1, participating: true });
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: 999.9,
+      roundBet: 0.1,
+      participating: true,
+    });
   });
 
   it("cashedOut: credits roundBet × m rounded down to the cent; records history and lastWin", () => {
     bet(0.1);
     dive();
     cashOut(1.15); // 0.1 * 1.15 = 0.11499999999999999 → 0.11
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 1000.01,
       hasCashed: true,
       lastWin: { amount: 0.11, mult: 1.15 },
@@ -101,15 +106,15 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     bet(33.33);
     dive();
     cashOut(2.005);
-    expect(wallet.get().balance).toBe(1033.49); // 966.67 + 66.82
-    expect(wallet.get().lastWin).toEqual({ amount: 66.82, mult: 2.005 });
+    expect(slot0View(wallet.get()).balance).toBe(1033.49); // 966.67 + 66.82
+    expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 66.82, mult: 2.005 });
   });
 
   it("crashed (loss): the stake stays debited and a crashed entry is recorded", () => {
     bet(25);
     dive();
     crash(1.37);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 975,
       hasCashed: false,
       lastWin: null,
@@ -123,15 +128,15 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     dive();
     cashOut(1.5);
     crash(3);
-    expect(wallet.get().history).toEqual([{ mult: 1.5, crashed: false }]);
-    expect(wallet.get().balance).toBe(1005);
+    expect(slot0View(wallet.get()).history).toEqual([{ mult: 1.5, crashed: false }]);
+    expect(slot0View(wallet.get()).balance).toBe(1005);
   });
 
   it("shipImpact (participating, not cashed): jackpot auto-credit, jackpot flash, history", () => {
     bet(10);
     dive();
     impact(120);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 2190,
       hasCashed: true,
       jackpotMultiplier: 120,
@@ -146,10 +151,10 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     dive();
     cashOut(2);
     impact(120);
-    expect(wallet.get().balance).toBe(1010);
-    expect(wallet.get().lastWin).toEqual({ amount: 20, mult: 2 });
-    expect(wallet.get().jackpotMultiplier).toBe(120);
-    expect(wallet.get().history).toEqual([
+    expect(slot0View(wallet.get()).balance).toBe(1010);
+    expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 20, mult: 2 });
+    expect(slot0View(wallet.get()).jackpotMultiplier).toBe(120);
+    expect(slot0View(wallet.get()).history).toEqual([
       { mult: 120, crashed: false },
       { mult: 2, crashed: false },
     ]);
@@ -163,7 +168,7 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     reveal();
     pick(1, 6.5, 780); // final = +(120 * 6.5).toFixed(2), computed by the engine
     // prevWin 1200, totalWin 7800 → delta 6600
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 8790,
       lastWin: { amount: 7800, mult: 780 },
       history: [
@@ -179,8 +184,8 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     impact(1.15); // 0.3 * 1.15 = 0.345 (float 0.34499…) → 0.34
     reveal();
     pick(2, 3, 3.45); // total 0.3 * 3.45 = 1.035 (float 1.03499…) → 1.03; delta 0.69
-    expect(wallet.get().balance).toBe(1000.73); // 999.7 + 0.34 + 0.69
-    expect(wallet.get().lastWin).toEqual({ amount: 1.03, mult: 3.45 });
+    expect(slot0View(wallet.get()).balance).toBe(1000.73); // 999.7 + 0.34 + 0.69
+    expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 1.03, mult: 3.45 });
   });
 
   it("spectator round: no debit or credit on any path; history records the jackpot only (E-X1: no chest entry)", () => {
@@ -188,7 +193,7 @@ describe("wallet store — settlement paths (golden ledger)", () => {
     impact(77.7);
     reveal();
     pick(0, 2, 155.4);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: DEFAULT_BALANCE,
       roundBet: 0,
       participating: false,
@@ -202,8 +207,8 @@ describe("wallet store — settlement paths (golden ledger)", () => {
   it("spectator crash: records a crashed entry", () => {
     dive();
     crash(4.2);
-    expect(wallet.get().history).toEqual([{ mult: 4.2, crashed: true }]);
-    expect(wallet.get().balance).toBe(DEFAULT_BALANCE);
+    expect(slot0View(wallet.get()).history).toEqual([{ mult: 4.2, crashed: true }]);
+    expect(slot0View(wallet.get()).balance).toBe(DEFAULT_BALANCE);
   });
 });
 
@@ -213,7 +218,7 @@ describe("wallet store — per-round resets", () => {
     dive();
     impact(120);
     openBetting();
-    expect(wallet.get()).toEqual({
+    expect(slot0View(wallet.get())).toEqual({
       balance: 2190,
       roundBet: 0,
       participating: false,
@@ -233,12 +238,12 @@ describe("wallet store — per-round resets", () => {
     bet(5);
     dive();
     cashOut(2);
-    expect(wallet.get().hasCashed).toBe(true);
+    expect(slot0View(wallet.get()).hasCashed).toBe(true);
     dive();
-    expect(wallet.get()).toMatchObject({ hasCashed: true, settledBy: "cashout" });
+    expect(slot0View(wallet.get())).toMatchObject({ hasCashed: true, settledBy: "cashout" });
     cashOut(3);
-    expect(wallet.get().balance).toBe(1005);
-    expect(wallet.get().history).toHaveLength(1);
+    expect(slot0View(wallet.get()).balance).toBe(1005);
+    expect(slot0View(wallet.get()).history).toHaveLength(1);
   });
 
   it("history is newest-first and capped at HISTORY_LIMIT", () => {
@@ -247,7 +252,7 @@ describe("wallet store — per-round resets", () => {
       crash(i);
       openBetting();
     }
-    const history = wallet.get().history;
+    const history = slot0View(wallet.get()).history;
     expect(history).toHaveLength(HISTORY_LIMIT);
     expect(history[0]).toEqual({ mult: HISTORY_LIMIT + 3, crashed: true });
     expect(history[HISTORY_LIMIT - 1]).toEqual({ mult: 4, crashed: true });
@@ -257,7 +262,7 @@ describe("wallet store — per-round resets", () => {
 describe("wallet store — multi-round golden ledger", () => {
   it("cashout → loss → jackpot + chest → spectator → cashout: balance after every settlement event", () => {
     const ledger: number[] = [];
-    wallet.subscribe(() => ledger.push(wallet.get().balance));
+    wallet.subscribe(() => ledger.push(slot0View(wallet.get()).balance));
 
     bet(0.1); // 999.9
     dive();
@@ -288,7 +293,7 @@ describe("wallet store — multi-round golden ledger", () => {
     // One notification per state-changing event; dedupe to the balance trail.
     const trail = ledger.filter((b, i) => i === 0 || b !== ledger[i - 1]);
     expect(trail).toEqual([999.9, 1000.01, 975.01, 965.01, 2165.01, 8765.01, 8731.68, 8798.5]);
-    expect(wallet.get().history.map((h) => [h.mult, h.crashed])).toEqual([
+    expect(slot0View(wallet.get()).history.map((h) => [h.mult, h.crashed])).toEqual([
       [2.005, false],
       [2.5, true],
       [780, false],
@@ -307,7 +312,7 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
     impact(120);
     reveal();
     pick(1, 6.5, 780);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 1010,
       lastWin: { amount: 20, mult: 2 },
       settledBy: "cashout",
@@ -326,7 +331,7 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
     cashOut(2);
     impact(120);
     reveal();
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 1010,
       lastWin: { amount: 20, mult: 2 },
       settledBy: "cashout",
@@ -339,10 +344,10 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
     bet(10);
     dive();
     impact(120);
-    expect(wallet.get().settledBy).toBe("jackpot");
+    expect(slot0View(wallet.get()).settledBy).toBe("jackpot");
     reveal();
     pick(1, 6.5, 780);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 8790, // the existing golden pin: 990 + 1200 + 6600
       lastWin: { amount: 7800, mult: 780 },
       settledBy: "jackpot",
@@ -357,7 +362,7 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
     cashOut(2);
     cashOut(2);
     cashOut(3);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 1010,
       lastWin: { amount: 20, mult: 2 },
       settledBy: "cashout",
@@ -374,7 +379,7 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
     pick(1, 6.5, 780);
     pick(1, 6.5, 780);
     pick(2, 30, 3600);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 8790,
       lastWin: { amount: 7800, mult: 780 },
       history: [
@@ -390,7 +395,7 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
     impact(77.7);
     reveal();
     pick(0, 2, 155.4);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: DEFAULT_BALANCE,
       participating: false,
       hasCashed: false,
@@ -410,15 +415,19 @@ describe("wallet store — settlement exclusivity (U2 bug fix: cashout → seabe
     reveal();
     pick(1, 6.5, 780); // ineligible: ignored (E-X1 safeguard)
     openBetting();
-    expect(wallet.get()).toMatchObject({ settledBy: null, chestSettled: false, hasCashed: false });
+    expect(slot0View(wallet.get())).toMatchObject({
+      settledBy: null,
+      chestSettled: false,
+      hasCashed: false,
+    });
 
     bet(10); // 1000
     dive();
-    expect(wallet.get()).toMatchObject({ settledBy: null, chestSettled: false });
+    expect(slot0View(wallet.get())).toMatchObject({ settledBy: null, chestSettled: false });
     impact(120); // +1200 → 2200
     reveal();
     pick(1, 6.5, 780); // +6600 → 8800
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 8800,
       lastWin: { amount: 7800, mult: 780 },
       settledBy: "jackpot",
@@ -433,10 +442,10 @@ describe("wallet store — E-X1 chest history safeguard (only an eligible jackpo
     dive();
     impact(120);
     reveal();
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     pick(2, 30, 3600);
-    expect(wallet.get()).toBe(before); // no snapshot written at all
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toBe(before); // no snapshot written at all
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: DEFAULT_BALANCE,
       lastWin: null,
       chestSettled: false,
@@ -451,11 +460,11 @@ describe("wallet store — E-X1 chest history safeguard (only an eligible jackpo
     cashOut(2);
     impact(120);
     reveal();
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     pick(0, 2, 240);
     pick(1, 6.5, 780);
-    expect(wallet.get()).toBe(before);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toBe(before);
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 1010,
       lastWin: { amount: 20, mult: 2 },
       settledBy: "cashout",
@@ -472,7 +481,7 @@ describe("wallet store — E-X1 chest history safeguard (only an eligible jackpo
     bet(10);
     dive();
     pick(0, 2, 4);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 990,
       settledBy: null,
       chestSettled: false,
@@ -488,7 +497,7 @@ describe("wallet store — E-X1 chest history safeguard (only an eligible jackpo
     reveal();
     pick(0, 2, 240); // the E-X1 timeout path applies chest 0
     pick(0, 2, 240);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 3390, // 990 + 1200 + (2400 - 1200)
       lastWin: { amount: 2400, mult: 240 },
       settledBy: "jackpot",
@@ -512,8 +521,8 @@ describe("wallet store — E-X1 chest history safeguard (only an eligible jackpo
     impact(120); // +1200 → 2190
     reveal();
     pick(1, 6.5, 780); // +6600 → 8790
-    expect(wallet.get().balance).toBe(8790);
-    expect(wallet.get().history.map((h) => h.mult)).toEqual([780, 120, 50]);
+    expect(slot0View(wallet.get()).balance).toBe(8790);
+    expect(slot0View(wallet.get()).history.map((h) => h.mult)).toEqual([780, 120, 50]);
   });
 });
 
@@ -525,9 +534,9 @@ describe("wallet store — bet-basis lock (Sprint 3 Commit 8, generalized)", () 
     bet(5);
     dive();
     cashOut(3.21);
-    expect(wallet.get().roundBet).toBe(5);
-    expect(wallet.get().lastWin).toEqual({ amount: 16.05, mult: 3.21 }); // 5 × m, never 100 × m
-    expect(wallet.get().balance).toBe(1011.05);
+    expect(slot0View(wallet.get()).roundBet).toBe(5);
+    expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 16.05, mult: 3.21 }); // 5 × m, never 100 × m
+    expect(slot0View(wallet.get()).balance).toBe(1011.05);
   });
 
   it("the jackpot and chest credits use the same locked basis", () => {
@@ -536,8 +545,8 @@ describe("wallet store — bet-basis lock (Sprint 3 Commit 8, generalized)", () 
     impact(50);
     reveal();
     pick(0, 2, 100);
-    expect(wallet.get().lastWin).toEqual({ amount: 500, mult: 100 });
-    expect(wallet.get().balance).toBe(1495); // 995 + 250 + 250
+    expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 500, mult: 100 });
+    expect(slot0View(wallet.get()).balance).toBe(1495); // 995 + 250 + 250
   });
 });
 
@@ -555,11 +564,11 @@ describe("wallet store — read surface and affordability", () => {
 
   it("snapshots are immutable: a held snapshot never changes under later events", () => {
     bet(10);
-    const held = wallet.get();
+    const held = slot0View(wallet.get());
     dive();
     cashOut(2);
     expect(held).toMatchObject({ balance: 990, hasCashed: false, history: [] });
-    expect(wallet.get()).not.toBe(held);
+    expect(slot0View(wallet.get())).not.toBe(held);
   });
 
   it("exposes no writer: the read surface is get/subscribe/canAfford/canPlaceStake/unresolvedClaims/onFlash only", () => {
@@ -652,8 +661,8 @@ describe("wallet store — read surface and affordability", () => {
     } finally {
       console.error = errors;
     }
-    expect(wallet.get().balance).toBe(1010);
-    expect(wallet.get().hasCashed).toBe(true);
+    expect(slot0View(wallet.get()).balance).toBe(1010);
+    expect(slot0View(wallet.get()).hasCashed).toBe(true);
   });
 });
 
@@ -710,10 +719,10 @@ describe("isAffordable — one predicate for canAfford and the action state (U5,
   });
 
   it("is pure: does not touch any wallet state", () => {
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     isAffordable(5, 0);
     isAffordable(Number.NaN, 1000);
-    expect(wallet.get()).toBe(before);
+    expect(slot0View(wallet.get())).toBe(before);
   });
 });
 
@@ -745,7 +754,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
   const rules = () => refusals.map((r) => `${r.event}:${r.rule}`);
 
   it("W1: an invalid betPlaced amount debits nothing and opens no participation; the round then pays nothing", () => {
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     for (const amount of [
       0,
       -0,
@@ -761,40 +770,40 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
     ]) {
       bet(amount);
     }
-    emit("betPlaced", { amount: "5" as unknown as number });
-    expect(wallet.get()).toBe(before); // no snapshot written at all (W8)
+    emit("betPlaced", { slot: 0, amount: "5" as unknown as number });
+    expect(slot0View(wallet.get())).toBe(before); // no snapshot written at all (W8)
     expect(refusals).toHaveLength(12);
     expect(new Set(rules())).toEqual(new Set(["betPlaced:W1"]));
     dive();
     impact(500);
     pick(2, 50, 25000);
-    expect(wallet.get().balance).toBe(DEFAULT_BALANCE);
-    expect(wallet.get().lastWin).toBeNull();
+    expect(slot0View(wallet.get()).balance).toBe(DEFAULT_BALANCE);
+    expect(slot0View(wallet.get()).lastWin).toBeNull();
   });
 
   it("W2/H3: a duplicate betPlaced debits once", () => {
     bet(10);
     bet(10);
-    expect(wallet.get()).toMatchObject({ balance: 990, roundBet: 10 });
+    expect(slot0View(wallet.get())).toMatchObject({ balance: 990, roundBet: 10 });
     expect(rules()).toEqual(["betPlaced:W2"]);
   });
 
   it("W3/H4: an over-balance betPlaced writes nothing and the round pays nothing", () => {
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     bet(DEFAULT_BALANCE + 0.01);
     bet(5000);
-    expect(wallet.get()).toBe(before);
+    expect(slot0View(wallet.get())).toBe(before);
     expect(rules()).toEqual(["betPlaced:W3", "betPlaced:W3"]);
     dive();
     cashOut(2);
     impact(500);
-    expect(wallet.get().balance).toBe(DEFAULT_BALANCE);
-    expect(wallet.get().lastWin).toBeNull();
+    expect(slot0View(wallet.get()).balance).toBe(DEFAULT_BALANCE);
+    expect(slot0View(wallet.get()).lastWin).toBeNull();
   });
 
   it("W3: an all-in bet of exactly the balance is accepted and leaves 0, never negative", () => {
     bet(DEFAULT_BALANCE);
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 0,
       roundBet: DEFAULT_BALANCE,
       participating: true,
@@ -807,11 +816,15 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
     dive();
     cashOut(2);
     emitIn(roundId, "bettingOpened", {});
-    expect(wallet.get()).toMatchObject({ participating: true, settledBy: "cashout" });
+    expect(slot0View(wallet.get())).toMatchObject({ participating: true, settledBy: "cashout" });
     cashOut(3);
-    expect(wallet.get().balance).toBe(1005);
+    expect(slot0View(wallet.get()).balance).toBe(1005);
     openBetting(); // the next round still resets as before
-    expect(wallet.get()).toMatchObject({ participating: false, roundBet: 0, settledBy: null });
+    expect(slot0View(wallet.get())).toMatchObject({
+      participating: false,
+      roundBet: 0,
+      settledBy: null,
+    });
   });
 
   it("W6/H2: a second shipImpact cannot lower the chest base — the delta uses the recorded jackpot payout", () => {
@@ -821,31 +834,31 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
     impact(1); // duplicate/forged: history only, no credit
     reveal();
     pick(2, 5, 500); // total 500.00 − recorded 100.00 = 400.00 (the U2 code paid 499)
-    expect(wallet.get().balance).toBe(1499);
-    expect(wallet.get().lastWin).toEqual({ amount: 500, mult: 500 });
+    expect(slot0View(wallet.get()).balance).toBe(1499);
+    expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 500, mult: 500 });
   });
 
   it("W6/H5: a final multiplier below the jackpot is refused — a chest never debits", () => {
     bet(10);
     dive();
     impact(100);
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     pick(0, 0.5, 50);
-    expect(wallet.get()).toBe(before);
+    expect(slot0View(wallet.get())).toBe(before);
     expect(rules()).toEqual(["chestPicked:W6"]);
   });
 
   it("W4/H6: settlement events of another round pay nothing", () => {
     bet(10);
     dive();
-    const before = wallet.get();
-    emitIn(roundId + 1, "cashedOut", { multiplier: 2 });
+    const before = slot0View(wallet.get());
+    emitIn(roundId + 1, "cashedOut", { slot: 0, multiplier: 2 });
     emitIn(roundId - 1, "shipImpact", { jackpotMultiplier: 100 });
-    expect(wallet.get()).toBe(before);
+    expect(slot0View(wallet.get())).toBe(before);
     impact(100);
-    const afterJackpot = wallet.get();
+    const afterJackpot = slot0View(wallet.get());
     emitIn(roundId + 1, "chestPicked", { chestId: 0, chestMultiplier: 2, finalMultiplier: 200 });
-    expect(wallet.get()).toBe(afterJackpot);
+    expect(slot0View(wallet.get())).toBe(afterJackpot);
     expect(rules()).toEqual(["cashedOut:W4", "shipImpact:W4", "chestPicked:W4"]);
   });
 
@@ -858,23 +871,23 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         openBetting();
         bet(10);
         dive();
-        const before = wallet.get();
+        const before = slot0View(wallet.get());
         cashOut(m as number);
-        expect(wallet.get()).toBe(before);
+        expect(slot0View(wallet.get())).toBe(before);
       }
       expect(flashes).toEqual([]);
       expect(rules()).toEqual(INVALID.map(() => "cashedOut:W7"));
     });
 
     it("shipImpact (participant and spectator alike: no credit, no history, no flash)", () => {
-      const spectatorBefore = wallet.get();
+      const spectatorBefore = slot0View(wallet.get());
       for (const m of INVALID) impact(m as number);
-      expect(wallet.get()).toBe(spectatorBefore);
+      expect(slot0View(wallet.get())).toBe(spectatorBefore);
       bet(10);
       dive();
-      const before = wallet.get();
+      const before = slot0View(wallet.get());
       for (const m of INVALID) impact(m as number);
-      expect(wallet.get()).toBe(before);
+      expect(slot0View(wallet.get())).toBe(before);
       expect(flashes).toEqual([]);
     });
 
@@ -882,10 +895,12 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       bet(10);
       dive();
       impact(100);
-      const before = wallet.get();
+      const before = slot0View(wallet.get());
       for (const m of INVALID) pick(1, 2, m as number);
-      expect(wallet.get()).toBe(before);
-      expect(Number.isFinite(wallet.get().balance) && wallet.get().balance >= 0).toBe(true);
+      expect(slot0View(wallet.get())).toBe(before);
+      expect(
+        Number.isFinite(slot0View(wallet.get()).balance) && slot0View(wallet.get()).balance >= 0,
+      ).toBe(true);
     });
   });
 
@@ -895,14 +910,14 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
     it("an invalid cashout faults the round: a later valid cashout, jackpot and chest pay nothing", () => {
       bet(10);
       dive();
-      const afterBet = wallet.get();
+      const afterBet = slot0View(wallet.get());
       cashOut(NaN);
       cashOut(2);
       impact(100);
       reveal();
       pick(1, 6.5, 650);
       // Not one write: no credit, no history, no lastWin, no flash (W8).
-      expect(wallet.get()).toBe(afterBet);
+      expect(slot0View(wallet.get())).toBe(afterBet);
       expect(flashes).toEqual([]);
       // The chest pick is not even eligible (no jackpot settlement): ignored
       // silently by the E-X1 guard before W10 is reached.
@@ -917,12 +932,13 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       const fault = faultOf(0);
       expect(fault).toEqual({
         roundId,
+        slot: 0,
         stake: 10,
         creditedCents: 0n,
         event: "cashedOut",
         rule: "W7",
         reason: "invalid multiplier or payout",
-        payload: { roundId, multiplier: -1 },
+        payload: { roundId, slot: 0, multiplier: -1 },
       });
       expect(faultOf(1)).toBe(fault);
     });
@@ -931,7 +947,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       bet(10);
       dive();
       cashOut(Infinity);
-      expect(wallet.get()).toMatchObject({
+      expect(slot0View(wallet.get())).toMatchObject({
         balance: 990,
         roundBet: 10,
         participating: true,
@@ -939,18 +955,18 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         settledBy: null,
       });
       crash(1.5); // the round ends: still no money movement
-      expect(wallet.get().balance).toBe(990);
+      expect(slot0View(wallet.get()).balance).toBe(990);
       // R2: a technical failure is not a player loss — no loss entry.
-      expect(wallet.get().history).toEqual([]);
+      expect(slot0View(wallet.get()).history).toEqual([]);
     });
 
     it("an invalid jackpot faults the round; a duplicate valid shipImpact then pays nothing", () => {
       bet(10);
       dive();
-      const afterBet = wallet.get();
+      const afterBet = slot0View(wallet.get());
       impact(0);
       impact(100);
-      expect(wallet.get()).toBe(afterBet);
+      expect(slot0View(wallet.get())).toBe(afterBet);
       expect(rules()).toEqual(["shipImpact:W7", "shipImpact:W10"]);
     });
 
@@ -958,12 +974,12 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       bet(10);
       dive();
       impact(100);
-      const afterJackpot = wallet.get();
+      const afterJackpot = slot0View(wallet.get());
       expect(afterJackpot.balance).toBe(1990);
       reveal();
       pick(0, 0.5, 50); // W6: below the credited jackpot
       pick(2, 30, 3000);
-      expect(wallet.get()).toBe(afterJackpot);
+      expect(slot0View(wallet.get())).toBe(afterJackpot);
       expect(rules()).toEqual(["chestPicked:W6", "chestPicked:W10"]);
       expect(faultOf(0)).toMatchObject({ event: "chestPicked", rule: "W6", stake: 10 });
     });
@@ -971,10 +987,10 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
     it("a foreign-round event never faults the participation (W4 stays a plain refusal)", () => {
       bet(10);
       dive();
-      emitIn(roundId + 1, "cashedOut", { multiplier: NaN });
+      emitIn(roundId + 1, "cashedOut", { slot: 0, multiplier: NaN });
       emitIn(roundId + 1, "shipImpact", { jackpotMultiplier: NaN });
       cashOut(2);
-      expect(wallet.get().balance).toBe(1010);
+      expect(slot0View(wallet.get()).balance).toBe(1010);
       expect(rules()).toEqual(["cashedOut:W4", "shipImpact:W7"]);
       expect(refusals.every((r) => r.fault === undefined)).toBe(true);
     });
@@ -986,7 +1002,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       cashOut(2);
       impact(NaN); // already settled by cashout
       expect(refusals.map((r) => r.fault)).toEqual([undefined, undefined]);
-      expect(wallet.get().balance).toBe(1005);
+      expect(slot0View(wallet.get()).balance).toBe(1005);
     });
 
     it("the fault is per round: the same-round bettingOpened keeps it, the next round clears it", () => {
@@ -995,12 +1011,12 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       cashOut(NaN);
       emitIn(roundId, "bettingOpened", {}); // W5: same round, ignored
       cashOut(2);
-      expect(wallet.get().balance).toBe(990);
+      expect(slot0View(wallet.get()).balance).toBe(990);
       openBetting();
       bet(10);
       dive();
       cashOut(2);
-      expect(wallet.get().balance).toBe(1000);
+      expect(slot0View(wallet.get()).balance).toBe(1000);
       expect(rules()).toEqual(["cashedOut:W7", "cashedOut:W10"]);
     });
   });
@@ -1011,7 +1027,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       impact(NaN); // spectator
       bet(5);
       dive();
-      emitIn(roundId + 1, "cashedOut", { multiplier: NaN }); // W4
+      emitIn(roundId + 1, "cashedOut", { slot: 0, multiplier: NaN }); // W4
       cashOut(2);
       impact(NaN); // already settled
       expect(refusals).toHaveLength(3);
@@ -1025,12 +1041,13 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       expect(wallet.unresolvedClaims()).toEqual([
         {
           roundId,
+          slot: 0,
           stake: 12.34,
           creditedCents: 0n,
           event: "cashedOut",
           rule: "W7",
           reason: "invalid multiplier or payout",
-          payload: { roundId, multiplier: NaN },
+          payload: { roundId, slot: 0, multiplier: NaN },
         },
       ]);
       expect(wallet.unresolvedClaims()[0]).toBe(refusals[0]?.fault);
@@ -1049,7 +1066,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         event: "chestPicked",
         rule: "W6",
       });
-      expect(wallet.get().balance).toBe(+(1000 - 0.29 + 29.16).toFixed(2));
+      expect(slot0View(wallet.get()).balance).toBe(+(1000 - 0.29 + 29.16).toFixed(2));
     });
 
     it("survives the round reset and later rounds; late events of the faulted round credit nothing", () => {
@@ -1060,20 +1077,24 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       crash(1.2);
       openBetting(); // the next round: the active marker clears, the claim stays
       // Late valid events of the faulted round, while not participating.
-      emitIn(faultedRound, "cashedOut", { multiplier: 2 });
+      emitIn(faultedRound, "cashedOut", { slot: 0, multiplier: 2 });
       emitIn(faultedRound, "chestPicked", { chestId: 0, chestMultiplier: 2, finalMultiplier: 200 });
-      expect(wallet.get().balance).toBe(990);
+      expect(slot0View(wallet.get()).balance).toBe(990);
       bet(10);
       dive();
       // ...and while participating in the next round (W4).
-      emitIn(faultedRound, "cashedOut", { multiplier: 2 });
+      emitIn(faultedRound, "cashedOut", { slot: 0, multiplier: 2 });
       emitIn(faultedRound, "shipImpact", { jackpotMultiplier: 100 });
-      expect(wallet.get().balance).toBe(980);
+      expect(slot0View(wallet.get()).balance).toBe(980);
       cashOut(2); // the new round itself settles normally
-      expect(wallet.get().balance).toBe(1000);
+      expect(slot0View(wallet.get()).balance).toBe(1000);
       openBetting();
       expect(wallet.unresolvedClaims()).toHaveLength(1);
-      expect(wallet.unresolvedClaims()[0]).toMatchObject({ roundId: faultedRound, stake: 10 });
+      expect(wallet.unresolvedClaims()[0]).toMatchObject({
+        roundId: faultedRound,
+        slot: 0,
+        stake: 10,
+      });
     });
 
     it("appends one claim per faulted participation, oldest first", () => {
@@ -1085,10 +1106,10 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         cashOut(m); // a repeat in the same round is W10, not a second claim
       }
       expect(wallet.unresolvedClaims().map((c) => c.payload)).toEqual([
-        { roundId: roundId - 1, multiplier: NaN },
-        { roundId, multiplier: -1 },
+        { roundId: roundId - 1, slot: 0, multiplier: NaN },
+        { roundId, slot: 0, multiplier: -1 },
       ]);
-      expect(wallet.get().balance).toBe(980);
+      expect(slot0View(wallet.get()).balance).toBe(980);
     });
 
     it("the audit list cannot be altered through its read surface", () => {
@@ -1111,7 +1132,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       bet(10);
       dive();
       crash(1.3); // an ordinary loss
-      expect(wallet.get().history).toEqual([{ mult: 1.3, crashed: true }]);
+      expect(slot0View(wallet.get()).history).toEqual([{ mult: 1.3, crashed: true }]);
     });
   });
 
@@ -1126,7 +1147,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       bet(1000);
       dive();
       cashOut(1e10);
-      expect(wallet.get().balance).toBe(F);
+      expect(slot0View(wallet.get()).balance).toBe(F);
       crash(1e10);
       openBetting();
       flashes = [];
@@ -1144,10 +1165,10 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       dive();
       cashOut(2);
       expect(refusals).toEqual([]);
-      expect(wallet.get().balance).toBe(17592186044415.99);
-      expect(centsOf(wallet.get().balance)).toBe(2n ** 44n * 100n - 1n);
-      expect(wallet.get().lastWin).toEqual({ amount: 15184372088831.98, mult: 2 });
-      expect(wallet.get().settledBy).toBe("cashout");
+      expect(slot0View(wallet.get()).balance).toBe(17592186044415.99);
+      expect(centsOf(slot0View(wallet.get()).balance)).toBe(2n ** 44n * 100n - 1n);
+      expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 15184372088831.98, mult: 2 });
+      expect(slot0View(wallet.get()).settledBy).toBe("cashout");
       expect(wallet.unresolvedClaims()).toEqual([]);
     });
 
@@ -1159,23 +1180,24 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         fund();
         bet(stake);
         dive();
-        const before = wallet.get();
+        const before = slot0View(wallet.get());
         cashOut(2);
         // Not mutated, not rounded, no flash, no history, no settlement.
-        expect(wallet.get()).toBe(before);
+        expect(slot0View(wallet.get())).toBe(before);
         expect(flashes).toEqual([]);
         expect(rules()).toEqual(["cashedOut:W11"]);
         const unpaid = centsOf(stake) * 2n;
         expect(wallet.unresolvedClaims()).toEqual([
           {
             roundId,
+            slot: 0,
             stake,
             creditedCents: 0n,
             unpaidCents: unpaid,
             event: "cashedOut",
             rule: "W11",
             reason: "credit outside the exact balance envelope (2^44)",
-            payload: { roundId, multiplier: 2 },
+            payload: { roundId, slot: 0, multiplier: 2 },
           },
         ]);
         expect(refusals[0]?.fault).toBe(wallet.unresolvedClaims()[0]);
@@ -1186,9 +1208,9 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         expect(refusals[1]?.fault).toBe(wallet.unresolvedClaims()[0]);
         // Not a loss: the round's crash adds no loss entry.
         crash(2.5);
-        expect(wallet.get()).toBe(before);
+        expect(slot0View(wallet.get())).toBe(before);
         expect(wallet.unresolvedClaims()).toHaveLength(1);
-        expect(wallet.get().balance).toBeLessThan(LIMIT_UNITS);
+        expect(slot0View(wallet.get()).balance).toBeLessThan(LIMIT_UNITS);
       });
     }
 
@@ -1196,9 +1218,9 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       fund();
       bet(AT);
       dive();
-      const before = wallet.get();
+      const before = slot0View(wallet.get());
       impact(2);
-      expect(wallet.get()).toBe(before); // no jackpot multiplier, balance, history or flash write
+      expect(slot0View(wallet.get())).toBe(before); // no jackpot multiplier, balance, history or flash write
       expect(flashes).toEqual([]);
       reveal();
       pick(2, 1.5, 3);
@@ -1210,12 +1232,13 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         "chestPicked:W10",
         "shipImpact:W10",
       ]);
-      expect(wallet.get()).toBe(before);
+      expect(slot0View(wallet.get())).toBe(before);
       const s = centsOf(AT);
       const claims = wallet.unresolvedClaims();
       expect(claims).toEqual([
         {
           roundId,
+          slot: 0,
           stake: AT,
           creditedCents: 0n,
           unpaidCents: 2n * s,
@@ -1226,6 +1249,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         },
         {
           roundId,
+          slot: 0,
           stake: AT,
           creditedCents: 0n,
           unpaidCents: s, // total 3s − jackpot 2s
@@ -1259,7 +1283,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         bet(S);
         dive();
         impact(2);
-        expect(wallet.get().balance).toBe(15_000_000_000_000);
+        expect(slot0View(wallet.get()).balance).toBe(15_000_000_000_000);
         reveal();
         flashes = [];
       };
@@ -1268,9 +1292,12 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         setUp();
         pick(1, 1.25921860444155, 2.5184372088831);
         expect(refusals).toEqual([]);
-        expect(wallet.get().balance).toBe(17592186044415.5);
-        expect(wallet.get().lastWin).toEqual({ amount: 12592186044415.5, mult: 2.5184372088831 });
-        expect(wallet.get().chestSettled).toBe(true);
+        expect(slot0View(wallet.get()).balance).toBe(17592186044415.5);
+        expect(slot0View(wallet.get()).lastWin).toEqual({
+          amount: 12592186044415.5,
+          mult: 2.5184372088831,
+        });
+        expect(slot0View(wallet.get()).chestSettled).toBe(true);
       });
 
       for (const [label, final] of [
@@ -1279,9 +1306,9 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       ] as const) {
         it(`${label}: refused as W11; the credited jackpot and the exact unpaid delta are both recorded`, () => {
           setUp();
-          const before = wallet.get();
+          const before = slot0View(wallet.get());
           pick(1, final / 2, final);
-          expect(wallet.get()).toBe(before); // balance stays 1.5e13; lastWin is the jackpot
+          expect(slot0View(wallet.get())).toBe(before); // balance stays 1.5e13; lastWin is the jackpot
           expect(rules()).toEqual(["chestPicked:W11"]);
           const total = (centsOf(S) * BigInt(Math.round(final * 1e13))) / 10n ** 13n;
           expect(wallet.unresolvedClaims()).toEqual([
@@ -1295,7 +1322,7 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
           ]);
           pick(1, final / 2, final); // a repeat: W10, not credited, no second claim
           expect(rules()).toEqual(["chestPicked:W11", "chestPicked:W10"]);
-          expect(wallet.get()).toBe(before);
+          expect(slot0View(wallet.get())).toBe(before);
           expect(wallet.unresolvedClaims()).toHaveLength(1);
         });
       }
@@ -1324,12 +1351,12 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       expect(w11).toMatchObject({ rule: "W11", unpaidCents: centsOf(AT) * 2n });
       expect(w7).toMatchObject({ rule: "W7" });
       expect(w7).not.toHaveProperty("unpaidCents");
-      expect(wallet.get().history).toEqual([
+      expect(slot0View(wallet.get()).history).toEqual([
         { mult: 2, crashed: false },
         { mult: 1.1, crashed: true },
         { mult: 1e10, crashed: false }, // the funding cashout
       ]);
-      expect(wallet.get().balance).toBe(F - AT - 10 - 10 - 10 + 20);
+      expect(slot0View(wallet.get()).balance).toBe(F - AT - 10 - 10 - 10 + 20);
     });
   });
 
@@ -1338,14 +1365,14 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       bet(0.01);
       dive();
       cashOut(1.5014);
-      expect(wallet.get().lastWin).toEqual({ amount: 0.01, mult: 1.5014 });
-      expect(wallet.get().balance).toBe(1000);
+      expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 0.01, mult: 1.5014 });
+      expect(slot0View(wallet.get()).balance).toBe(1000);
       openBetting();
       bet(0.01);
       dive();
       impact(1.5014);
-      expect(wallet.get().lastWin).toEqual({ amount: 0.01, mult: 1.5014 });
-      expect(wallet.get().balance).toBe(1000);
+      expect(slot0View(wallet.get()).lastWin).toEqual({ amount: 0.01, mult: 1.5014 });
+      expect(slot0View(wallet.get()).balance).toBe(1000);
     });
 
     it("jackpot: 0.29 × 100.57 → 29.16; 33.33 × 57.29 → 1909.47; 10 × 499.99 → 4999.90", () => {
@@ -1356,12 +1383,12 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
       ];
       for (const [stake, jackpot, win] of cases) {
         openBetting();
-        const start = wallet.get().balance;
+        const start = slot0View(wallet.get()).balance;
         bet(stake);
         dive();
         impact(jackpot);
-        expect(wallet.get().lastWin).toEqual({ amount: win, mult: jackpot });
-        expect(Math.round(wallet.get().balance * 100)).toBe(
+        expect(slot0View(wallet.get()).lastWin).toEqual({ amount: win, mult: jackpot });
+        expect(Math.round(slot0View(wallet.get()).balance * 100)).toBe(
           Math.round(start * 100) - Math.round(stake * 100) + Math.round(win * 100),
         );
       }
@@ -1378,17 +1405,17 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         bet(stake);
         dive();
         impact(jackpot);
-        const afterJackpot = wallet.get().balance;
+        const afterJackpot = slot0View(wallet.get()).balance;
         reveal();
         pick(1, final / jackpot, final); // the engine's finalMultiplier as emitted
-        expect(wallet.get().lastWin).toEqual({ amount: total, mult: final });
-        expect(Math.round((wallet.get().balance - afterJackpot) * 100)).toBe(
+        expect(slot0View(wallet.get()).lastWin).toEqual({ amount: total, mult: final });
+        expect(Math.round((slot0View(wallet.get()).balance - afterJackpot) * 100)).toBe(
           Math.round(delta * 100),
         );
         // Credits per participation sum to the rounded-down total.
-        expect(Math.round((wallet.get().balance - (DEFAULT_BALANCE - stake)) * 100)).toBe(
-          Math.round(total * 100),
-        );
+        expect(
+          Math.round((slot0View(wallet.get()).balance - (DEFAULT_BALANCE - stake)) * 100),
+        ).toBe(Math.round(total * 100));
       });
     }
 
@@ -1410,31 +1437,40 @@ describe("wallet store — M1 integrity guards (W1–W10)", () => {
         bet(0.01);
         dive();
         cashOut(m);
-        expect(wallet.get().lastWin).toEqual({ amount: Number(expected) / 100, mult: m });
-        expect(centsOf(wallet.get().balance)).toBe(100000n - 1n + expected);
+        expect(slot0View(wallet.get()).lastWin).toEqual({
+          amount: Number(expected) / 100,
+          mult: m,
+        });
+        expect(centsOf(slot0View(wallet.get()).balance)).toBe(100000n - 1n + expected);
 
         // Jackpot auto-cash at m.
         openBetting();
-        const beforeJackpot = centsOf(wallet.get().balance);
+        const beforeJackpot = centsOf(slot0View(wallet.get()).balance);
         bet(0.01);
         dive();
         impact(m);
-        expect(wallet.get().lastWin).toEqual({ amount: Number(expected) / 100, mult: m });
-        expect(centsOf(wallet.get().balance)).toBe(beforeJackpot - 1n + expected);
+        expect(slot0View(wallet.get()).lastWin).toEqual({
+          amount: Number(expected) / 100,
+          mult: m,
+        });
+        expect(centsOf(slot0View(wallet.get()).balance)).toBe(beforeJackpot - 1n + expected);
 
         // Chest: jackpot 1.5 (1 cent), then final m — total ⌊1 · m⌋, delta total − 1.
         openBetting();
-        const beforeChest = centsOf(wallet.get().balance);
+        const beforeChest = centsOf(slot0View(wallet.get()).balance);
         bet(0.01);
         dive();
         impact(1.5);
-        const jackpotCredit = centsOf(wallet.get().balance) - (beforeChest - 1n);
+        const jackpotCredit = centsOf(slot0View(wallet.get()).balance) - (beforeChest - 1n);
         expect(jackpotCredit).toBe(1n);
         reveal();
         pick(1, m / 1.5, m); // the engine's finalMultiplier as emitted
-        const delta = centsOf(wallet.get().balance) - (beforeChest - 1n) - jackpotCredit;
+        const delta = centsOf(slot0View(wallet.get()).balance) - (beforeChest - 1n) - jackpotCredit;
         expect(delta).toBe(expected - 1n);
-        expect(wallet.get().lastWin).toEqual({ amount: Number(expected) / 100, mult: m });
+        expect(slot0View(wallet.get()).lastWin).toEqual({
+          amount: Number(expected) / 100,
+          mult: m,
+        });
         // Credits per participation sum to the rounded-down total.
         expect(jackpotCredit + delta).toBe(expected);
 

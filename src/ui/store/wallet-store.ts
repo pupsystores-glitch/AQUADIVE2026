@@ -79,7 +79,22 @@
 // Durations and timers are not owned here. Mid-migration seam (U2): the
 // component shell subscribes until the notification store (U4) takes over.
 
-import type { EngineEventMap, EventBus } from "@/engine";
+// E-X3 (Dual Bet, owner-approved 2026-11-14): the player holds up to two
+// independent bets per round, one per slot (0 | 1). Every per-round field
+// and every rule above applies PER SLOT: each slot has its own locked bet,
+// settlement record, W10 fault marker and W11 withheld-chest flag, so a
+// fault in one slot never blocks or alters the other (per-slot fault
+// isolation). Each slot's payout is rounded down separately (never on the
+// combined stake). The balance, history, lastWin and the claims audit list
+// are shared. W2 is per slot: no second betPlaced for a slot that already
+// participates; W3 checks the balance left after the other slot's debit.
+// A betPlaced or cashedOut without a valid slot is refused (W1 / W4).
+// shipImpact auto-settles every payable slot of its round (one history
+// entry, one flash); the round's single chestPicked applies to every
+// jackpot-settled slot (one history entry). lastWin is the event's combined
+// credit; each slot's own win is `slots[slot].win`.
+
+import { BET_SLOTS, type BetSlot, type EngineEventMap, type EventBus } from "@/engine";
 import { HISTORY_LIMIT } from "@/game/config";
 import { DEFAULT_BALANCE } from "@/game/constants";
 import type { HistoryEntry, LastWin } from "@/game/types";
@@ -87,20 +102,30 @@ import { centsToAmount, exactCredit, isSettlementMultiplier, payoutCents } from 
 import { isValidStake } from "./stake";
 import { createStore, type ReadableStore } from "./store";
 
+/** One bet slot's round state (E-X3). */
+export interface WalletSlotState {
+  /** This slot's locked bet: the accepted betPlaced amount; 0 when not participating. */
+  readonly roundBet: number;
+  /** A bet was accepted for this slot in the current round. */
+  readonly participating: boolean;
+  /** This slot's win is settled (manual cashout or jackpot auto-cash). */
+  readonly hasCashed: boolean;
+  /** Which payout settled this slot; null until one is applied. */
+  readonly settledBy: "cashout" | "jackpot" | null;
+  /** This slot's eligible (jackpot-settled) chest result has been applied — the per-round idempotency guard. */
+  readonly chestSettled: boolean;
+  /** This slot's credited win this round (cashout or jackpot, then the chest total); null until settled. */
+  readonly win: LastWin | null;
+}
+
+export type WalletSlots = readonly [WalletSlotState, WalletSlotState];
+
 export interface WalletState {
   /** Player balance — a canonical cent `number` below 2^44 units: debits rounded with toFixed(2), credits exact via W11 (minor-units migration is M2, §20). */
   readonly balance: number;
-  /** This round's locked bet: the accepted betPlaced amount; 0 when not participating. */
-  readonly roundBet: number;
-  /** A bet was accepted for the current round. */
-  readonly participating: boolean;
-  /** The round's win is settled (manual cashout or jackpot auto-cash). */
-  readonly hasCashed: boolean;
-  /** Which payout settled this round's participation; null until one is applied (always null for spectators). */
-  readonly settledBy: "cashout" | "jackpot" | null;
-  /** This round's eligible (jackpot-settled) chest result has been applied — the per-round idempotency guard. Stays false for ineligible rounds. */
-  readonly chestSettled: boolean;
-  /** Most recent win (manual cashout, jackpot, or chest total). */
+  /** E-X3: per-slot round state, index = BetSlot. */
+  readonly slots: WalletSlots;
+  /** The most recent win event's combined credit (manual cashout, jackpot, or chest total). */
   readonly lastWin: LastWin | null;
   /** Round results, newest first, capped at HISTORY_LIMIT. */
   readonly history: readonly HistoryEntry[];
@@ -114,6 +139,8 @@ export interface WalletRefusal {
   readonly rule: "W1" | "W2" | "W3" | "W4" | "W6" | "W7" | "W10" | "W11";
   readonly reason: string;
   readonly payload: unknown;
+  /** E-X3: the slot the refusal concerns, when it concerns one. */
+  readonly slot?: BetSlot;
   /** W10: the participation's fault — set when this refusal faulted it, or was refused because of it. */
   readonly fault?: SettlementFault;
 }
@@ -125,7 +152,9 @@ export interface WalletRefusal {
  */
 export interface SettlementFault {
   readonly roundId: number;
-  /** The participation's locked stake. It stays debited: the fault applies no refund and no forfeiture. */
+  /** E-X3: the faulted slot. The other slot's settlement is unaffected. */
+  readonly slot: BetSlot;
+  /** The slot's locked stake. It stays debited: the fault applies no refund and no forfeiture. */
   readonly stake: number;
   /** Exact cents already credited to this participation before the fault (the recorded jackpot payout for a chest fault; otherwise 0). */
   readonly creditedCents: bigint;
@@ -165,13 +194,19 @@ export interface WalletStore extends ReadableStore<WalletState> {
 /** The only engine surface the wallet needs: event subscription. */
 export type WalletEventSource = Pick<EventBus<EngineEventMap>, "on">;
 
-const INITIAL_WALLET: WalletState = {
-  balance: DEFAULT_BALANCE,
+/** A slot with no bet this round. */
+export const IDLE_SLOT: WalletSlotState = Object.freeze({
   roundBet: 0,
   participating: false,
   hasCashed: false,
   settledBy: null,
   chestSettled: false,
+  win: null,
+});
+
+const INITIAL_WALLET: WalletState = {
+  balance: DEFAULT_BALANCE,
+  slots: [IDLE_SLOT, IDLE_SLOT],
   lastWin: null,
   history: [],
   jackpotMultiplier: 1,
@@ -203,6 +238,8 @@ export const isAffordable = (amount: number, balance: number): boolean =>
 export const isPlaceableStake = (amount: number, balance: number): boolean =>
   isValidStake(amount) && isAffordable(amount, balance);
 
+const isBetSlot = (slot: unknown): slot is BetSlot => slot === 0 || slot === 1;
+
 /** W11 refusal reasons. */
 const UNREPRESENTABLE = "credit outside the exact balance envelope (2^44)";
 const WITHHELD_CHEST = "chest delta withheld: the round's jackpot is an unresolved claim";
@@ -211,6 +248,36 @@ const pushHistory = (
   history: readonly HistoryEntry[],
   entry: HistoryEntry,
 ): readonly HistoryEntry[] => [entry, ...history].slice(0, HISTORY_LIMIT);
+
+/** Replace one slot's state, keeping the other's identity. */
+const withSlot = (
+  slots: WalletSlots,
+  slot: BetSlot,
+  patch: Partial<WalletSlotState>,
+): WalletSlots =>
+  slot === 0 ? [{ ...slots[0], ...patch }, slots[1]] : [slots[0], { ...slots[1], ...patch }];
+
+/**
+ * A slot's private settlement record (W4–W6, W10, W11): the round its
+ * accepted bet belongs to, the jackpot payout in exact cents as it was
+ * credited (the chest delta's base — never re-derived from a later, mutable
+ * jackpot multiplier, H2), the slot's W10 fault marker (not part of the
+ * snapshot — it touches no financial or displayed field, W8), and whether
+ * its withheld jackpot already has its chest follow-up claim.
+ */
+interface SlotRecord {
+  round: number | null;
+  jackpotCredited: bigint | null;
+  fault: SettlementFault | null;
+  chestWithheld: boolean;
+}
+
+const freshRecord = (round: number | null = null): SlotRecord => ({
+  round,
+  jackpotCredited: null,
+  fault: null,
+  chestWithheld: false,
+});
 
 /**
  * Create the wallet and subscribe it to the engine's settlement events for
@@ -223,21 +290,10 @@ export function createWalletStore(
   const store = createStore<WalletState>(INITIAL_WALLET);
   const flashListeners = new Set<(kind: FlashKind) => void>();
 
-  // The participation's settlement record (W4–W6), private to the wallet:
-  // the round the accepted bet belongs to, and the jackpot payout in exact
-  // cents as it was credited (the chest delta's base — never re-derived
-  // from a later, mutable jackpot multiplier, H2). Written only together
-  // with the snapshot of the event that changes it.
-  let participationRound: number | null = null;
-  let jackpotCredited: bigint | null = null;
-  // W10 (Q9c): the active participation's fault marker. Not part of the
-  // snapshot — it touches no financial or displayed field (W8).
-  let fault: SettlementFault | null = null;
-  // W11: the active participation's withheld jackpot already has its chest
-  // follow-up claim. Cleared with the marker.
-  let chestWithheld = false;
+  // Written only together with the snapshot of the event that changes them.
+  const records: [SlotRecord, SlotRecord] = [freshRecord(), freshRecord()];
   // W10 (R2): the session's unresolved claims, append-only. A round reset
-  // clears only the active marker above, never this audit list.
+  // clears only the slots' active markers, never this audit list.
   const claims: SettlementFault[] = [];
 
   /** Apply one event's mutation as a single snapshot (one notification per event). */
@@ -255,57 +311,73 @@ export function createWalletStore(
     rule: WalletRefusal["rule"],
     reason: string,
     payload: unknown,
+    slot?: BetSlot,
     cause?: SettlementFault,
   ) => {
-    options.onRefusal?.(
-      cause ? { event, rule, reason, payload, fault: cause } : { event, rule, reason, payload },
-    );
+    options.onRefusal?.({
+      event,
+      rule,
+      reason,
+      payload,
+      ...(slot === undefined ? {} : { slot }),
+      ...(cause === undefined ? {} : { fault: cause }),
+    });
   };
 
-  /** W10: refuse a settlement of the participation's own round AND fault it. Writes no snapshot. */
-  const faultRound = (
+  /** W10: refuse a settlement of the slot's own round AND fault that slot only. Writes no snapshot. */
+  const faultSlot = (
+    slot: BetSlot,
     event: SettlementFault["event"],
     rule: SettlementFault["rule"],
     reason: string,
     payload: unknown,
     unpaidCents?: bigint,
   ) => {
-    fault = Object.freeze({
-      roundId: participationRound as number,
-      stake: store.get().roundBet,
+    const rec = records[slot];
+    const fault: SettlementFault = Object.freeze({
+      roundId: rec.round as number,
+      slot,
+      stake: store.get().slots[slot].roundBet,
       // Only the jackpot path credits before a later settlement event of the
       // same participation (the chest); cashout and jackpot faults credit nothing.
-      creditedCents: jackpotCredited ?? 0n,
+      creditedCents: rec.jackpotCredited ?? 0n,
       ...(unpaidCents === undefined ? {} : { unpaidCents }),
       event,
       rule,
       reason,
       payload,
     });
+    rec.fault = fault;
     claims.push(fault);
-    refuse(event, rule, reason, payload, fault);
+    refuse(event, rule, reason, payload, slot, fault);
   };
 
-  /** W10: a faulted participation's round credits nothing more. */
-  const refuseFaulted = (event: SettlementFault["event"], payload: unknown) =>
-    refuse(event, "W10", "participation faulted", payload, fault ?? undefined);
+  /** W10: a faulted slot's round credits nothing more. */
+  const refuseFaulted = (slot: BetSlot, event: SettlementFault["event"], payload: unknown) =>
+    refuse(event, "W10", "participation faulted", payload, slot, records[slot].fault ?? undefined);
 
   /**
-   * W11: the round's chest result after its jackpot was withheld. Credits
-   * nothing; records the chest delta once as a follow-up claim, so the
-   * participation's full unpaid win (jackpot + delta) is kept. Invalid or
+   * W11: the round's chest result after this slot's jackpot was withheld.
+   * Credits nothing; records the chest delta once as a follow-up claim, so
+   * the slot's full unpaid win (jackpot + delta) is kept. Invalid or
    * repeated chest data adds no claim: it is refused as W10 (the jackpot
    * claim stands).
    */
-  const withholdChest = (payload: EngineEventMap["chestPicked"], jackpot: bigint) => {
-    const total = payoutCents(store.get().roundBet, payload.finalMultiplier);
-    if (chestWithheld || total === null || total < jackpot) {
-      return refuseFaulted("chestPicked", payload);
+  const withholdChest = (
+    slot: BetSlot,
+    payload: EngineEventMap["chestPicked"],
+    jackpot: bigint,
+  ) => {
+    const rec = records[slot];
+    const total = payoutCents(store.get().slots[slot].roundBet, payload.finalMultiplier);
+    if (rec.chestWithheld || total === null || total < jackpot) {
+      return refuseFaulted(slot, "chestPicked", payload);
     }
-    chestWithheld = true;
+    rec.chestWithheld = true;
     const claim: SettlementFault = Object.freeze({
-      roundId: participationRound as number,
-      stake: store.get().roundBet,
+      roundId: rec.round as number,
+      slot,
+      stake: store.get().slots[slot].roundBet,
       creditedCents: 0n,
       unpaidCents: total - jackpot,
       event: "chestPicked",
@@ -314,53 +386,51 @@ export function createWalletStore(
       payload,
     });
     claims.push(claim);
-    refuse("chestPicked", "W11", WITHHELD_CHEST, payload, claim);
+    refuse("chestPicked", "W11", WITHHELD_CHEST, payload, slot, claim);
   };
 
   // Per-round reset: formerly the shell's `phase === "idle"` effect; now
-  // event-driven (§10). Clears the per-round flags only — balance, history,
-  // lastWin and the jackpot base carry over, exactly as before. W5: a
-  // repeated bettingOpened of the participation's own round is ignored, so
-  // it cannot re-open a settled participation (Q13: "a different round", so
-  // a restore-rewound roundId still resets).
+  // event-driven (§10). Clears the per-round slot state only — balance,
+  // history, lastWin and the jackpot base carry over. W5: a repeated
+  // bettingOpened of a participation's own round is ignored, so it cannot
+  // re-open a settled participation (Q13: "a different round", so a
+  // restore-rewound roundId still resets).
   events.on("bettingOpened", ({ roundId }) => {
     const w = store.get();
-    if (w.participating && roundId === participationRound) return;
-    participationRound = null;
-    jackpotCredited = null;
-    fault = null;
-    chestWithheld = false;
-    update({
-      participating: false,
-      roundBet: 0,
-      hasCashed: false,
-      settledBy: null,
-      chestSettled: false,
-    });
+    if (BET_SLOTS.some((s) => w.slots[s].participating && roundId === records[s].round)) return;
+    records[0] = freshRecord();
+    records[1] = freshRecord();
+    update({ slots: [IDLE_SLOT, IDLE_SLOT] });
   });
 
   events.on("betPlaced", (payload) => {
-    const { roundId, amount } = payload;
+    const { roundId, slot, amount } = payload;
     const w = store.get();
+    // E-X3: the slot is part of the debit's identity.
+    if (!isBetSlot(slot)) return refuse("betPlaced", "W1", "invalid slot", payload);
     // W1: same predicate as the submit edge — no sub-cent, zero, negative
     // or non-finite debit (M1-D15, I6).
-    if (!isValidStake(amount)) return refuse("betPlaced", "W1", "invalid stake", payload);
-    // W2: one debit per participation (H3).
-    if (w.participating) return refuse("betPlaced", "W2", "already participating", payload);
-    // W3 (H4): no debit beyond the balance. Unreachable through session.submit
-    // (affordability holds until the command applies, F2).
-    if (amount > w.balance) return refuse("betPlaced", "W3", "exceeds balance", payload);
+    if (!isValidStake(amount)) return refuse("betPlaced", "W1", "invalid stake", payload, slot);
+    // W2: one debit per slot participation (H3).
+    if (w.slots[slot].participating) {
+      return refuse("betPlaced", "W2", "already participating", payload, slot);
+    }
+    // W4: both slots of a player belong to one round.
+    const other: BetSlot = slot === 0 ? 1 : 0;
+    if (w.slots[other].participating && records[other].round !== roundId) {
+      return refuse("betPlaced", "W4", "foreign round", payload, slot);
+    }
+    // W3 (H4): no debit beyond the balance left after the other slot's
+    // debit. Unreachable through session.submit (stakes are reserved until
+    // their command applies, F2).
+    if (amount > w.balance) return refuse("betPlaced", "W3", "exceeds balance", payload, slot);
     // Bet basis lock: fixed HERE, at the accepted amount the wallet is
-    // debited with — the same value the engine locked into
+    // debited with — the same value the engine locked into the slot's
     // participant.betAmount. Never re-read from the bet input.
-    participationRound = roundId;
-    jackpotCredited = null;
-    fault = null;
-    chestWithheld = false;
+    records[slot] = freshRecord(roundId);
     update({
-      roundBet: amount,
       balance: +(w.balance - amount).toFixed(2),
-      participating: true,
+      slots: withSlot(w.slots, slot, { ...IDLE_SLOT, roundBet: amount, participating: true }),
     });
   });
 
@@ -369,40 +439,49 @@ export function createWalletStore(
   // the only per-round reset.
 
   events.on("cashedOut", (payload) => {
-    const { roundId, multiplier: m } = payload;
+    const { roundId, slot, multiplier: m } = payload;
+    if (!isBetSlot(slot)) return refuse("cashedOut", "W4", "invalid slot", payload);
     const w = store.get();
-    // Idempotent: only an unsettled participation can cash out. The engine
-    // already rejects duplicate and spectator cashouts; this guard keeps the
-    // ledger correct even if such an event reached the wallet.
-    if (!w.participating || w.settledBy !== null) return;
-    if (roundId !== participationRound) return refuse("cashedOut", "W4", "foreign round", payload);
-    if (fault) return refuseFaulted("cashedOut", payload);
-    const cents = payoutCents(w.roundBet, m);
+    const s = w.slots[slot];
+    const rec = records[slot];
+    // Idempotent: only an unsettled slot can cash out. The engine already
+    // rejects duplicate and spectator cashouts; this guard keeps the ledger
+    // correct even if such an event reached the wallet.
+    if (!s.participating || s.settledBy !== null) return;
+    if (roundId !== rec.round) return refuse("cashedOut", "W4", "foreign round", payload, slot);
+    if (rec.fault) return refuseFaulted(slot, "cashedOut", payload);
+    // The slot's own payout, rounded down on its own stake.
+    const cents = payoutCents(s.roundBet, m);
     if (cents === null) {
-      return faultRound("cashedOut", "W7", "invalid multiplier or payout", payload);
+      return faultSlot(slot, "cashedOut", "W7", "invalid multiplier or payout", payload);
     }
     // W11: decided in exact cents; the conversions below are then exact.
     const balance = exactCredit(w.balance, cents);
     const win = balance === null ? null : centsToAmount(cents);
     if (balance === null || win === null) {
-      return faultRound("cashedOut", "W11", UNREPRESENTABLE, payload, cents);
+      return faultSlot(slot, "cashedOut", "W11", UNREPRESENTABLE, payload, cents);
     }
+    const lastWin = { amount: win, mult: m };
     update({
       balance,
-      lastWin: { amount: win, mult: m },
+      lastWin,
       history: pushHistory(w.history, { mult: m, crashed: false }),
-      hasCashed: true,
-      settledBy: "cashout",
+      slots: withSlot(w.slots, slot, { hasCashed: true, settledBy: "cashout", win: lastWin }),
     });
     flash("cashFlash");
   });
 
   events.on("crashed", ({ roundId, multiplier: m }) => {
     const w = store.get();
-    // R2: a faulted participation is an unresolved claim, not a loss — its
-    // round's crash adds no loss entry (the claim is the record).
-    if (fault && roundId === fault.roundId) return;
-    if (!w.hasCashed) {
+    const playing = BET_SLOTS.filter((s) => w.slots[s].participating);
+    // A loss entry is due when the round had no participation (spectating)
+    // or some slot lost its stake. R2: a faulted slot is an unresolved
+    // claim, not a loss — it adds no loss entry (the claim is the record).
+    const lost = playing.some((s) => {
+      const f = records[s].fault;
+      return !w.slots[s].hasCashed && !(f !== null && f.roundId === roundId);
+    });
+    if (playing.length === 0 || lost) {
       update({ history: pushHistory(w.history, { mult: m, crashed: true }) });
     }
   });
@@ -410,96 +489,155 @@ export function createWalletStore(
   events.on("shipImpact", (payload) => {
     const { roundId, jackpotMultiplier: jackpot } = payload;
     const w = store.get();
-    // The unsettled participation this shipImpact would pay (W4: its own
-    // round only). Only that participation can be faulted by it (W10).
-    const payable = w.participating && !w.hasCashed && w.settledBy === null;
-    const ownRound = payable && roundId === participationRound;
-    if (ownRound && fault) return refuseFaulted("shipImpact", payload);
+    // The unsettled slots this shipImpact would pay (W4: their own round
+    // only). Only those slots can be faulted by it (W10), each on its own.
+    const payable = BET_SLOTS.filter(
+      (s) => w.slots[s].participating && !w.slots[s].hasCashed && w.slots[s].settledBy === null,
+    );
+    const ownRound = payable.filter((s) => roundId === records[s].round);
     if (!isSettlementMultiplier(jackpot)) {
-      return ownRound
-        ? faultRound("shipImpact", "W7", "invalid multiplier", payload)
-        : refuse("shipImpact", "W7", "invalid multiplier", payload);
+      for (const s of ownRound) {
+        if (records[s].fault) refuseFaulted(s, "shipImpact", payload);
+        else faultSlot(s, "shipImpact", "W7", "invalid multiplier", payload);
+      }
+      if (ownRound.length === 0) refuse("shipImpact", "W7", "invalid multiplier", payload);
+      return;
     }
-    if (payable) {
-      if (roundId !== participationRound) {
-        return refuse("shipImpact", "W4", "foreign round", payload);
-      }
-      const cents = payoutCents(w.roundBet, jackpot);
-      if (cents === null) return faultRound("shipImpact", "W7", "invalid payout", payload);
-      // W11: decided in exact cents; the conversions below are then exact.
-      const balance = exactCredit(w.balance, cents);
-      const win = balance === null ? null : centsToAmount(cents);
-      if (balance === null || win === null) {
-        return faultRound("shipImpact", "W11", UNREPRESENTABLE, payload, cents);
-      }
-      jackpotCredited = cents;
+    if (payable.length === 0) {
+      // Spectating or every slot cashed out: the round's jackpot is history only.
       update({
         jackpotMultiplier: jackpot,
-        balance,
-        lastWin: { amount: win, mult: jackpot },
+        history: pushHistory(w.history, { mult: jackpot, crashed: false }),
+      });
+      return;
+    }
+    let balance = w.balance;
+    let slots = w.slots;
+    let creditedCents = 0n;
+    let credited = 0;
+    for (const s of payable) {
+      const rec = records[s];
+      if (roundId !== rec.round) {
+        refuse("shipImpact", "W4", "foreign round", payload, s);
+        continue;
+      }
+      if (rec.fault) {
+        refuseFaulted(s, "shipImpact", payload);
+        continue;
+      }
+      // The slot's own payout, rounded down on its own stake.
+      const cents = payoutCents(w.slots[s].roundBet, jackpot);
+      if (cents === null) {
+        faultSlot(s, "shipImpact", "W7", "invalid payout", payload);
+        continue;
+      }
+      // W11: decided in exact cents, on the balance after the earlier slot's credit.
+      const next = exactCredit(balance, cents);
+      const win = next === null ? null : centsToAmount(cents);
+      if (next === null || win === null) {
+        faultSlot(s, "shipImpact", "W11", UNREPRESENTABLE, payload, cents);
+        continue;
+      }
+      rec.jackpotCredited = cents;
+      balance = next;
+      creditedCents += cents;
+      credited++;
+      slots = withSlot(slots, s, {
         hasCashed: true,
         settledBy: "jackpot",
-        history: pushHistory(w.history, { mult: jackpot, crashed: false }),
-      });
-      flash("jackpotFlash");
-    } else {
-      update({
-        jackpotMultiplier: jackpot,
-        history: pushHistory(w.history, { mult: jackpot, crashed: false }),
+        win: { amount: win, mult: jackpot },
       });
     }
+    // W8: a fully refused event writes nothing.
+    if (credited === 0) return;
+    update({
+      jackpotMultiplier: jackpot,
+      balance,
+      // Exact: the combined credit is at most the resulting balance (W11).
+      lastWin: { amount: centsToAmount(creditedCents) as number, mult: jackpot },
+      slots,
+      history: pushHistory(w.history, { mult: jackpot, crashed: false }),
+    });
+    flash("jackpotFlash");
   });
 
   events.on("chestPicked", (payload) => {
     const { roundId, finalMultiplier } = payload;
     const w = store.get();
-    // Per-round guard: the round's first chest result is applied; a repeat
-    // is ignored entirely (no second credit, no second history entry).
-    if (w.chestSettled) return;
-    // W11: this participation's jackpot was withheld as an unresolved claim
-    // (so it is not jackpot-settled here, though the engine awarded it):
-    // keep the chest result as a follow-up claim instead of dropping it.
-    if (
-      fault !== null &&
-      fault.rule === "W11" &&
-      fault.event === "shipImpact" &&
-      fault.unpaidCents !== undefined &&
-      w.participating &&
-      roundId === participationRound
-    ) {
-      return withholdChest(payload, fault.unpaidCents);
+    let balance = w.balance;
+    let slots = w.slots;
+    let totalCents = 0n;
+    let credited = 0;
+    for (const s of BET_SLOTS) {
+      const slot = w.slots[s];
+      const rec = records[s];
+      // Per-round guard: the slot's first chest result is applied; a repeat
+      // is ignored entirely (no second credit, no second history entry).
+      if (slot.chestSettled) continue;
+      // W11: this slot's jackpot was withheld as an unresolved claim (so it
+      // is not jackpot-settled here, though the engine awarded it): keep the
+      // chest result as a follow-up claim instead of dropping it.
+      const f = rec.fault;
+      if (
+        f !== null &&
+        f.rule === "W11" &&
+        f.event === "shipImpact" &&
+        f.unpaidCents !== undefined &&
+        slot.participating &&
+        roundId === rec.round
+      ) {
+        withholdChest(s, payload, f.unpaidCents);
+        continue;
+      }
+      // Eligible only when this slot settled through the jackpot path. E-X1
+      // safeguard: a manual cashout or an empty slot gets nothing — no
+      // credit and no synthetic chest history entry.
+      if (!slot.participating || slot.settledBy !== "jackpot") continue;
+      if (roundId !== rec.round || rec.jackpotCredited === null) {
+        refuse("chestPicked", "W4", "foreign round", payload, s);
+        continue;
+      }
+      if (f) {
+        refuseFaulted(s, "chestPicked", payload);
+        continue;
+      }
+      // W6: the slot's total is rounded down once, on its own stake, from the
+      // engine's finalMultiplier as emitted (never jackpot × chest recomputed
+      // here); the credit is that total minus the jackpot payout already
+      // credited to this slot.
+      const total = payoutCents(slot.roundBet, finalMultiplier);
+      if (total === null) {
+        faultSlot(s, "chestPicked", "W7", "invalid multiplier", payload);
+        continue;
+      }
+      if (total < rec.jackpotCredited) {
+        faultSlot(s, "chestPicked", "W6", "final payout below the credited jackpot", payload);
+        continue;
+      }
+      // W11: the delta is credited in exact cents. total = jackpot + delta ≤
+      // the resulting balance, so its conversion for the win is exact too.
+      const delta = total - rec.jackpotCredited;
+      const next = exactCredit(balance, delta);
+      const totalWin = next === null ? null : centsToAmount(total);
+      if (next === null || totalWin === null) {
+        faultSlot(s, "chestPicked", "W11", UNREPRESENTABLE, payload, delta);
+        continue;
+      }
+      balance = next;
+      totalCents += total;
+      credited++;
+      slots = withSlot(slots, s, {
+        chestSettled: true,
+        win: { amount: totalWin, mult: finalMultiplier },
+      });
     }
-    // Eligible only when this wallet settled the participation through the
-    // jackpot path. E-X1 safeguard: a manual cashout or a spectator gets
-    // nothing — no credit and no synthetic chest history entry (the engine
-    // no longer emits chestPicked for them; this guard keeps the ledger
-    // correct even if such an event reached the wallet).
-    if (!w.participating || w.settledBy !== "jackpot") return;
-    if (roundId !== participationRound || jackpotCredited === null) {
-      return refuse("chestPicked", "W4", "foreign round", payload);
-    }
-    if (fault) return refuseFaulted("chestPicked", payload);
-    // W6: the participation's total is rounded down once, from the engine's
-    // finalMultiplier as emitted (never jackpot × chest recomputed here); the
-    // credit is that total minus the jackpot payout already credited.
-    const total = payoutCents(w.roundBet, finalMultiplier);
-    if (total === null) return faultRound("chestPicked", "W7", "invalid multiplier", payload);
-    if (total < jackpotCredited) {
-      return faultRound("chestPicked", "W6", "final payout below the credited jackpot", payload);
-    }
-    // W11: the delta is credited in exact cents. total = jackpot + delta ≤
-    // the resulting balance, so its conversion for lastWin is exact too.
-    const delta = total - jackpotCredited;
-    const balance = exactCredit(w.balance, delta);
-    const totalWin = balance === null ? null : centsToAmount(total);
-    if (balance === null || totalWin === null) {
-      return faultRound("chestPicked", "W11", UNREPRESENTABLE, payload, delta);
-    }
+    // W8: a fully refused event writes nothing.
+    if (credited === 0) return;
     update({
       balance,
-      lastWin: { amount: totalWin, mult: finalMultiplier },
+      lastWin: { amount: centsToAmount(totalCents) as number, mult: finalMultiplier },
       history: pushHistory(w.history, { mult: finalMultiplier, crashed: false }),
-      chestSettled: true,
+      slots,
     });
   });
 

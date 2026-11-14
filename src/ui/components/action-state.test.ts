@@ -264,7 +264,7 @@ describe("actionStateFor — purity", () => {
       countdownSeconds: 0,
       multiplier: 1.5,
       boost: 0,
-      participant: null,
+      participants: [null, null],
       chests: null,
       chosenChestId: null,
     } satisfies RoundState;

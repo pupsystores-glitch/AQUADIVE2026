@@ -17,8 +17,9 @@ import {
   type GameSessionDeps,
 } from "./session";
 import type { NotificationClock } from "./store/notification-store";
-import { isPlaceableStake, type WalletState } from "./store/wallet-store";
+import { isPlaceableStake } from "./store/wallet-store";
 import { adjacentDoubles, payoutOracle } from "./test/money-oracle";
+import { slot0View, type SingleSlotWalletView } from "@/ui/test/wallet-view";
 
 const stubAuthority = (crashPoint = 2): RoundAuthority => ({
   sampleCrashPoint: () => crashPoint,
@@ -200,11 +201,11 @@ const recordEvents = (engine: GameEngine, names: Array<keyof EngineEventMap>) =>
 describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
   it("the wallet is constructed with the session and settles with no component and no canvas attached", () => {
     const { session } = makeHarness();
-    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
+    expect(slot0View(session.wallet.get()).balance).toBe(DEFAULT_BALANCE);
 
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceFrames(session.engine, 1);
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: 990,
       roundBet: 10,
       participating: true,
@@ -215,22 +216,24 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
     const { session } = makeHarness();
     const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
 
-    session.submit({ type: "placeBet", amount: DEFAULT_BALANCE + 0.01 });
-    session.submit({ type: "placeBet", amount: 0 });
+    session.submit({ type: "placeBet", slot: 0, amount: DEFAULT_BALANCE + 0.01 });
+    session.submit({ type: "placeBet", slot: 0, amount: 0 });
     advanceFrames(session.engine, 1);
     expect(log).toEqual([]); // not rejected by the engine: never submitted
-    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
+    expect(slot0View(session.wallet.get()).balance).toBe(DEFAULT_BALANCE);
 
-    session.submit({ type: "placeBet", amount: DEFAULT_BALANCE }); // exactly affordable
+    session.submit({ type: "placeBet", slot: 0, amount: DEFAULT_BALANCE }); // exactly affordable
     advanceFrames(session.engine, 1);
-    expect(log).toEqual([{ name: "betPlaced", payload: { roundId: 1, amount: DEFAULT_BALANCE } }]);
-    expect(session.wallet.get().balance).toBe(0);
+    expect(log).toEqual([
+      { name: "betPlaced", payload: { roundId: 1, slot: 0, amount: DEFAULT_BALANCE } },
+    ]);
+    expect(slot0View(session.wallet.get()).balance).toBe(0);
   });
 
   it("submit forwards every other command unchanged; the engine validates round state (D4)", () => {
     const { session } = makeHarness();
     const log = recordEvents(session.engine, ["commandRejected"]);
-    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut", slot: 0 });
     session.submit({ type: "pickChest", chestId: 1 });
     advanceFrames(session.engine, 1);
     expect(log.map((e) => (e.payload as { reason: string }).reason)).toEqual([
@@ -243,39 +246,39 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
     const { session } = makeHarness(NEVER_CRASH);
     const log = recordEvents(session.engine, ["commandRejected"]);
 
-    session.submit({ type: "placeBet", amount: 5 });
+    session.submit({ type: "placeBet", slot: 0, amount: 5 });
     advanceFrames(session.engine, 1);
-    session.submit({ type: "placeBet", amount: 100 }); // affordable → reaches the engine → rejected
+    session.submit({ type: "placeBet", slot: 0, amount: 100 }); // affordable → reaches the engine → rejected
     advanceFrames(session.engine, 1);
     expect(log.map((e) => (e.payload as { reason: string }).reason)).toEqual([
       "already-participating",
     ]);
-    expect(session.wallet.get()).toMatchObject({ balance: 995, roundBet: 5 });
+    expect(slot0View(session.wallet.get())).toMatchObject({ balance: 995, roundBet: 5 });
 
     advanceUntilState(session.engine, "diving");
     advanceFrames(session.engine, 30);
     const m = session.engine.getPublicState().multiplier; // tick-authoritative cashout value (D4)
-    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut", slot: 0 });
     advanceFrames(session.engine, 1);
 
     const win = payoutOracle(5, m);
-    expect(session.wallet.get().lastWin).toEqual({ amount: win, mult: m }); // 5 × m, never 100 × m
-    expect(session.wallet.get().balance).toBe(+(995 + win).toFixed(2));
+    expect(slot0View(session.wallet.get()).lastWin).toEqual({ amount: win, mult: m }); // 5 × m, never 100 × m
+    expect(slot0View(session.wallet.get()).balance).toBe(+(995 + win).toFixed(2));
   });
 
   it("full jackpot round end to end: debit, auto-credit at impact, chest delta, reset at bettingOpened", () => {
     const { session } = makeHarness(NEVER_CRASH);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "impact");
-    expect(session.wallet.get()).toMatchObject({ balance: 1990, hasCashed: true }); // 990 + 10 × 100
+    expect(slot0View(session.wallet.get())).toMatchObject({ balance: 1990, hasCashed: true }); // 990 + 10 × 100
     advanceUntilState(session.engine, "bonus");
     session.submit({ type: "pickChest", chestId: 1 }); // 100 × 6.5 = 650
     advanceFrames(session.engine, 1);
-    expect(session.wallet.get().balance).toBe(7490); // + (6500 − 1000)
-    expect(session.wallet.get().lastWin).toEqual({ amount: 6500, mult: 650 });
+    expect(slot0View(session.wallet.get()).balance).toBe(7490); // + (6500 − 1000)
+    expect(slot0View(session.wallet.get()).lastWin).toEqual({ amount: 6500, mult: 650 });
 
     advanceUntilState(session.engine, "betting");
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: 7490,
       roundBet: 0,
       participating: false,
@@ -290,25 +293,28 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
   it("real engine (E-X1): cashout → seabed → bonus: pick rejected, no chestPicked, cashout stands alone; the round completes", () => {
     const { session } = makeHarness(NEVER_CRASH);
     const log = recordEvents(session.engine, ["chestPicked", "roundEnded", "commandRejected"]);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "diving");
     advanceFrames(session.engine, 30);
     const m = session.engine.getPublicState().multiplier; // tick-authoritative cashout value (D4)
-    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut", slot: 0 });
     advanceFrames(session.engine, 1);
     const afterCashout = +(990 + payoutOracle(10, m)).toFixed(2);
-    expect(session.wallet.get()).toMatchObject({ balance: afterCashout, settledBy: "cashout" });
+    expect(slot0View(session.wallet.get())).toMatchObject({
+      balance: afterCashout,
+      settledBy: "cashout",
+    });
 
     advanceUntilState(session.engine, "impact");
-    expect(session.wallet.get().balance).toBe(afterCashout);
+    expect(slot0View(session.wallet.get()).balance).toBe(afterCashout);
     advanceUntilState(session.engine, "bonus");
-    expect(session.engine.getPublicState().participant?.bonusEligible).toBe(false);
+    expect(session.engine.getPublicState().participants[0]?.bonusEligible).toBe(false);
     session.submit({ type: "pickChest", chestId: 2 }); // 100 × 30 — must not be credited
     advanceFrames(session.engine, 1);
     expect(log.filter((e) => e.name === "commandRejected").map((e) => e.payload)).toEqual([
       { roundId: 1, command: { type: "pickChest", chestId: 2 }, reason: "not-bonus-eligible" },
     ]);
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: afterCashout,
       lastWin: { amount: payoutOracle(10, m), mult: m },
     });
@@ -318,7 +324,7 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
     expect(log.filter((e) => e.name === "roundEnded")).toEqual([
       { name: "roundEnded", payload: { roundId: 1, outcome: "jackpot" } },
     ]);
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: afterCashout,
       settledBy: null,
       chestSettled: false,
@@ -339,7 +345,7 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
     expect(log.filter((e) => e.name === "commandRejected").map((e) => e.payload)).toEqual([
       { roundId: 1, command: { type: "pickChest", chestId: 2 }, reason: "not-bonus-eligible" },
     ]);
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: DEFAULT_BALANCE,
       participating: false,
       settledBy: null,
@@ -348,22 +354,22 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
     advanceUntilState(session.engine, "betting");
     expect(log.filter((e) => e.name === "chestPicked")).toEqual([]);
     expect(log.filter((e) => e.name === "roundEnded")).toHaveLength(1);
-    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
-    expect(session.wallet.get().history).toEqual([{ mult: 100, crashed: false }]); // no chest entry
+    expect(slot0View(session.wallet.get()).balance).toBe(DEFAULT_BALANCE);
+    expect(slot0View(session.wallet.get()).history).toEqual([{ mult: 100, crashed: false }]); // no chest entry
   });
 
   it("real engine (E-X1): eligible player never picks → chest 0 auto-applied and credited by the unchanged delta formula", () => {
     const { session } = makeHarness(NEVER_CRASH);
     const log = recordEvents(session.engine, ["chestPicked"]);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "bonus");
-    expect(session.wallet.get().balance).toBe(1990); // 990 + 10 × 100
+    expect(slot0View(session.wallet.get()).balance).toBe(1990); // 990 + 10 × 100
     advanceUntilState(session.engine, "betting"); // nobody clicks
     expect(log.map((e) => e.payload)).toEqual([
       { roundId: 1, chestId: 0, chestMultiplier: 2, finalMultiplier: 200 },
     ]);
     // delta = +(10 × 200).toFixed(2) − +(10 × 100).toFixed(2) = 1000
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: 2990,
       lastWin: { amount: 2000, mult: 200 },
       history: [
@@ -378,35 +384,35 @@ describe("createGameSession — wallet wiring (U2, §8/§10)", () => {
     const log = recordEvents(session.engine, ["chestPicked", "roundEnded"]);
 
     // Round 1: eligible, manual pick chest 1 → 990 + 1000 + (6500 − 1000) = 7490
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "bonus");
     session.submit({ type: "pickChest", chestId: 1 });
     advanceUntilState(session.engine, "betting");
-    expect(session.wallet.get().balance).toBe(7490);
+    expect(slot0View(session.wallet.get()).balance).toBe(7490);
 
     // Round 2: spectator — no movement.
     advanceUntilState(session.engine, "bonus");
     advanceUntilState(session.engine, "betting");
-    expect(session.wallet.get().balance).toBe(7490);
+    expect(slot0View(session.wallet.get()).balance).toBe(7490);
 
     // Round 3: manual cashout → seabed — cashout only.
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "diving");
     advanceFrames(session.engine, 30);
     const m = session.engine.getPublicState().multiplier;
-    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut", slot: 0 });
     advanceUntilState(session.engine, "betting");
     const afterRound3 = +(+(7490 - 10).toFixed(2) + payoutOracle(10, m)).toFixed(2);
-    expect(session.wallet.get().balance).toBe(afterRound3);
+    expect(slot0View(session.wallet.get()).balance).toBe(afterRound3);
 
     // Round 4: eligible, auto-pick chest 0 → −10 + 1000 + (2000 − 1000)
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "bonus"); // nobody clicks
     advanceUntilState(session.engine, "betting");
     let expected = +(afterRound3 - 10).toFixed(2); // debit
     expected = +(expected + 1000).toFixed(2); // jackpot auto-credit 10 × 100
     expected = +(expected + 1000).toFixed(2); // chest delta 2000 − 1000
-    expect(session.wallet.get().balance).toBe(expected);
+    expect(slot0View(session.wallet.get()).balance).toBe(expected);
 
     expect(log.filter((e) => e.name === "chestPicked").map((e) => e.payload)).toEqual([
       { roundId: 1, chestId: 1, chestMultiplier: 6.5, finalMultiplier: 650 },
@@ -425,27 +431,27 @@ describe("createGameSession — wallet survives remount mid-round (V1, §21 tier
 
     // Mount 1: canvas attached (the component's mount effect).
     const detach = session.attachCanvas(canvas);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "diving");
-    const mid = session.wallet.get();
+    const mid = slot0View(session.wallet.get());
     expect(mid).toMatchObject({ balance: 990, roundBet: 10, participating: true });
 
     // Unmount mid-dive.
     detach();
     expect(renderers[0].disposed).toBe(true);
-    expect(session.wallet.get()).toBe(mid); // untouched by the unmount
+    expect(slot0View(session.wallet.get())).toBe(mid); // untouched by the unmount
 
     // Remount: a new canvas mount; the wallet is the same, nothing re-initialized.
     session.attachCanvas(canvas);
     expect(renderers).toHaveLength(2);
-    expect(session.wallet.get()).toBe(mid);
+    expect(slot0View(session.wallet.get())).toBe(mid);
 
     advanceFrames(session.engine, 20);
     const m = session.engine.getPublicState().multiplier;
-    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut", slot: 0 });
     advanceFrames(session.engine, 1);
-    expect(session.wallet.get().balance).toBe(+(990 + payoutOracle(10, m)).toFixed(2));
-    expect(session.wallet.get().hasCashed).toBe(true);
+    expect(slot0View(session.wallet.get()).balance).toBe(+(990 + payoutOracle(10, m)).toFixed(2));
+    expect(slot0View(session.wallet.get()).hasCashed).toBe(true);
   });
 
   it("events that occur while no component is mounted are still settled", () => {
@@ -456,7 +462,7 @@ describe("createGameSession — wallet survives remount mid-round (V1, §21 tier
       componentSawImpact++;
     });
     const detach = session.attachCanvas(canvas);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "diving");
 
     // Unmount: the component's subscriptions and the canvas go away...
@@ -466,7 +472,7 @@ describe("createGameSession — wallet survives remount mid-round (V1, §21 tier
     // ...while the round keeps producing settlement events (simulated detach).
     advanceUntilState(session.engine, "impact");
     expect(componentSawImpact).toBe(0);
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: 1990, // the jackpot auto-credit was applied with no component mounted
       hasCashed: true,
       lastWin: { amount: 1000, mult: 100 },
@@ -515,14 +521,14 @@ describe("createGameSession — notification wiring (U4a, §8/§12)", () => {
     const clock = frozenClock();
     const { session, canvas } = makeHarness(3, { notificationClock: clock });
     const detach = session.attachCanvas(canvas);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "diving");
     advanceFrames(session.engine, 30);
     const m = session.engine.getPublicState().multiplier;
-    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut", slot: 0 });
     advanceFrames(session.engine, 1);
 
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: +(990 + payoutOracle(10, m)).toFixed(2),
       lastWin: { amount: payoutOracle(10, m), mult: m },
       settledBy: "cashout",
@@ -548,16 +554,16 @@ describe("createGameSession — notification wiring (U4a, §8/§12)", () => {
   it("jackpot: the jackpot flash starts with JACKPOT_FLASH_MS and outlives the chest reveal and pick; the ledger is unchanged", () => {
     const clock = frozenClock();
     const { session } = makeHarness(NEVER_CRASH, { notificationClock: clock });
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "impact");
-    expect(session.wallet.get().balance).toBe(1990);
+    expect(slot0View(session.wallet.get()).balance).toBe(1990);
     expect(session.notifications.get().flash).toMatchObject({ kind: "jackpotFlash" });
     expect(clock.pending()).toEqual([JACKPOT_FLASH_MS]);
 
     advanceUntilState(session.engine, "bonus");
     session.submit({ type: "pickChest", chestId: 1 });
     advanceFrames(session.engine, 1);
-    expect(session.wallet.get().balance).toBe(7490);
+    expect(slot0View(session.wallet.get()).balance).toBe(7490);
     expect(session.notifications.get().flash).toMatchObject({ kind: "jackpotFlash" });
 
     advanceUntilState(session.engine, "betting");
@@ -568,12 +574,12 @@ describe("createGameSession — notification wiring (U4a, §8/§12)", () => {
   it("an expired flash stays expired; settlement never waits on the timer", () => {
     const clock = frozenClock();
     const { session } = makeHarness(NEVER_CRASH, { notificationClock: clock });
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "impact");
     clock.fireAll();
     expect(session.notifications.get().flash).toBeNull();
     advanceUntilState(session.engine, "betting");
-    expect(session.wallet.get().balance).toBe(2990); // auto-pick chest 0: 1990 + (2000 − 1000)
+    expect(slot0View(session.wallet.get()).balance).toBe(2990); // auto-pick chest 0: 1990 + (2000 − 1000)
   });
 
   it("diagnostics opted in: each engine rejection is logged once and recorded", () => {
@@ -583,19 +589,19 @@ describe("createGameSession — notification wiring (U4a, §8/§12)", () => {
       diagnostics: true,
       diagnosticsLog: log,
     });
-    session.submit({ type: "cashOut" });
-    session.submit({ type: "placeBet", amount: DEFAULT_BALANCE + 1 }); // dropped by submit: never rejected by the engine
+    session.submit({ type: "cashOut", slot: 0 });
+    session.submit({ type: "placeBet", slot: 0, amount: DEFAULT_BALANCE + 1 }); // dropped by submit: never rejected by the engine
     advanceFrames(session.engine, 1);
     expect(log).toHaveBeenCalledTimes(1);
     expect(session.notifications.get().rejections).toEqual([
-      { roundId: 1, command: { type: "cashOut" }, reason: "not-diving", at: 0 },
+      { roundId: 1, command: { type: "cashOut", slot: 0 }, reason: "not-diving", at: 0 },
     ]);
   });
 
   it("diagnostics default off in the factory: no log, no history", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { session } = makeHarness();
-    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut", slot: 0 });
     advanceFrames(session.engine, 1);
     expect(warn).not.toHaveBeenCalled();
     expect(session.notifications.get().rejections).toEqual([]);
@@ -639,7 +645,7 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
       phase: "idle",
       multiplier: 1,
       boost: 0,
-      participant: null,
+      participants: [null, null],
       chests: null,
     });
     expect(seeded.countdownSeconds.toFixed(1)).toBe("5.0"); // the shell's old initial state
@@ -652,11 +658,11 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     const seeded = session.round.get();
     const notify = vi.fn();
     session.round.subscribe(notify);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "diving"); // events fire; the round store has no listeners
     expect(session.round.get()).toBe(seeded);
     expect(notify).not.toHaveBeenCalled();
-    expect(session.wallet.get().participating).toBe(true); // settlement still ran
+    expect(slot0View(session.wallet.get()).participating).toBe(true); // settlement still ran
   });
 
   it("per frame, through a full jackpot round with a pick, the store equals the engine's public state; the ledger is unchanged", () => {
@@ -668,9 +674,9 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
       expect(session.round.get()).toEqual(session.engine.getPublicState());
       phases.add(session.round.get().phase);
     };
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clock, () => session.engine.state === "bonus", check);
-    expect(session.round.get().participant).toEqual({
+    expect(session.round.get().participants[0]).toEqual({
       betAmount: 10,
       cashedOut: true,
       cashedOutAt: 100,
@@ -679,11 +685,11 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     session.submit({ type: "pickChest", chestId: 1 });
     stepUntil(clock, () => session.round.get().chosenChestId !== null, check);
     expect(session.round.get().chosenChestId).toBe(1);
-    expect(session.wallet.get().balance).toBe(7490); // the U2 ledger: 1990 + (6500 − 1000)
+    expect(slot0View(session.wallet.get()).balance).toBe(7490); // the U2 ledger: 1990 + (6500 − 1000)
     stepUntil(clock, () => session.engine.state === "betting", check);
     expect([...phases]).toEqual(["idle", "diving", "cashed", "bonus"]);
-    expect(session.round.get().participant).toBeNull();
-    expect(session.wallet.get().history).toEqual([
+    expect(session.round.get().participants[0]).toBeNull();
+    expect(slot0View(session.wallet.get()).history).toEqual([
       { mult: 650, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -694,11 +700,11 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     const clock = frameClock();
     session.attachCanvas(canvas);
     const check = () => expect(session.round.get()).toEqual(session.engine.getPublicState());
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clock, () => session.engine.state === "crashed", check);
     expect(session.round.get()).toMatchObject({ phase: "crashed", multiplier: 2 });
     stepUntil(clock, () => session.engine.state === "betting", check);
-    expect(session.wallet.get().history).toEqual([{ mult: 2, crashed: true }]);
+    expect(slot0View(session.wallet.get()).history).toEqual([{ mult: 2, crashed: true }]);
   });
 
   it("quiet frames notify nobody: an unchanged engine frame keeps the stored snapshot by reference", () => {
@@ -727,18 +733,18 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     const { session, canvas } = makeHarness(NEVER_CRASH);
     const clock = frameClock();
     session.attachCanvas(canvas);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clock, () => session.engine.state === "diving");
     clock.step();
     const before = session.round.get();
-    expect(before.participant).not.toBeNull();
+    expect(before.participants[0]).not.toBeNull();
     const notify = vi.fn();
     session.round.subscribe(notify);
     clock.step(); // the multiplier moves; the participant does not
     const after = session.round.get();
     expect(after).not.toBe(before);
     expect(after.multiplier).not.toBe(before.multiplier);
-    expect(after.participant).toBe(before.participant);
+    expect(after.participants[0]).toBe(before.participants[0]);
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
@@ -746,26 +752,26 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     const { session, canvas } = makeHarness(NEVER_CRASH);
     const clock = frameClock();
     session.attachCanvas(canvas);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clock, () => session.engine.state === "diving");
     const diving = session.round.get();
-    const live = session.engine.getPublicState().participant!;
-    expect(diving.participant).not.toBe(live);
-    expect(Object.isFrozen(diving.participant)).toBe(true);
+    const live = session.engine.getPublicState().participants[0]!;
+    expect(diving.participants[0]).not.toBe(live);
+    expect(Object.isFrozen(diving.participants[0])).toBe(true);
 
     // At impact the engine flips cashedOut/bonusEligible IN PLACE on that
     // same live object; the snapshot taken during the dive must not change.
     stepUntil(clock, () => session.engine.state === "impact");
-    expect(session.engine.getPublicState().participant).toBe(live); // the engine's object is reused…
+    expect(session.engine.getPublicState().participants[0]).toBe(live); // the engine's object is reused…
     expect(live.bonusEligible).toBe(true);
-    expect(diving.participant).toEqual({
+    expect(diving.participants[0]).toEqual({
       betAmount: 10,
       cashedOut: false,
       cashedOutAt: null,
       bonusEligible: false,
     }); // …the old snapshot is untouched…
-    expect(session.round.get().participant).not.toBe(diving.participant); // …and the change was seen
-    expect(session.round.get().participant?.bonusEligible).toBe(true);
+    expect(session.round.get().participants[0]).not.toBe(diving.participants[0]); // …and the change was seen
+    expect(session.round.get().participants[0]?.bonusEligible).toBe(true);
   });
 
   it("chests: the engine never mutates its array in place, and the store holds a frozen copy anyway", () => {
@@ -776,7 +782,7 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
       revealed = chests;
     });
     session.attachCanvas(canvas);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clock, () => session.engine.state === "bonus");
     clock.step();
     const engineChests = session.engine.getPublicState().chests!;
@@ -812,7 +818,7 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     const { session, canvas } = makeHarness(NEVER_CRASH);
     const clock = frameClock();
     const detach = session.attachCanvas(canvas);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clock, () => session.engine.state === "diving");
     detach();
     const held = session.round.get();
@@ -838,14 +844,14 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     const { session, canvas } = makeHarness(NEVER_CRASH);
     const clock = frameClock();
     session.attachCanvas(canvas);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clock, () => session.engine.state === "bonus");
     expect(session.round.get().chosenChestId).toBeNull();
     stepUntil(clock, () => session.round.get().chosenChestId !== null);
     expect(session.round.get()).toMatchObject({ phase: "bonus", chosenChestId: 0 });
-    expect(session.wallet.get().balance).toBe(2990);
+    expect(slot0View(session.wallet.get()).balance).toBe(2990);
     stepUntil(clock, () => session.engine.state === "betting");
-    expect(session.wallet.get().history).toEqual([
+    expect(slot0View(session.wallet.get()).history).toEqual([
       { mult: 200, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -856,13 +862,13 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     const a = makeHarness(NEVER_CRASH);
     const clockA = frameClock();
     a.session.attachCanvas(a.canvas);
-    a.session.submit({ type: "placeBet", amount: 10 });
+    a.session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clockA, () => a.session.engine.state === "diving");
     for (let i = 0; i < 30; i++) clockA.step();
-    a.session.submit({ type: "cashOut" });
+    a.session.submit({ type: "cashOut", slot: 0 });
     stepUntil(clockA, () => a.session.engine.state === "bonus");
     expect(a.session.round.get().chests).not.toBeNull();
-    expect(a.session.round.get().participant).toMatchObject({
+    expect(a.session.round.get().participants[0]).toMatchObject({
       cashedOut: true,
       bonusEligible: false,
     });
@@ -870,7 +876,7 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
       clockA,
       () => a.session.engine.state === "betting",
       () => {
-        expect(a.session.round.get().participant?.bonusEligible ?? false).toBe(false);
+        expect(a.session.round.get().participants[0]?.bonusEligible ?? false).toBe(false);
         expect(a.session.round.get().chosenChestId).toBeNull();
       },
     );
@@ -880,7 +886,7 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
     const clockB = frameClock();
     b.session.attachCanvas(b.canvas);
     stepUntil(clockB, () => b.session.engine.state === "bonus");
-    expect(b.session.round.get().participant).toBeNull();
+    expect(b.session.round.get().participants[0]).toBeNull();
     stepUntil(
       clockB,
       () => b.session.engine.state === "betting",
@@ -896,7 +902,7 @@ describe("createGameSession — round store wiring (U4b, §8/§11)", () => {
 describe("createGameSession — bet-input ownership (U5, §8/§9)", () => {
   it("is constructed with the session at DEFAULT_BET; construction stays inert", () => {
     const { session, renderers } = makeHarness();
-    expect(session.betInput.get()).toBe(DEFAULT_BET);
+    expect(session.betInputs[0].get()).toBe(DEFAULT_BET);
     expect(DEFAULT_BET).toBe(5);
     expect(renderers).toHaveLength(0);
     expect(pending.size).toBe(0);
@@ -906,9 +912,9 @@ describe("createGameSession — bet-input ownership (U5, §8/§9)", () => {
   it("each session owns its own bet input (isolation)", () => {
     const a = makeHarness().session;
     const b = makeHarness().session;
-    expect(a.betInput).not.toBe(b.betInput);
-    a.betInput.set(100);
-    expect(b.betInput.get()).toBe(DEFAULT_BET);
+    expect(a.betInputs[0]).not.toBe(b.betInputs[0]);
+    a.betInputs[0].set(100);
+    expect(b.betInputs[0].get()).toBe(DEFAULT_BET);
   });
 
   it("is independent: a full round of engine events and frames never writes it, and its writes touch no other store", () => {
@@ -916,22 +922,22 @@ describe("createGameSession — bet-input ownership (U5, §8/§9)", () => {
     const clock = frameClock();
     session.attachCanvas(canvas);
     const notify = vi.fn();
-    session.betInput.subscribe(notify);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.betInputs[0].subscribe(notify);
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     stepUntil(clock, () => session.engine.state === "bonus");
     stepUntil(clock, () => session.engine.state === "betting");
     expect(notify).not.toHaveBeenCalled();
-    expect(session.betInput.get()).toBe(DEFAULT_BET);
+    expect(session.betInputs[0].get()).toBe(DEFAULT_BET);
 
-    const wallet = session.wallet.get();
+    const wallet = slot0View(session.wallet.get());
     const round = session.round.get();
     const notifications = session.notifications.get();
-    session.betInput.set(25);
-    session.betInput.halve();
-    session.betInput.double(wallet.balance);
-    session.betInput.input("");
+    session.betInputs[0].set(25);
+    session.betInputs[0].halve();
+    session.betInputs[0].double(wallet.balance);
+    session.betInputs[0].input("");
     expect(notify).toHaveBeenCalledTimes(4);
-    expect(session.wallet.get()).toBe(wallet);
+    expect(slot0View(session.wallet.get())).toBe(wallet);
     expect(session.round.get()).toBe(round);
     expect(session.notifications.get()).toBe(notifications);
   });
@@ -939,10 +945,10 @@ describe("createGameSession — bet-input ownership (U5, §8/§9)", () => {
   it("survives detach and re-attach (the remount path) unchanged", () => {
     const { session, canvas } = makeHarness();
     const detach = session.attachCanvas(canvas);
-    session.betInput.set(25);
+    session.betInputs[0].set(25);
     detach();
     session.attachCanvas(canvas);
-    expect(session.betInput.get()).toBe(25);
+    expect(session.betInputs[0].get()).toBe(25);
   });
 });
 
@@ -965,11 +971,11 @@ describe("createGameSession — M1 stake validity at the submit edge (M1-D1 to M
   it("every invalid stake is dropped before the engine: no betPlaced, no rejection, no debit, not participating", () => {
     const { session } = makeHarness();
     const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
-    for (const amount of INVALID) session.submit({ type: "placeBet", amount });
+    for (const amount of INVALID) session.submit({ type: "placeBet", slot: 0, amount });
     advanceFrames(session.engine, 1);
     expect(log).toEqual([]);
-    expect(session.engine.getPublicState().participant).toBeNull();
-    expect(session.wallet.get()).toMatchObject({
+    expect(session.engine.getPublicState().participants[0]).toBeNull();
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: DEFAULT_BALANCE,
       participating: false,
       roundBet: 0,
@@ -978,14 +984,14 @@ describe("createGameSession — M1 stake validity at the submit edge (M1-D1 to M
 
   it("the minimum 0.01 is forwarded and debits exactly one cent; a full round then settles", () => {
     const { session } = makeHarness(NEVER_CRASH);
-    session.submit({ type: "placeBet", amount: 0.01 });
+    session.submit({ type: "placeBet", slot: 0, amount: 0.01 });
     advanceFrames(session.engine, 1);
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: 999.99,
       roundBet: 0.01,
       participating: true,
     });
-    expect(session.engine.getPublicState().participant?.betAmount).toBe(0.01);
+    expect(session.engine.getPublicState().participants[0]?.betAmount).toBe(0.01);
   });
 
   it("I3: PLACE BET enabled ⇔ the session forwards the command, over the value matrix (cutoff excluded, D9)", () => {
@@ -995,10 +1001,10 @@ describe("createGameSession — M1 stake validity at the submit edge (M1-D1 to M
       const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
       const enabled = canPlaceBet(
         { phase: "idle", countdownSeconds: 3 },
-        session.wallet.get(),
+        slot0View(session.wallet.get()),
         amount,
       );
-      session.submit({ type: "placeBet", amount });
+      session.submit({ type: "placeBet", slot: 0, amount });
       advanceFrames(session.engine, 1);
       expect(log.length === 1 && log[0].name === "betPlaced", String(amount)).toBe(enabled);
     }
@@ -1009,39 +1015,39 @@ describe("createGameSession — submit edge after U5 (D7, D8, D9)", () => {
   it("D7: a non-finite placeBet is dropped at submit (before U5, NaN reached the engine as invalid-amount)", () => {
     const { session } = makeHarness();
     const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
-    session.submit({ type: "placeBet", amount: Number.NaN });
-    session.submit({ type: "placeBet", amount: Number.POSITIVE_INFINITY });
-    session.submit({ type: "placeBet", amount: Number.NEGATIVE_INFINITY });
+    session.submit({ type: "placeBet", slot: 0, amount: Number.NaN });
+    session.submit({ type: "placeBet", slot: 0, amount: Number.POSITIVE_INFINITY });
+    session.submit({ type: "placeBet", slot: 0, amount: Number.NEGATIVE_INFINITY });
     advanceFrames(session.engine, 1);
     expect(log).toEqual([]);
-    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
+    expect(slot0View(session.wallet.get()).balance).toBe(DEFAULT_BALANCE);
   });
 
   it("D8: two placeBet submits before the tick → one debit; the engine rejects the second as before", () => {
     const { session } = makeHarness();
     const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
-    session.submit({ type: "placeBet", amount: 10 });
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceFrames(session.engine, 1);
     expect(log.map((e) => e.name)).toEqual(["betPlaced", "commandRejected"]);
     expect((log[1].payload as { reason: string }).reason).toBe("already-participating");
-    expect(session.wallet.get()).toMatchObject({ balance: 990, roundBet: 10 });
+    expect(slot0View(session.wallet.get())).toMatchObject({ balance: 990, roundBet: 10 });
   });
 
   it("D8: two cashOut submits before the tick → one credit, one history entry", () => {
     const { session } = makeHarness(NEVER_CRASH);
     const log = recordEvents(session.engine, ["cashedOut", "commandRejected"]);
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceUntilState(session.engine, "diving");
     advanceFrames(session.engine, 30);
     const m = session.engine.getPublicState().multiplier;
-    session.submit({ type: "cashOut" });
-    session.submit({ type: "cashOut" });
+    session.submit({ type: "cashOut", slot: 0 });
+    session.submit({ type: "cashOut", slot: 0 });
     advanceFrames(session.engine, 1);
     expect(log.map((e) => e.name)).toEqual(["cashedOut", "commandRejected"]);
     expect((log[1].payload as { reason: string }).reason).toBe("already-cashed-out");
     const win = payoutOracle(10, m);
-    expect(session.wallet.get()).toMatchObject({
+    expect(slot0View(session.wallet.get())).toMatchObject({
       balance: +(990 + win).toFixed(2),
       history: [{ mult: m, crashed: false }],
     });
@@ -1052,10 +1058,10 @@ describe("createGameSession — submit edge after U5 (D7, D8, D9)", () => {
     const log = recordEvents(session.engine, ["betPlaced", "commandRejected"]);
     while (session.engine.getPublicState().countdownSeconds > 0.1) advanceFrames(session.engine, 1);
     expect(session.engine.state).toBe("betting");
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceFrames(session.engine, 1);
     expect(log.map((e) => e.name)).toEqual(["betPlaced"]);
-    expect(session.wallet.get().balance).toBe(990);
+    expect(slot0View(session.wallet.get()).balance).toBe(990);
   });
 });
 
@@ -1177,26 +1183,26 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
   const spectatorAt = (balance: SpectatorBalance, cellCrash: number): GameSession => {
     if (balance === 1000) return matrixSession([cellCrash]);
     const session = matrixSession([INSTANT_CRASH, cellCrash]);
-    session.submit({ type: "placeBet", amount: balance === 0.01 ? 999.99 : 1000 });
+    session.submit({ type: "placeBet", slot: 0, amount: balance === 0.01 ? 999.99 : 1000 });
     advanceUntilState(session.engine, "crashed");
     advanceUntilState(session.engine, "betting");
-    expect(session.wallet.get()).toMatchObject({ balance, participating: false });
+    expect(slot0View(session.wallet.get())).toMatchObject({ balance, participating: false });
     return session;
   };
 
   /** A participant whose bet `stake` was accepted on the first tick of round 1. */
   const participantIn = (stake: number, cellCrash: number): GameSession => {
     const session = matrixSession([cellCrash]);
-    session.submit({ type: "placeBet", amount: stake });
+    session.submit({ type: "placeBet", slot: 0, amount: stake });
     advanceFrames(session.engine, 1);
-    expect(session.wallet.get()).toMatchObject({ participating: true, roundBet: stake });
+    expect(slot0View(session.wallet.get())).toMatchObject({ participating: true, roundBet: stake });
     return session;
   };
 
   /** I8: engine participant ⇔ wallet participating, and the wallet's locked bet is the engine's betAmount. */
   const expectI8 = (session: GameSession, where: string) => {
-    const participant = session.engine.getPublicState().participant;
-    const w = session.wallet.get();
+    const participant = session.engine.getPublicState().participants[0];
+    const w = slot0View(session.wallet.get());
     expect(participant !== null, `${where} (I8)`).toBe(w.participating);
     if (participant) expect(w.roundBet, `${where} (I8)`).toBe(participant.betAmount);
   };
@@ -1204,13 +1210,13 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
   /** P4. */
   const expectP4 = (
     session: GameSession,
-    before: WalletState,
+    before: SingleSlotWalletView,
     v: number,
     accepted: boolean,
     where: string,
   ) => {
     expectI8(session, where);
-    const after = session.wallet.get();
+    const after = slot0View(session.wallet.get());
     if (accepted) {
       expect(centsOf(before.balance) - centsOf(after.balance), `${where} (P4 debit)`).toBe(
         centsOf(v),
@@ -1224,7 +1230,7 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
   /** C1/C2: one value on a fresh session (an acceptance changes the state). */
   const probeOne = (session: GameSession, v: number, d9Window: boolean, where: string) => {
     const { engine, wallet } = session;
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     const placeable = isPlaceableStake(v, before.balance);
     expect(wallet.canPlaceStake(v), `${where} (P1)`).toBe(placeable);
     const action = actionStateFor(engine.getPublicState(), before, v);
@@ -1233,7 +1239,7 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
     const placed: number[] = [];
     engine.events.on("betPlaced", ({ amount }) => placed.push(amount));
     const forwards = vi.spyOn(engine, "submit");
-    session.submit({ type: "placeBet", amount: v });
+    session.submit({ type: "placeBet", slot: 0, amount: v });
     const forwarded = forwards.mock.calls.length === 1;
     forwards.mockRestore();
     advanceFrames(engine, 1);
@@ -1256,7 +1262,7 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
     where: string,
   ) => {
     const { engine, wallet } = session;
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     const pub = engine.getPublicState();
     expect(actionStateFor(pub, before, DEFAULT_BET).kind, where).toBe(kind);
 
@@ -1269,7 +1275,7 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
       expect(wallet.canPlaceStake(v), `${at} (P1)`).toBe(placeable);
       const action = actionStateFor(pub, before, v);
       const calls = forwards.mock.calls.length;
-      session.submit({ type: "placeBet", amount: v });
+      session.submit({ type: "placeBet", slot: 0, amount: v });
       return {
         at,
         placeable,
@@ -1346,9 +1352,9 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
       const cashed = participantIn(stake, NEVER_CRASH);
       advanceUntilState(cashed.engine, "diving");
       advanceFrames(cashed.engine, 30);
-      cashed.submit({ type: "cashOut" });
+      cashed.submit({ type: "cashOut", slot: 0 });
       advanceFrames(cashed.engine, 1);
-      expect(cashed.wallet.get().hasCashed).toBe(true);
+      expect(slot0View(cashed.wallet.get()).hasCashed).toBe(true);
       probeBatch(cashed, "secured", `C5 stake=${stake}`);
     }
     for (const balance of SPECTATOR_BALANCES) {
@@ -1363,7 +1369,7 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
     for (const stake of STAKES) {
       const lost = participantIn(stake, INSTANT_CRASH);
       advanceUntilState(lost.engine, "crashed");
-      expect(lost.wallet.get()).toMatchObject({ participating: true, hasCashed: false });
+      expect(slot0View(lost.wallet.get())).toMatchObject({ participating: true, hasCashed: false });
       probeBatch(lost, "waiting", `C7 stake=${stake}`);
     }
     for (const balance of SPECTATOR_BALANCES) {
@@ -1377,8 +1383,11 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
     for (const stake of STAKES) {
       const jackpot = participantIn(stake, NEVER_CRASH);
       advanceUntilState(jackpot.engine, "impact");
-      expect(jackpot.engine.getPublicState().participant?.bonusEligible).toBe(true);
-      expect(jackpot.wallet.get()).toMatchObject({ hasCashed: true, settledBy: "jackpot" });
+      expect(jackpot.engine.getPublicState().participants[0]?.bonusEligible).toBe(true);
+      expect(slot0View(jackpot.wallet.get())).toMatchObject({
+        hasCashed: true,
+        settledBy: "jackpot",
+      });
       probeBatch(jackpot, "waiting", `C9 stake=${stake}`);
     }
     for (const balance of SPECTATOR_BALANCES) {
@@ -1392,7 +1401,7 @@ describe("createGameSession — Button ⇔ submit matrix (MT-01, owner D1; §23.
     for (const stake of STAKES) {
       const eligible = participantIn(stake, NEVER_CRASH);
       advanceUntilState(eligible.engine, "bonus");
-      expect(eligible.engine.getPublicState().participant?.bonusEligible).toBe(true);
+      expect(eligible.engine.getPublicState().participants[0]?.bonusEligible).toBe(true);
       probeBatch(eligible, "waiting", `C11 stake=${stake}`);
     }
     for (const balance of SPECTATOR_BALANCES) {

@@ -133,7 +133,7 @@ describe("round state machine — §5 transition table on the simulation clock (
 
   it("jackpot path: sea floor → impact (84 ticks) → bonus (E-X1 pick window) → pick → result → betting", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
-    h.engine.submit({ type: "placeBet", amount: 10 }); // E-X1: only an auto-cashed participant may pick
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 10 }); // E-X1: only an auto-cashed participant may pick
     advanceTicks(h.engine, BETTING_TICKS); // bet applied; → diving
 
     advanceUntil(h.engine, 5000, () => h.engine.state !== "diving");
@@ -196,20 +196,20 @@ describe("round state machine — §5 transition table on the simulation clock (
 describe("command queue — §13 validation at the applying tick (D4, §18 ring 1)", () => {
   it("accepts one placeBet per round while betting; rejects the rest", () => {
     const h = makeHarness();
-    h.engine.submit({ type: "placeBet", amount: 25 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 25 });
     advanceTicks(h.engine, 1);
     expect(h.log.filter((e) => e.name === "betPlaced")).toEqual([
-      { name: "betPlaced", payload: { roundId: 1, amount: 25 } },
+      { name: "betPlaced", payload: { roundId: 1, slot: 0, amount: 25 } },
     ]);
 
-    h.engine.submit({ type: "placeBet", amount: 10 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceTicks(h.engine, 1);
     expect(h.log.filter((e) => e.name === "commandRejected")).toEqual([
       {
         name: "commandRejected",
         payload: {
           roundId: 1,
-          command: { type: "placeBet", amount: 10 },
+          command: { type: "placeBet", slot: 0, amount: 10 },
           reason: "already-participating",
         },
       },
@@ -218,33 +218,45 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
 
   it("rejects invalid bet amounts (E-X2: sub-cent, non-finite, zero) and bets outside the betting window", () => {
     const h = makeHarness();
-    h.engine.submit({ type: "placeBet", amount: 0 });
-    h.engine.submit({ type: "placeBet", amount: 0.005 });
-    h.engine.submit({ type: "placeBet", amount: 0.123 });
-    h.engine.submit({ type: "placeBet", amount: NaN });
-    h.engine.submit({ type: "placeBet", amount: Infinity });
-    h.engine.submit({ type: "placeBet", amount: -1 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 0 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 0.005 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 0.123 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: NaN });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: Infinity });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: -1 });
     advanceTicks(h.engine, 1);
     advanceTicks(h.engine, BETTING_TICKS);
     expect(h.engine.state).toBe("diving");
-    h.engine.submit({ type: "placeBet", amount: 5 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 5 });
     advanceTicks(h.engine, 1);
     const rejections = h.log.filter((e) => e.name === "commandRejected").map((e) => e.payload);
     expect(rejections).toEqual([
-      { roundId: 1, command: { type: "placeBet", amount: 0 }, reason: "invalid-amount" },
-      { roundId: 1, command: { type: "placeBet", amount: 0.005 }, reason: "invalid-amount" },
-      { roundId: 1, command: { type: "placeBet", amount: 0.123 }, reason: "invalid-amount" },
-      { roundId: 1, command: { type: "placeBet", amount: NaN }, reason: "invalid-amount" },
-      { roundId: 1, command: { type: "placeBet", amount: Infinity }, reason: "invalid-amount" },
-      { roundId: 1, command: { type: "placeBet", amount: -1 }, reason: "invalid-amount" },
-      { roundId: 1, command: { type: "placeBet", amount: 5 }, reason: "not-in-betting" },
+      { roundId: 1, command: { type: "placeBet", slot: 0, amount: 0 }, reason: "invalid-amount" },
+      {
+        roundId: 1,
+        command: { type: "placeBet", slot: 0, amount: 0.005 },
+        reason: "invalid-amount",
+      },
+      {
+        roundId: 1,
+        command: { type: "placeBet", slot: 0, amount: 0.123 },
+        reason: "invalid-amount",
+      },
+      { roundId: 1, command: { type: "placeBet", slot: 0, amount: NaN }, reason: "invalid-amount" },
+      {
+        roundId: 1,
+        command: { type: "placeBet", slot: 0, amount: Infinity },
+        reason: "invalid-amount",
+      },
+      { roundId: 1, command: { type: "placeBet", slot: 0, amount: -1 }, reason: "invalid-amount" },
+      { roundId: 1, command: { type: "placeBet", slot: 0, amount: 5 }, reason: "not-in-betting" },
     ]);
     expect(h.log.filter((e) => e.name === "betPlaced")).toEqual([]);
   });
 
   it("cashOut uses the tick-authoritative multiplier from the last completed tick (D4)", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
-    h.engine.submit({ type: "placeBet", amount: 25 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 25 });
     advanceTicks(h.engine, BETTING_TICKS); // consumes the bet tick + reaches diving
     expect(h.engine.state).toBe("diving");
 
@@ -252,7 +264,7 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
     const tickAuthoritative = multiplierAt(10 * TICK_SECONDS);
     expect(h.engine.getPublicState().multiplier).toBeCloseTo(tickAuthoritative, 12);
 
-    h.engine.submit({ type: "cashOut" });
+    h.engine.submit({ type: "cashOut", slot: 0 });
     advanceTicks(h.engine, 1);
     const cashedOut = h.log.filter((e) => e.name === "cashedOut");
     expect(cashedOut).toHaveLength(1);
@@ -268,11 +280,11 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
 
   it("rejects cashOut when not diving, not participating, or already cashed out", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
-    h.engine.submit({ type: "cashOut" }); // still betting
+    h.engine.submit({ type: "cashOut", slot: 0 }); // still betting
     advanceTicks(h.engine, 1);
 
     advanceTicks(h.engine, BETTING_TICKS - 1); // → diving, no bet placed
-    h.engine.submit({ type: "cashOut" });
+    h.engine.submit({ type: "cashOut", slot: 0 });
     advanceTicks(h.engine, 1);
 
     const reasons = () =>
@@ -285,23 +297,23 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
 
   it("applies queued commands in submit order within one boundary: second cashOut rejected", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
-    h.engine.submit({ type: "placeBet", amount: 25 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 25 });
     advanceTicks(h.engine, BETTING_TICKS);
     advanceTicks(h.engine, 5);
 
-    h.engine.submit({ type: "cashOut" });
-    h.engine.submit({ type: "cashOut" }); // double-click inside one tick
+    h.engine.submit({ type: "cashOut", slot: 0 });
+    h.engine.submit({ type: "cashOut", slot: 0 }); // double-click inside one tick
     advanceTicks(h.engine, 1);
     expect(h.log.filter((e) => e.name === "cashedOut")).toHaveLength(1);
     expect(h.log.filter((e) => e.name === "commandRejected").map((e) => e.payload)).toEqual([
-      { roundId: 1, command: { type: "cashOut" }, reason: "already-cashed-out" },
+      { roundId: 1, command: { type: "cashOut", slot: 0 }, reason: "already-cashed-out" },
     ]);
   });
 
   it("rejects invalid pickChest commands and reports them without state change", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
     h.engine.submit({ type: "pickChest", chestId: 0 }); // still in betting
-    h.engine.submit({ type: "placeBet", amount: 10 }); // E-X1: participate so the bonus pick is eligible
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 10 }); // E-X1: participate so the bonus pick is eligible
     advanceTicks(h.engine, 1);
     expect(h.engine.state).toBe("betting");
     expect(h.log.filter((e) => e.name === "commandRejected")).toEqual([
@@ -340,15 +352,15 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
     // introduce a different amount is rejected, and the locked value rides
     // unchanged into the dive — the settlement layer's only valid basis.
     const h = makeHarness({ crashPoint: NEVER_CRASH });
-    h.engine.submit({ type: "placeBet", amount: 5 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 5 });
     advanceTicks(h.engine, 1);
-    expect(h.engine.getPublicState().participant?.betAmount).toBe(5);
+    expect(h.engine.getPublicState().participants[0]?.betAmount).toBe(5);
 
-    h.engine.submit({ type: "placeBet", amount: 100 }); // "raised the input" while locked
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 100 }); // "raised the input" while locked
     advanceTicks(h.engine, 1);
     advanceTicks(h.engine, BETTING_TICKS - 2); // → diving
     expect(h.engine.state).toBe("diving");
-    h.engine.submit({ type: "placeBet", amount: 100 }); // and again mid-dive
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 100 }); // and again mid-dive
     advanceTicks(h.engine, 1);
 
     expect(
@@ -356,7 +368,7 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
         .filter((e) => e.name === "commandRejected")
         .map((e) => (e.payload as { reason: string }).reason),
     ).toEqual(["already-participating", "not-in-betting"]);
-    expect(h.engine.getPublicState().participant?.betAmount).toBe(5); // still the debited amount
+    expect(h.engine.getPublicState().participants[0]?.betAmount).toBe(5); // still the debited amount
   });
 
   it("bet basis lock (bug fix): settlement is derivable from event payloads alone — debit and win share one basis", () => {
@@ -375,11 +387,11 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
       balance = +(balance + +(roundBet * multiplier).toFixed(2)).toFixed(2);
     });
 
-    h.engine.submit({ type: "placeBet", amount: 5 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 5 });
     advanceTicks(h.engine, BETTING_TICKS); // bet applied; → diving
     advanceTicks(h.engine, 10);
     const m = h.engine.getPublicState().multiplier; // tick-authoritative cashout value (D4)
-    h.engine.submit({ type: "cashOut" });
+    h.engine.submit({ type: "cashOut", slot: 0 });
     advanceTicks(h.engine, 1);
 
     const expected = +(+(1000 - 5).toFixed(2) + +(5 * m).toFixed(2)).toFixed(2);
@@ -388,17 +400,17 @@ describe("command queue — §13 validation at the applying tick (D4, §18 ring 
 
   it("clears the participant at entry(betting): a new bet is accepted next round", () => {
     const h = makeHarness({ crashPoint: 1 });
-    h.engine.submit({ type: "placeBet", amount: 25 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 25 });
     advanceTicks(h.engine, BETTING_TICKS); // bet applied; → diving
     advanceTicks(h.engine, 1); // first diving tick crashes (crashAt = 1)
     advanceTicks(h.engine, CRASH_BANNER_TICKS); // → betting (round 2)
     expect(h.engine.state).toBe("betting");
 
-    h.engine.submit({ type: "placeBet", amount: 50 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 50 });
     advanceTicks(h.engine, 1);
     expect(h.log.filter((e) => e.name === "betPlaced").map((e) => e.payload)).toEqual([
-      { roundId: 1, amount: 25 },
-      { roundId: 2, amount: 50 },
+      { roundId: 1, slot: 0, amount: 25 },
+      { roundId: 2, slot: 0, amount: 50 },
     ]);
   });
 });
@@ -422,11 +434,11 @@ describe("E-X1 — bonus eligibility and deterministic completion", () => {
 
   /** Run one round from the betting window to entry(bonus). */
   function toBonus(h: Harness, opts: { bet?: number; cashOutAfterTicks?: number } = {}) {
-    if (opts.bet !== undefined) h.engine.submit({ type: "placeBet", amount: opts.bet });
+    if (opts.bet !== undefined) h.engine.submit({ type: "placeBet", slot: 0, amount: opts.bet });
     advanceUntil(h.engine, 1000, () => h.engine.state === "diving");
     if (opts.cashOutAfterTicks !== undefined) {
       advanceTicks(h.engine, opts.cashOutAfterTicks);
-      h.engine.submit({ type: "cashOut" });
+      h.engine.submit({ type: "cashOut", slot: 0 });
     }
     advanceUntil(h.engine, 5000, () => h.engine.state === "impact");
     advanceTicks(h.engine, IMPACT_TICKS);
@@ -440,7 +452,7 @@ describe("E-X1 — bonus eligibility and deterministic completion", () => {
   it("eligible: jackpot auto-cash marks the participant eligible; a manual pick in the window applies", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
     toBonus(h, { bet: 10 });
-    expect(h.engine.getPublicState().participant).toEqual({
+    expect(h.engine.getPublicState().participants[0]).toEqual({
       betAmount: 10,
       cashedOut: true,
       cashedOutAt: 120,
@@ -488,7 +500,7 @@ describe("E-X1 — bonus eligibility and deterministic completion", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
     toBonus(h, { bet: 10, cashOutAfterTicks: 30 });
     expect(h.log.filter((e) => e.name === "cashedOut")).toHaveLength(1);
-    expect(h.engine.getPublicState().participant?.bonusEligible).toBe(false);
+    expect(h.engine.getPublicState().participants[0]?.bonusEligible).toBe(false);
     expect(h.log.filter((e) => e.name === "chestsRevealed")).toHaveLength(1); // round data still revealed
 
     h.engine.submit({ type: "pickChest", chestId: 2 });
@@ -512,7 +524,7 @@ describe("E-X1 — bonus eligibility and deterministic completion", () => {
   it("spectator: no participant, pick rejected, no chestPicked, bonus completes after exactly 132 ticks", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
     toBonus(h);
-    expect(h.engine.getPublicState().participant).toBeNull();
+    expect(h.engine.getPublicState().participants[0]).toBeNull();
     h.engine.submit({ type: "pickChest", chestId: 0 });
     advanceTicks(h.engine, CHEST_RESULT_TICKS - 1);
     expect(h.engine.state).toBe("bonus");
@@ -547,10 +559,10 @@ describe("E-X1 — bonus eligibility and deterministic completion", () => {
     advanceTicks(h.engine, PICK_WINDOW_TICKS);
     finish();
     toBonus(h); // round 2: spectator
-    expect(h.engine.getPublicState().participant).toBeNull();
+    expect(h.engine.getPublicState().participants[0]).toBeNull();
     finish();
     toBonus(h, { bet: 10, cashOutAfterTicks: 30 }); // round 3: manual cashout
-    expect(h.engine.getPublicState().participant?.bonusEligible).toBe(false);
+    expect(h.engine.getPublicState().participants[0]?.bonusEligible).toBe(false);
     finish();
     toBonus(h, { bet: 10 }); // round 4: eligible, manual pick
     expect(h.engine.getPublicState().chosenChestId).toBeNull(); // reset at entry(diving)
@@ -577,24 +589,26 @@ describe("E-X2 — valid-stake enforcement in applyPlaceBet", () => {
   it("accepts whole-cent stakes: 0.01, 0.07, 0.29, 1, 5, 100", () => {
     for (const amount of [0.01, 0.07, 0.29, 1, 5, 100]) {
       const h = makeHarness();
-      h.engine.submit({ type: "placeBet", amount });
+      h.engine.submit({ type: "placeBet", slot: 0, amount });
       advanceTicks(h.engine, 1);
       expect(
         h.log.filter((e) => e.name === "betPlaced"),
         `accepted ${amount}`,
-      ).toEqual([{ name: "betPlaced", payload: { roundId: 1, amount } }]);
+      ).toEqual([{ name: "betPlaced", payload: { roundId: 1, slot: 0, amount } }]);
     }
   });
 
   it("rejects sub-cent amounts: 0.001, 0.004, 0.005, 0.009, 1.005, 0.123, 999.999", () => {
     for (const amount of [0.001, 0.004, 0.005, 0.009, 1.005, 0.123, 999.999]) {
       const h = makeHarness();
-      h.engine.submit({ type: "placeBet", amount });
+      h.engine.submit({ type: "placeBet", slot: 0, amount });
       advanceTicks(h.engine, 1);
       expect(
         h.log.filter((e) => e.name === "commandRejected").map((e) => e.payload),
         `rejected ${amount}`,
-      ).toEqual([{ roundId: 1, command: { type: "placeBet", amount }, reason: "invalid-amount" }]);
+      ).toEqual([
+        { roundId: 1, command: { type: "placeBet", slot: 0, amount }, reason: "invalid-amount" },
+      ]);
       expect(
         h.log.filter((e) => e.name === "betPlaced"),
         `no bet for ${amount}`,
@@ -605,18 +619,18 @@ describe("E-X2 — valid-stake enforcement in applyPlaceBet", () => {
   it("a rejected invalid stake consumes no RNG, leaves no participant, and a later valid bet works normally", () => {
     const h = makeHarness({ crashPoint: NEVER_CRASH });
     for (const amount of [0.005, NaN, Infinity, -0.01]) {
-      h.engine.submit({ type: "placeBet", amount });
+      h.engine.submit({ type: "placeBet", slot: 0, amount });
     }
     advanceTicks(h.engine, 1);
-    expect(h.engine.getPublicState().participant).toBeNull();
-    h.engine.submit({ type: "placeBet", amount: 5 });
+    expect(h.engine.getPublicState().participants[0]).toBeNull();
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 5 });
     advanceTicks(h.engine, 1);
-    expect(h.engine.getPublicState().participant?.betAmount).toBe(5);
+    expect(h.engine.getPublicState().participants[0]?.betAmount).toBe(5);
     const snap = h.engine.snapshot();
     // Compare with a clean run where no invalid stakes were submitted.
     const clean = makeHarness({ crashPoint: NEVER_CRASH });
     advanceTicks(clean.engine, 1); // advance past the tick where invalid commands would have applied
-    clean.engine.submit({ type: "placeBet", amount: 5 });
+    clean.engine.submit({ type: "placeBet", slot: 0, amount: 5 });
     advanceTicks(clean.engine, 1);
     expect(clean.engine.snapshot()).toEqual(snap);
   });
@@ -625,11 +639,11 @@ describe("E-X2 — valid-stake enforcement in applyPlaceBet", () => {
     const run = (withInvalid: boolean) => {
       const h = makeHarness({ crashPoint: NEVER_CRASH });
       if (withInvalid) {
-        h.engine.submit({ type: "placeBet", amount: 0.005 });
-        h.engine.submit({ type: "placeBet", amount: 0.123 });
-        h.engine.submit({ type: "placeBet", amount: NaN });
+        h.engine.submit({ type: "placeBet", slot: 0, amount: 0.005 });
+        h.engine.submit({ type: "placeBet", slot: 0, amount: 0.123 });
+        h.engine.submit({ type: "placeBet", slot: 0, amount: NaN });
       }
-      h.engine.submit({ type: "placeBet", amount: 10 });
+      h.engine.submit({ type: "placeBet", slot: 0, amount: 10 });
       advanceTicks(h.engine, BETTING_TICKS);
       advanceTicks(h.engine, 100);
       return h.engine.snapshot();
@@ -639,14 +653,169 @@ describe("E-X2 — valid-stake enforcement in applyPlaceBet", () => {
 
   it("same-tick ordering: an invalid bet then a valid bet in the same command batch — the valid one wins", () => {
     const h = makeHarness();
-    h.engine.submit({ type: "placeBet", amount: 0.005 });
-    h.engine.submit({ type: "placeBet", amount: 10 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 0.005 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceTicks(h.engine, 1);
     expect(h.log.filter((e) => e.name === "betPlaced")).toEqual([
-      { name: "betPlaced", payload: { roundId: 1, amount: 10 } },
+      { name: "betPlaced", payload: { roundId: 1, slot: 0, amount: 10 } },
     ]);
     expect(h.log.filter((e) => e.name === "commandRejected").map((e) => e.payload)).toEqual([
-      { roundId: 1, command: { type: "placeBet", amount: 0.005 }, reason: "invalid-amount" },
+      {
+        roundId: 1,
+        command: { type: "placeBet", slot: 0, amount: 0.005 },
+        reason: "invalid-amount",
+      },
     ]);
+  });
+});
+
+// E-X3 (Dual Bet, owner-approved engine freeze exception 2026-11-14): two
+// independent bet slots per round; mandatory slot on placeBet / cashOut; one
+// chest pick per round, offered while any slot is eligible.
+describe("E-X3 — dual bet slots", () => {
+  type Harness = ReturnType<typeof makeHarness>;
+  const named = <K extends keyof EngineEventMap>(h: Harness, name: K) =>
+    h.log.filter((e) => e.name === name).map((e) => e.payload as EngineEventMap[K]);
+
+  it("accepts one bet per slot in the same round; each slot is locked independently", () => {
+    const h = makeHarness();
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 5 });
+    h.engine.submit({ type: "placeBet", slot: 1, amount: 7.25 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 9 }); // slot 0 already placed
+    h.engine.submit({ type: "placeBet", slot: 1, amount: 9 }); // slot 1 already placed
+    advanceTicks(h.engine, 1);
+    expect(named(h, "betPlaced")).toEqual([
+      { roundId: 1, slot: 0, amount: 5 },
+      { roundId: 1, slot: 1, amount: 7.25 },
+    ]);
+    expect(named(h, "commandRejected").map((r) => r.reason)).toEqual([
+      "already-participating",
+      "already-participating",
+    ]);
+    const [p0, p1] = h.engine.getPublicState().participants;
+    expect(p0?.betAmount).toBe(5);
+    expect(p1?.betAmount).toBe(7.25);
+  });
+
+  it("slot 1 alone is a full participation; slot 0 stays empty", () => {
+    const h = makeHarness();
+    h.engine.submit({ type: "placeBet", slot: 1, amount: 3 });
+    advanceTicks(h.engine, 1);
+    expect(h.engine.getPublicState().participants).toEqual([
+      null,
+      { betAmount: 3, cashedOut: false, cashedOutAt: null, bonusEligible: false },
+    ]);
+  });
+
+  it("rejects a missing or invalid slot on placeBet and cashOut, consuming nothing", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    for (const slot of [undefined, 2, -1, 0.5, "0", null]) {
+      h.engine.submit({ type: "placeBet", slot, amount: 5 } as never);
+    }
+    advanceTicks(h.engine, 1);
+    expect(named(h, "betPlaced")).toEqual([]);
+    expect(h.engine.getPublicState().participants).toEqual([null, null]);
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 5 });
+    advanceUntil(h.engine, 1000, () => h.engine.state === "diving");
+    h.engine.submit({ type: "cashOut", slot: 2 } as never);
+    h.engine.submit({ type: "cashOut" } as never);
+    advanceTicks(h.engine, 1);
+    expect(named(h, "cashedOut")).toEqual([]);
+    expect(
+      named(h, "commandRejected")
+        .map((r) => r.reason)
+        .filter((r) => r === "invalid-slot"),
+    ).toHaveLength(8);
+    expect(h.engine.getPublicState().participants[0]?.cashedOut).toBe(false);
+  });
+
+  it("cashes out each slot independently at its own tick's multiplier; a slot without a bet is not participating", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 10 });
+    h.engine.submit({ type: "placeBet", slot: 1, amount: 20 });
+    advanceUntil(h.engine, 1000, () => h.engine.state === "diving");
+    advanceTicks(h.engine, 30);
+    h.engine.submit({ type: "cashOut", slot: 1 });
+    advanceTicks(h.engine, 61);
+    h.engine.submit({ type: "cashOut", slot: 0 });
+    h.engine.submit({ type: "cashOut", slot: 1 }); // already cashed
+    advanceTicks(h.engine, 1);
+    const cashed = named(h, "cashedOut");
+    expect(cashed.map((c) => c.slot)).toEqual([1, 0]);
+    expect(cashed[0].multiplier).toBeLessThan(cashed[1].multiplier);
+    expect(named(h, "commandRejected").map((r) => r.reason)).toEqual(["already-cashed-out"]);
+    const [p0, p1] = h.engine.getPublicState().participants;
+    expect(p0).toMatchObject({ cashedOut: true, cashedOutAt: cashed[1].multiplier });
+    expect(p1).toMatchObject({ cashedOut: true, cashedOutAt: cashed[0].multiplier });
+
+    const g = makeHarness({ crashPoint: NEVER_CRASH });
+    g.engine.submit({ type: "placeBet", slot: 0, amount: 10 });
+    advanceUntil(g.engine, 1000, () => g.engine.state === "diving");
+    g.engine.submit({ type: "cashOut", slot: 1 });
+    advanceTicks(g.engine, 1);
+    expect(named(g, "commandRejected").map((r) => r.reason)).toEqual(["not-participating"]);
+  });
+
+  it("at the sea floor only the slots still riding are auto-cashed and bonus-eligible; ONE pick applies; both clear at betting", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 10 });
+    h.engine.submit({ type: "placeBet", slot: 1, amount: 20 });
+    advanceUntil(h.engine, 1000, () => h.engine.state === "diving");
+    advanceTicks(h.engine, 10);
+    h.engine.submit({ type: "cashOut", slot: 0 }); // slot 0 manual, slot 1 rides
+    advanceUntil(h.engine, 5000, () => h.engine.state === "impact");
+    const [p0, p1] = h.engine.getPublicState().participants;
+    expect(p0?.bonusEligible).toBe(false);
+    expect(p1).toMatchObject({ cashedOut: true, cashedOutAt: 120, bonusEligible: true });
+    advanceTicks(h.engine, IMPACT_TICKS);
+    expect(h.engine.state).toBe("bonus");
+    h.engine.submit({ type: "pickChest", chestId: 1 });
+    h.engine.submit({ type: "pickChest", chestId: 2 });
+    advanceTicks(h.engine, 1);
+    expect(named(h, "chestPicked")).toEqual([
+      { roundId: 1, chestId: 1, chestMultiplier: 6.5, finalMultiplier: 780 },
+    ]);
+    expect(named(h, "commandRejected").map((r) => r.reason)).toEqual(["chest-already-picked"]);
+    advanceTicks(h.engine, CHEST_RESULT_TICKS);
+    expect(h.engine.state).toBe("betting");
+    expect(h.engine.getPublicState().participants).toEqual([null, null]);
+  });
+
+  it("both slots riding to the sea floor are both eligible; with every slot cashed out no pick is offered", () => {
+    const h = makeHarness({ crashPoint: NEVER_CRASH });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 1 });
+    h.engine.submit({ type: "placeBet", slot: 1, amount: 2 });
+    advanceUntil(h.engine, 5000, () => h.engine.state === "impact");
+    expect(h.engine.getPublicState().participants.map((p) => p?.bonusEligible)).toEqual([
+      true,
+      true,
+    ]);
+
+    const g = makeHarness({ crashPoint: NEVER_CRASH });
+    g.engine.submit({ type: "placeBet", slot: 0, amount: 1 });
+    g.engine.submit({ type: "placeBet", slot: 1, amount: 2 });
+    advanceUntil(g.engine, 1000, () => g.engine.state === "diving");
+    g.engine.submit({ type: "cashOut", slot: 0 });
+    g.engine.submit({ type: "cashOut", slot: 1 });
+    advanceUntil(g.engine, 5000, () => g.engine.state === "impact");
+    advanceTicks(g.engine, IMPACT_TICKS);
+    g.engine.submit({ type: "pickChest", chestId: 0 });
+    advanceTicks(g.engine, 1);
+    expect(named(g, "chestPicked")).toEqual([]);
+    expect(named(g, "commandRejected").map((r) => r.reason)).toEqual(["not-bonus-eligible"]);
+  });
+
+  it("a crash loses every slot still riding; a cashed slot keeps its cashout", () => {
+    const h = makeHarness({ crashPoint: 2.5 });
+    h.engine.submit({ type: "placeBet", slot: 0, amount: 1 });
+    h.engine.submit({ type: "placeBet", slot: 1, amount: 2 });
+    advanceUntil(h.engine, 1000, () => h.engine.state === "diving");
+    advanceTicks(h.engine, 5);
+    h.engine.submit({ type: "cashOut", slot: 1 });
+    advanceUntil(h.engine, 5000, () => h.engine.state === "crashed");
+    expect(named(h, "cashedOut").map((c) => c.slot)).toEqual([1]);
+    const [p0, p1] = h.engine.getPublicState().participants;
+    expect(p0?.cashedOut).toBe(false);
+    expect(p1?.cashedOut).toBe(true);
   });
 });

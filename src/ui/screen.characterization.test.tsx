@@ -16,14 +16,22 @@
 import { describe, expect, it } from "vitest";
 import { screen, within } from "@testing-library/react";
 import { CASH_FLASH_MS } from "@/game/config";
-import { bootScreen, outline } from "@/ui/test/dom-harness";
+import {
+  bootScreen,
+  outline,
+  slotButton,
+  querySlotButton,
+  slotBetInput,
+  slotPanel,
+} from "@/ui/test/dom-harness";
 import { payoutOracle } from "@/ui/test/money-oracle";
+import { slot0View } from "@/ui/test/wallet-view";
 
 const FRAMES_PER_SECOND = 60;
 
-const button = (name: string | RegExp) => screen.getByRole("button", { name });
-const queryButton = (name: string | RegExp) => screen.queryByRole("button", { name });
-const betInput = () => screen.getByRole("spinbutton") as HTMLInputElement;
+const button = (name: string | RegExp) => slotButton(name);
+const queryButton = (name: string | RegExp) => querySlotButton(name);
+const betInput = () => slotBetInput();
 /** The balance pill's value ("Balance" label + amount). */
 const balanceText = () => screen.getByText("Balance").nextSibling?.textContent;
 /** The bet-controls row: −, the bet input, +. */
@@ -53,6 +61,19 @@ describe("betting phase", () => {
         "Next dive in",
         "5.0",
         "s",
+        "BET 1",
+        "[button] −",
+        "Bet ·",
+        "chain",
+        "[input number] 5",
+        "[button] +",
+        "[button] 1",
+        "[button] 5",
+        "[button] 10",
+        "[button] 25",
+        "[button] 100",
+        "[button] PLACE BET · 5.0s",
+        "BET 2",
         "[button] −",
         "Bet ·",
         "chain",
@@ -84,11 +105,11 @@ describe("betting phase", () => {
     const h = await bootScreen();
     h.mount();
     expect(betInput().value).toBe("5");
-    expect(screen.getByText(/^Bet ·/).textContent).toBe("Bet · chain");
+    expect(within(slotPanel(0)).getByText(/^Bet ·/).textContent).toBe("Bet · chain");
 
     await h.user.click(button("−"));
     expect(betInput().value).toBe("2.5");
-    expect(screen.getByText(/^Bet ·/).textContent).toBe("Bet · rope");
+    expect(within(slotPanel(0)).getByText(/^Bet ·/).textContent).toBe("Bet · rope");
 
     await h.user.click(button("−"));
     expect(betInput().value).toBe("1.25");
@@ -106,7 +127,7 @@ describe("betting phase", () => {
     await h.user.click(button("100"));
     await h.user.click(button("+"));
     expect(betInput().value).toBe("200");
-    expect(screen.getByText(/^Bet ·/).textContent).toBe("Bet · heavy");
+    expect(within(slotPanel(0)).getByText(/^Bet ·/).textContent).toBe("Bet · heavy");
     await h.user.click(button("+"));
     await h.user.click(button("+"));
     expect(betInput().value).toBe("800");
@@ -126,7 +147,7 @@ describe("betting phase", () => {
     ] as const) {
       await h.user.click(button(label));
       expect(betInput().value).toBe(label);
-      expect(screen.getByText(/^Bet ·/).textContent).toBe(`Bet · ${tier}`);
+      expect(within(slotPanel(0)).getByText(/^Bet ·/).textContent).toBe(`Bet · ${tier}`);
     }
   });
 
@@ -154,7 +175,7 @@ describe("betting phase", () => {
     h.mount();
     await h.user.clear(betInput());
     expect(betInput().value).toBe("0");
-    expect(screen.getByText(/^Bet ·/).textContent).toBe("Bet · rope");
+    expect(within(slotPanel(0)).getByText(/^Bet ·/).textContent).toBe("Bet · rope");
     expect(button("PLACE BET · 5.0s").hasAttribute("disabled")).toBe(true);
   });
 
@@ -200,6 +221,7 @@ describe("betting phase", () => {
         "Next dive in",
         "5.0",
         "s",
+        "BET 1",
         "[button] −",
         "Bet ·",
         "chain",
@@ -211,6 +233,18 @@ describe("betting phase", () => {
         "[button] 25",
         "[button] 100",
         "[button disabled] BET LOCKED · DIVE IN 5.0s",
+        "BET 2",
+        "[button] −",
+        "Bet ·",
+        "chain",
+        "[input number] 5",
+        "[button] +",
+        "[button] 1",
+        "[button] 5",
+        "[button] 10",
+        "[button] 25",
+        "[button] 100",
+        "[button] PLACE BET · 5.0s",
       ]
     `);
   });
@@ -246,6 +280,7 @@ describe("dive phase", () => {
         "1.04×",
         "Potential",
         "10.43",
+        "BET 1",
         "[button disabled] −",
         "Bet ·",
         "chain",
@@ -257,6 +292,18 @@ describe("dive phase", () => {
         "[button disabled] 25",
         "[button disabled] 100",
         "[button] CASH OUT · 10.43",
+        "BET 2",
+        "[button disabled] −",
+        "Bet ·",
+        "chain",
+        "[input number disabled] 5",
+        "[button disabled] +",
+        "[button disabled] 1",
+        "[button disabled] 5",
+        "[button disabled] 10",
+        "[button disabled] 25",
+        "[button disabled] 100",
+        "[button disabled] SPECTATING · NEXT ROUND SOON",
       ]
     `);
   });
@@ -281,6 +328,19 @@ describe("dive phase", () => {
         "Multiplier",
         "1.04×",
         "Spectating this dive",
+        "BET 1",
+        "[button disabled] −",
+        "Bet ·",
+        "chain",
+        "[input number disabled] 5",
+        "[button disabled] +",
+        "[button disabled] 1",
+        "[button disabled] 5",
+        "[button disabled] 10",
+        "[button disabled] 25",
+        "[button disabled] 100",
+        "[button disabled] SPECTATING · NEXT ROUND SOON",
+        "BET 2",
         "[button disabled] −",
         "Bet ·",
         "chain",
@@ -305,7 +365,7 @@ describe("dive phase", () => {
     await h.user.click(button(/^CASH OUT · /));
     h.tick(); // the command applies on the next tick (D4)
 
-    const { lastWin, balance } = h.session.wallet.get();
+    const { lastWin, balance } = slot0View(h.session.wallet.get());
     expect(lastWin).not.toBeNull();
     const win = lastWin!.amount.toFixed(2);
     expect(balanceText()).toBe(balance.toFixed(2));
@@ -337,6 +397,7 @@ describe("dive phase", () => {
         "at",
         "1.04",
         "×",
+        "BET 1",
         "[button disabled] −",
         "Bet ·",
         "chain",
@@ -348,6 +409,18 @@ describe("dive phase", () => {
         "[button disabled] 25",
         "[button disabled] 100",
         "[button disabled] SECURED +5.21 · WATCHING DIVE…",
+        "BET 2",
+        "[button disabled] −",
+        "Bet ·",
+        "chain",
+        "[input number disabled] 5",
+        "[button disabled] +",
+        "[button disabled] 1",
+        "[button disabled] 5",
+        "[button disabled] 10",
+        "[button disabled] 25",
+        "[button disabled] 100",
+        "[button disabled] SPECTATING · NEXT ROUND SOON",
       ]
     `);
 
@@ -376,7 +449,7 @@ describe("crash", () => {
     expect(screen.getAllByText(`${shown(m)}×`).length).toBeGreaterThanOrEqual(2); // readout, banner (+ history)
     expect(button("WAITING…").hasAttribute("disabled")).toBe(true);
     expect(balanceText()).toBe("995.00");
-    expect(h.session.wallet.get().history).toEqual([{ mult: m, crashed: true }]);
+    expect(slot0View(h.session.wallet.get()).history).toEqual([{ mult: m, crashed: true }]);
     expect(outline(container)).toMatchInlineSnapshot(`
       [
         "REAL-TIME",
@@ -391,6 +464,19 @@ describe("crash", () => {
         "CHAIN SNAPPED",
         "1.50",
         "×",
+        "BET 1",
+        "[button] −",
+        "Bet ·",
+        "chain",
+        "[input number] 5",
+        "[button] +",
+        "[button] 1",
+        "[button] 5",
+        "[button] 10",
+        "[button] 25",
+        "[button] 100",
+        "[button disabled] WAITING…",
+        "BET 2",
         "[button] −",
         "Bet ·",
         "chain",
@@ -421,7 +507,7 @@ describe("crash", () => {
     expect(screen.getByText("CHAIN SNAPPED")).toBeTruthy();
     expect(button("WAITING…").hasAttribute("disabled")).toBe(true);
     expect(balanceText()).toBe("1000.00");
-    expect(h.session.wallet.get().history).toHaveLength(1);
+    expect(slot0View(h.session.wallet.get()).history).toHaveLength(1);
   });
 
   it("cashed out before the crash: the banner shows, but the round keeps only its cashout entry", async () => {
@@ -433,7 +519,7 @@ describe("crash", () => {
     await h.user.click(button(/^CASH OUT · /));
     h.untilState("crashed");
     h.frames(1);
-    const { lastWin, history } = h.session.wallet.get();
+    const { lastWin, history } = slot0View(h.session.wallet.get());
     expect(screen.getByText("CHAIN SNAPPED")).toBeTruthy();
     expect(history).toEqual([{ mult: lastWin!.mult, crashed: false }]);
     expect(button("WAITING…").hasAttribute("disabled")).toBe(true);
@@ -471,10 +557,23 @@ describe("jackpot and bonus chests", () => {
         "at",
         "100.00",
         "×",
+        "BET 1",
         "[button] −",
         "Bet ·",
         "chain",
         "[input number] 10",
+        "[button] +",
+        "[button] 1",
+        "[button] 5",
+        "[button] 10",
+        "[button] 25",
+        "[button] 100",
+        "[button disabled] WAITING…",
+        "BET 2",
+        "[button] −",
+        "Bet ·",
+        "chain",
+        "[input number] 5",
         "[button] +",
         "[button] 1",
         "[button] 5",
@@ -519,10 +618,23 @@ describe("jackpot and bonus chests", () => {
         "[button] ???",
         "[button] ???",
         "[button] ???",
+        "BET 1",
         "[button] −",
         "Bet ·",
         "chain",
         "[input number] 10",
+        "[button] +",
+        "[button] 1",
+        "[button] 5",
+        "[button] 10",
+        "[button] 25",
+        "[button] 100",
+        "[button disabled] WAITING…",
+        "BET 2",
+        "[button] −",
+        "Bet ·",
+        "chain",
+        "[input number] 5",
         "[button] +",
         "[button] 1",
         "[button] 5",
@@ -540,7 +652,7 @@ describe("jackpot and bonus chests", () => {
       screen.getAllByRole("button", { name: "???" }).map((c) => c.hasAttribute("disabled")),
     ).toEqual([true, true]);
     expect(balanceText()).toBe("7490.00"); // 1990 + (10 × 650 − 10 × 100)
-    expect(h.session.wallet.get().history).toEqual([
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
       { mult: 650, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -567,10 +679,23 @@ describe("jackpot and bonus chests", () => {
         "[button disabled] ???",
         "[button disabled] +6.50×",
         "[button disabled] ???",
+        "BET 1",
         "[button] −",
         "Bet ·",
         "chain",
         "[input number] 10",
+        "[button] +",
+        "[button] 1",
+        "[button] 5",
+        "[button] 10",
+        "[button] 25",
+        "[button] 100",
+        "[button disabled] WAITING…",
+        "BET 2",
+        "[button] −",
+        "Bet ·",
+        "chain",
+        "[input number] 5",
         "[button] +",
         "[button] 1",
         "[button] 5",
@@ -615,7 +740,7 @@ describe("jackpot and bonus chests", () => {
     h.frames(1);
     expect(screen.queryByText("Pirate Wreck — Pick a Chest")).toBeNull();
     expect(balanceText()).toBe("2990.00");
-    expect(h.session.wallet.get().history).toEqual([
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
       { mult: 200, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -629,7 +754,7 @@ describe("jackpot and bonus chests", () => {
     h.frames(30);
     await h.user.click(button(/^CASH OUT · /));
     h.tick(); // the command applies on the next tick (D4)
-    const afterCashout = h.session.wallet.get().balance;
+    const afterCashout = slot0View(h.session.wallet.get()).balance;
 
     h.untilState("bonus");
     h.frames(1);
@@ -655,7 +780,7 @@ describe("jackpot and bonus chests", () => {
     h.untilState("betting");
     h.frames(1);
     expect(balanceText()).toBe("1000.00");
-    expect(h.session.wallet.get().history).toEqual([{ mult: 100, crashed: false }]);
+    expect(slot0View(h.session.wallet.get()).history).toEqual([{ mult: 100, crashed: false }]);
     expect(screen.getAllByText("100.00×")).toHaveLength(2); // the readout (still at the jackpot) and the history strip entry
   });
 });

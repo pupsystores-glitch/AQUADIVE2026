@@ -15,8 +15,9 @@
 // that step's commit, and only there.
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
-import { bootScreen, type ScreenHarness } from "@/ui/test/dom-harness";
+import { bootScreen, type ScreenHarness, slotButton, slotBetInput } from "@/ui/test/dom-harness";
 import { payoutOracle } from "@/ui/test/money-oracle";
+import { slot0View } from "@/ui/test/wallet-view";
 
 /**
  * The component's display subscriptions (AbyssAnchor mount effect). U4a
@@ -47,9 +48,9 @@ const expectOneSinkPerFrame = (h: ScreenHarness, frames: number) => {
   expect(delta[h.renderers.indexOf(live[0])]).toBe(frames);
 };
 
-const button = (name: string | RegExp) => screen.getByRole("button", { name });
+const button = (name: string | RegExp) => slotButton(name);
 const balanceText = () => screen.getByText("Balance").nextSibling?.textContent;
-const betInput = () => screen.getByRole("spinbutton") as HTMLInputElement;
+const betInput = () => slotBetInput();
 
 describe("component remount over the same session", () => {
   it("unmount pauses the session and releases every component resource; remount reattaches once", async () => {
@@ -81,12 +82,12 @@ describe("component remount over the same session", () => {
     h.untilState("diving");
     h.frames(30);
     const ticksAtUnmount = h.session.engine.tickCount;
-    const walletAtUnmount = h.session.wallet.get();
+    const walletAtUnmount = slot0View(h.session.wallet.get());
 
     first.unmount();
     h.frames(120); // two seconds of wall time with nothing attached
     expect(h.session.engine.tickCount).toBe(ticksAtUnmount); // paused, not reset or fast-forwarded
-    expect(h.session.wallet.get()).toBe(walletAtUnmount); // the same snapshot: nothing settled or reset
+    expect(slot0View(h.session.wallet.get())).toBe(walletAtUnmount); // the same snapshot: nothing settled or reset
 
     h.mount();
     expect(balanceText()).toBe("990.00"); // the wallet survived the remount (V1)
@@ -99,16 +100,18 @@ describe("component remount over the same session", () => {
 
     await h.user.click(button(/^CASH OUT · /));
     h.tick();
-    const { lastWin, balance, history } = h.session.wallet.get();
+    const { lastWin, balance, history } = slot0View(h.session.wallet.get());
     expect(lastWin!.amount).toBe(payoutOracle(10, lastWin!.mult)); // against the locked 10, not the input
     expect(balance).toBe(+(990 + lastWin!.amount).toFixed(2));
     expect(balanceText()).toBe(balance.toFixed(2));
     expect(button(`SECURED +${lastWin!.amount.toFixed(2)} · WATCHING DIVE…`)).toBeTruthy();
 
     h.untilState("betting");
-    expect(h.session.wallet.get().balance).toBe(balance); // credited once
+    expect(slot0View(h.session.wallet.get()).balance).toBe(balance); // credited once
     expect(history).toHaveLength(1);
-    expect(h.session.wallet.get().history).toEqual([{ mult: lastWin!.mult, crashed: false }]); // one entry for the round
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
+      { mult: lastWin!.mult, crashed: false },
+    ]); // one entry for the round
   });
 
   it("remount while the bet is locked in the betting window: BET LOCKED and the debit survive", async () => {
@@ -145,7 +148,7 @@ describe("component remount over the same session", () => {
     h.mount();
     h.frames(1);
     expect(betInput().value).toBe("25"); // the typed amount, not DEFAULT_BET
-    expect(h.session.betInput.get()).toBe(25);
+    expect(h.session.betInputs[0].get()).toBe(25);
     const m = h.session.engine.getPublicState().multiplier;
     expect(button(`CASH OUT · ${payoutOracle(25, m).toFixed(2)}`)).toBeTruthy(); // still the locked 25
   });
@@ -163,7 +166,7 @@ describe("component remount over the same session", () => {
     first.unmount();
     h.mount();
     expect(betInput().value).toBe("0.005"); // as typed — never rounded
-    expect(h.session.betInput.get()).toBe(0.005);
+    expect(h.session.betInputs[0].get()).toBe(0.005);
     expect(button(/^PLACE BET/).hasAttribute("disabled")).toBe(true);
 
     // Click and an Enter keypress: neither places a bet.
@@ -172,7 +175,10 @@ describe("component remount over the same session", () => {
     await h.user.keyboard("{Enter}");
     h.tick();
     expect(placed).toEqual([]);
-    expect(h.session.wallet.get()).toMatchObject({ balance: 1000, participating: false });
+    expect(slot0View(h.session.wallet.get())).toMatchObject({
+      balance: 1000,
+      participating: false,
+    });
     expect(balanceText()).toBe("1000.00");
 
     fireEvent.change(betInput(), { target: { value: "0.01" } });
@@ -180,7 +186,7 @@ describe("component remount over the same session", () => {
     await h.user.click(button(/^PLACE BET/));
     h.tick();
     expect(placed).toEqual([0.01]);
-    expect(h.session.wallet.get()).toMatchObject({ balance: 999.99, roundBet: 0.01 }); // debit exactly one cent
+    expect(slot0View(h.session.wallet.get())).toMatchObject({ balance: 999.99, roundBet: 0.01 }); // debit exactly one cent
     expect(balanceText()).toBe("999.99");
   });
 
@@ -202,7 +208,7 @@ describe("component remount over the same session", () => {
     expect(button(`CASH OUT · ${payoutOracle(10, m).toFixed(2)}`)).toBeTruthy(); // the locked 10
     await h.user.click(button(/^CASH OUT · /));
     h.tick();
-    const { lastWin, balance } = h.session.wallet.get();
+    const { lastWin, balance } = slot0View(h.session.wallet.get());
     expect(lastWin!.amount).toBe(payoutOracle(10, lastWin!.mult));
     expect(balance).toBe(+(990 + lastWin!.amount).toFixed(2));
   });
@@ -244,7 +250,7 @@ describe("component remount over the same session", () => {
     h.frames(1);
     expect(screen.queryByText("Pirate Wreck — Pick a Chest")).toBeNull();
     expect(balanceText()).toBe("7490.00"); // credited once
-    expect(h.session.wallet.get().history).toEqual([
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
       { mult: 650, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -259,7 +265,7 @@ describe("React.StrictMode (development double-mount)", () => {
     await h.user.click(button("+"));
     await h.user.click(button("+"));
     expect(betInput().value).toBe("20");
-    expect(h.session.betInput.get()).toBe(20); // one write per click, not two
+    expect(h.session.betInputs[0].get()).toBe(20); // one write per click, not two
 
     first.unmount();
     h.mount({ strict: true });
@@ -293,14 +299,16 @@ describe("React.StrictMode (development double-mount)", () => {
     await h.user.click(button(/^CASH OUT · /));
     h.tick();
 
-    const { lastWin, balance } = h.session.wallet.get();
+    const { lastWin, balance } = slot0View(h.session.wallet.get());
     expect(balance).toBe(+(995 + lastWin!.amount).toFixed(2));
     expect(balanceText()).toBe(balance.toFixed(2));
     expect(screen.getAllByText("CASHED OUT")).toHaveLength(1);
 
     h.untilState("betting");
-    expect(h.session.wallet.get().balance).toBe(balance);
-    expect(h.session.wallet.get().history).toEqual([{ mult: lastWin!.mult, crashed: false }]);
+    expect(slot0View(h.session.wallet.get()).balance).toBe(balance);
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
+      { mult: lastWin!.mult, crashed: false },
+    ]);
   });
 
   it("a jackpot + chest round under StrictMode settles once on every path", async () => {
@@ -320,8 +328,8 @@ describe("React.StrictMode (development double-mount)", () => {
     expect(balanceText()).toBe("30990.00"); // 1990 + (10 × 3000 − 10 × 100)
 
     h.untilState("betting");
-    expect(h.session.wallet.get().balance).toBe(30990);
-    expect(h.session.wallet.get().history).toEqual([
+    expect(slot0View(h.session.wallet.get()).balance).toBe(30990);
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
       { mult: 3000, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -348,10 +356,12 @@ describe("React.StrictMode (development double-mount)", () => {
 
     await h.user.click(button(/^CASH OUT · /));
     h.tick();
-    const { lastWin, balance } = h.session.wallet.get();
+    const { lastWin, balance } = slot0View(h.session.wallet.get());
     expect(balance).toBe(+(995 + lastWin!.amount).toFixed(2));
     h.untilState("betting");
-    expect(h.session.wallet.get().history).toEqual([{ mult: lastWin!.mult, crashed: false }]);
-    expect(h.session.wallet.get().balance).toBe(balance);
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
+      { mult: lastWin!.mult, crashed: false },
+    ]);
+    expect(slot0View(h.session.wallet.get()).balance).toBe(balance);
   });
 });

@@ -32,11 +32,19 @@
 // Without an eligible local participant the bonus phase completes after the
 // result interval with no chestPicked event. This is a LOCAL single-player
 // rule: a Phase 8 server completes bonus independently of any one player.
+//
+// E-X3 (Dual Bet, owner-approved engine freeze exception, 2026-11-14): the
+// local player holds up to two independent bets per round, one per slot
+// (0 | 1). placeBet and cashOut carry a mandatory slot and are validated per
+// slot; at entry(impact) every unsettled slot is auto-cashed at the jackpot
+// and becomes bonus-eligible. The bonus phase has ONE chest pick per round:
+// it is offered while any slot is eligible and applies to every eligible
+// slot (the single chestPicked event; settlement is per slot, in the wallet).
 
 import type { Phase } from "@/rendering/scene-renderer";
 import { isValidStake } from "@/shared/stake";
 import { TICK_SECONDS } from "./clock";
-import type { EngineCommand } from "./commands";
+import type { BetSlot, EngineCommand } from "./commands";
 import type { BonusChest } from "./domain/outcomes";
 import {
   BETTING_WINDOW_SECONDS,
@@ -72,6 +80,15 @@ export interface ParticipantRoundState {
   bonusEligible: boolean;
 }
 
+/** E-X3: the per-slot participant tuple — index = BetSlot; null = no bet in that slot. */
+export type ParticipantSlots = [ParticipantRoundState | null, ParticipantRoundState | null];
+
+const isBetSlot = (slot: unknown): slot is BetSlot => slot === 0 || slot === 1;
+
+const copyParticipants = (
+  p: readonly [ParticipantRoundState | null, ParticipantRoundState | null],
+): ParticipantSlots => [p[0] === null ? null : { ...p[0] }, p[1] === null ? null : { ...p[1] }];
+
 /** Duration (ms) → whole simulation ticks (§8 quantization). */
 const ticksFor = (ms: number): number => Math.round(ms / 1000 / TICK_SECONDS);
 
@@ -95,7 +112,8 @@ export interface RoundSnapshot {
   impactAt: number | null;
   chests: [BonusChest, BonusChest, BonusChest] | null;
   chosenChestId: 0 | 1 | 2 | null;
-  participant: ParticipantRoundState | null;
+  /** E-X3: per-slot participant round state (index = BetSlot). */
+  participants: ParticipantSlots;
 }
 
 interface RoundStateMachineDeps {
@@ -116,7 +134,7 @@ export class RoundStateMachine {
   private _impactAt: number | null = null;
   private _chests: [BonusChest, BonusChest, BonusChest] | null = null;
   private _chosenChestId: 0 | 1 | 2 | null = null;
-  private _participant: ParticipantRoundState | null = null;
+  private _participants: ParticipantSlots = [null, null];
 
   constructor(private readonly deps: RoundStateMachineDeps) {}
 
@@ -143,8 +161,12 @@ export class RoundStateMachine {
     return this._diveStartedAt;
   }
 
-  get participant(): Readonly<ParticipantRoundState> | null {
-    return this._participant;
+  /** E-X3: the live per-slot participant states (index = BetSlot). */
+  get participants(): readonly [
+    Readonly<ParticipantRoundState> | null,
+    Readonly<ParticipantRoundState> | null,
+  ] {
+    return this._participants;
   }
 
   /** simTime at entry(impact) — the §8 base for shipImpact FX elapsed; null outside impact→next-dive. */
@@ -214,36 +236,45 @@ export class RoundStateMachine {
     this.deps.events.emit("commandRejected", { roundId: this._roundId, command, reason });
   }
 
-  // §5/§6: one bet per participant per round, only while betting. Whether
+  // §5/§6: one bet per slot per round (E-X3), only while betting. Whether
   // the player can afford it is a wallet question answered before the
   // command is submitted (§3) — the engine never sees a balance.
   // E-X2: the shared valid-stake predicate (M1-D1/D2, docs/07 §23.4)
   // replaces the former `!(amount > 0)` check. Invalid stakes (sub-cent,
   // non-finite, zero, negative) are rejected, never rounded.
   private applyPlaceBet(command: EngineCommand & { type: "placeBet" }): void {
+    if (!isBetSlot(command.slot)) return this.reject(command, "invalid-slot");
     if (this._state !== "betting") return this.reject(command, "not-in-betting");
-    if (this._participant !== null) return this.reject(command, "already-participating");
+    if (this._participants[command.slot] !== null) {
+      return this.reject(command, "already-participating");
+    }
     if (!isValidStake(command.amount)) return this.reject(command, "invalid-amount");
-    this._participant = {
+    this._participants[command.slot] = {
       betAmount: command.amount,
       cashedOut: false,
       cashedOutAt: null,
       bonusEligible: false,
     };
-    this.deps.events.emit("betPlaced", { roundId: this._roundId, amount: command.amount });
+    this.deps.events.emit("betPlaced", {
+      roundId: this._roundId,
+      slot: command.slot,
+      amount: command.amount,
+    });
   }
 
   // §5: manual cashout is not a transition — the flag flips, the state stays
   // `diving`, the anchor keeps descending. D4: the multiplier is the
   // tick-authoritative value from the last completed pipeline tick.
   private applyCashOut(command: EngineCommand & { type: "cashOut" }): void {
+    if (!isBetSlot(command.slot)) return this.reject(command, "invalid-slot");
     if (this._state !== "diving") return this.reject(command, "not-diving");
-    if (this._participant === null) return this.reject(command, "not-participating");
-    if (this._participant.cashedOut) return this.reject(command, "already-cashed-out");
+    const participant = this._participants[command.slot];
+    if (participant === null) return this.reject(command, "not-participating");
+    if (participant.cashedOut) return this.reject(command, "already-cashed-out");
     const multiplier = this.deps.sim.multiplier;
-    this._participant.cashedOut = true;
-    this._participant.cashedOutAt = multiplier;
-    this.deps.events.emit("cashedOut", { roundId: this._roundId, multiplier });
+    participant.cashedOut = true;
+    participant.cashedOutAt = multiplier;
+    this.deps.events.emit("cashedOut", { roundId: this._roundId, slot: command.slot, multiplier });
   }
 
   // §5: bonus ──[pickChest]→ apply chest ──[CHEST_RESULT duration]→ betting.
@@ -257,9 +288,9 @@ export class RoundStateMachine {
     this.applyChest(command.chestId);
   }
 
-  /** E-X1: the local participant's bonus eligibility (not the Phase 8 global rule). */
+  /** E-X1/E-X3: some local slot is bonus-eligible (not the Phase 8 global rule). */
   private isLocalBonusEligible(): boolean {
-    return this._participant !== null && this._participant.bonusEligible;
+    return this._participants.some((p) => p !== null && p.bonusEligible);
   }
 
   // The single chest-apply path, shared by a manual pick and the E-X1
@@ -319,10 +350,12 @@ export class RoundStateMachine {
     this._impactAt = simTime;
     this.jackpotMultiplier = this.deps.authority.sampleJackpot();
     this.deps.sim.lockMultiplier(this.jackpotMultiplier);
-    if (this._participant !== null && !this._participant.cashedOut) {
-      this._participant.cashedOut = true;
-      this._participant.cashedOutAt = this.jackpotMultiplier;
-      this._participant.bonusEligible = true; // E-X1: jackpot auto-cash ⇒ may pick
+    for (const participant of this._participants) {
+      if (participant !== null && !participant.cashedOut) {
+        participant.cashedOut = true;
+        participant.cashedOutAt = this.jackpotMultiplier;
+        participant.bonusEligible = true; // E-X1: jackpot auto-cash ⇒ may pick
+      }
     }
     this.timerTicks = ticksFor(SHIP_IMPACT_TO_CHESTS_MS);
     this.transition("impact");
@@ -353,7 +386,7 @@ export class RoundStateMachine {
     this.countdownTicks = ticksFor(BETTING_WINDOW_SECONDS * 1000);
     this.timerTicks = null;
     this._impactAt = null;
-    this._participant = null;
+    this._participants = [null, null];
     this.transition("betting");
     this.deps.events.emit("bettingOpened", { roundId: this._roundId });
   }
@@ -374,7 +407,7 @@ export class RoundStateMachine {
           ? null
           : [{ ...this._chests[0] }, { ...this._chests[1] }, { ...this._chests[2] }],
       chosenChestId: this._chosenChestId,
-      participant: this._participant === null ? null : { ...this._participant },
+      participants: copyParticipants(this._participants),
     };
   }
 
@@ -395,6 +428,6 @@ export class RoundStateMachine {
     this._chests =
       s.chests === null ? null : [{ ...s.chests[0] }, { ...s.chests[1] }, { ...s.chests[2] }];
     this._chosenChestId = s.chosenChestId;
-    this._participant = s.participant === null ? null : { ...s.participant };
+    this._participants = copyParticipants(s.participants);
   }
 }

@@ -14,15 +14,23 @@
 // already the pre-U5 result. The store-level non-finite sanitation (D2) is
 // covered in src/ui/store/bet-input-store.test.ts.
 import { describe, expect, it } from "vitest";
-import { act, fireEvent, screen } from "@testing-library/react";
-import { bootScreen, type ScreenHarness } from "@/ui/test/dom-harness";
+import { act, fireEvent, screen, within } from "@testing-library/react";
+import {
+  bootScreen,
+  type ScreenHarness,
+  slotButton,
+  querySlotButton,
+  slotBetInput,
+  slotPanel,
+} from "@/ui/test/dom-harness";
 import { floorCentsBinary, payoutOracle } from "@/ui/test/money-oracle";
+import { slot0View } from "@/ui/test/wallet-view";
 
-const button = (name: string | RegExp) => screen.getByRole("button", { name });
-const queryButton = (name: string | RegExp) => screen.queryByRole("button", { name });
-const betInput = () => screen.getByRole("spinbutton") as HTMLInputElement;
+const button = (name: string | RegExp) => slotButton(name);
+const queryButton = (name: string | RegExp) => querySlotButton(name);
+const betInput = () => slotBetInput();
 const balanceText = () => screen.getByText("Balance").nextSibling?.textContent;
-const tier = () => screen.getByText(/^Bet ·/).textContent;
+const tier = () => within(slotPanel(0)).getByText(/^Bet ·/).textContent;
 const betControls = () => [
   button("−"),
   button("+"),
@@ -46,16 +54,16 @@ describe("the bet input is session state (U5, §9)", () => {
   it("every control writes the session's bet-input store; the field and tier label render it", async () => {
     const h = await bootScreen();
     h.mount();
-    expect(h.session.betInput.get()).toBe(5);
+    expect(h.session.betInputs[0].get()).toBe(5);
     await h.user.click(button("+"));
-    expect(h.session.betInput.get()).toBe(10);
+    expect(h.session.betInputs[0].get()).toBe(10);
     await h.user.click(button("−"));
-    expect(h.session.betInput.get()).toBe(5);
+    expect(h.session.betInputs[0].get()).toBe(5);
     await h.user.click(button("100"));
-    expect(h.session.betInput.get()).toBe(100);
+    expect(h.session.betInputs[0].get()).toBe(100);
     await h.user.clear(betInput());
     await h.user.type(betInput(), "42");
-    expect(h.session.betInput.get()).toBe(42);
+    expect(h.session.betInputs[0].get()).toBe(42);
     expect(betInput().value).toBe("42");
     expect(tier()).toBe("Bet · heavy");
   });
@@ -63,7 +71,7 @@ describe("the bet input is session state (U5, §9)", () => {
   it("a direct store write re-renders the field and the tier label", async () => {
     const h = await bootScreen();
     h.mount();
-    act(() => h.session.betInput.set(25));
+    act(() => h.session.betInputs[0].set(25));
     expect(betInput().value).toBe("25");
     expect(tier()).toBe("Bet · heavy");
   });
@@ -75,7 +83,7 @@ describe("bet input edge cases at the field (V4)", () => {
     h.mount();
     await h.user.clear(betInput());
     expect(betInput().value).toBe("0");
-    expect(h.session.betInput.get()).toBe(0);
+    expect(h.session.betInputs[0].get()).toBe(0);
     expect(button("PLACE BET · 5.0s").hasAttribute("disabled")).toBe(true);
     await h.user.click(button("−"));
     expect(betInput().value).toBe("1");
@@ -88,8 +96,8 @@ describe("bet input edge cases at the field (V4)", () => {
     for (const raw of ["1e309", "Infinity", "abc"]) {
       fireEvent.change(betInput(), { target: { value: raw } });
       expect(betInput().value, raw).toBe("0");
-      expect(Number.isFinite(h.session.betInput.get())).toBe(true);
-      expect(h.session.betInput.get()).toBe(0);
+      expect(Number.isFinite(h.session.betInputs[0].get())).toBe(true);
+      expect(h.session.betInputs[0].get()).toBe(0);
       expect(button("PLACE BET · 5.0s").hasAttribute("disabled")).toBe(true);
     }
   });
@@ -99,7 +107,7 @@ describe("bet input edge cases at the field (V4)", () => {
     h.mount();
     fireEvent.change(betInput(), { target: { value: "-5" } });
     expect(betInput().value).toBe("0");
-    expect(h.session.betInput.get()).toBe(0);
+    expect(h.session.betInputs[0].get()).toBe(0);
   });
 
   // Sanctioned rewrite (M1-D1, M1-D3; D11 superseded in part, docs/07 §23.3).
@@ -111,14 +119,14 @@ describe("bet input edge cases at the field (V4)", () => {
     for (const raw of ["0.123", "0.001", "0.004", "0.005", "0.009", "1.005"]) {
       fireEvent.change(betInput(), { target: { value: raw } });
       expect(betInput().value, raw).toBe(raw);
-      expect(h.session.betInput.get(), raw).toBe(+raw);
+      expect(h.session.betInputs[0].get(), raw).toBe(+raw);
       expect(button(/^PLACE BET/).hasAttribute("disabled"), raw).toBe(true);
       fireEvent.click(button(/^PLACE BET/));
-      h.session.submit({ type: "placeBet", amount: h.session.betInput.get() }); // the submit edge independently
+      h.session.submit({ type: "placeBet", slot: 0, amount: h.session.betInputs[0].get() }); // the submit edge independently
       h.tick();
     }
     expect(log).toEqual([]);
-    expect(h.session.wallet.get()).toMatchObject({
+    expect(slot0View(h.session.wallet.get())).toMatchObject({
       balance: 1000,
       roundBet: 0,
       participating: false,
@@ -139,8 +147,10 @@ describe("bet input edge cases at the field (V4)", () => {
       expect(button("PLACE BET · 5.0s").hasAttribute("disabled"), raw).toBe(false);
       await h.user.click(button(/^PLACE BET/));
       h.tick();
-      expect(h.session.wallet.get().roundBet, raw).toBe(amount);
-      expect(h.session.wallet.get().balance, raw).toBe((100_000 - Math.round(amount * 100)) / 100);
+      expect(slot0View(h.session.wallet.get()).roundBet, raw).toBe(amount);
+      expect(slot0View(h.session.wallet.get()).balance, raw).toBe(
+        (100_000 - Math.round(amount * 100)) / 100,
+      );
       view.unmount();
     }
   });
@@ -219,7 +229,7 @@ describe("the action matrix in every phase (§13.3, D10)", () => {
     h.tick();
     await h.user.click(button("100"));
     expect(betInput().value).toBe("100");
-    expect(h.session.wallet.get().roundBet).toBe(10);
+    expect(slot0View(h.session.wallet.get()).roundBet).toBe(10);
     h.untilState("diving");
     h.frames(30);
     const m = h.session.engine.getPublicState().multiplier;
@@ -260,7 +270,7 @@ describe("displayed potential ⇔ cashout credit on the same tick (MT-10)", () =
     expect(potentialText).toBe(`Potential ${expected.toFixed(2)}`);
     expect(cashLabel).toBe(`CASH OUT · ${expected.toFixed(2)}`);
 
-    const { lastWin, balance } = h.session.wallet.get();
+    const { lastWin, balance } = slot0View(h.session.wallet.get());
     expect(lastWin).toEqual({ amount: expected, mult: mShown });
     expect(button(`SECURED +${expected.toFixed(2)} · WATCHING DIVE…`)).toBeTruthy();
     // The balance change, in exact cents: 990 → balance.
@@ -282,7 +292,7 @@ describe("D9: the cutoff is a UI-only restriction", () => {
     expect(log).toEqual([]);
 
     // The same command through the session edge is accepted: no new validation.
-    h.session.submit({ type: "placeBet", amount: 5 });
+    h.session.submit({ type: "placeBet", slot: 0, amount: 5 });
     h.tick();
     expect(log).toEqual([{ name: "betPlaced", reason: undefined }]);
     expect(balanceText()).toBe("995.00");
@@ -302,7 +312,7 @@ describe("D8: duplicate clicks, no pending-submit guard", () => {
       { name: "betPlaced", reason: undefined },
       { name: "commandRejected", reason: "already-participating" },
     ]);
-    expect(h.session.wallet.get()).toMatchObject({ balance: 995, roundBet: 5 });
+    expect(slot0View(h.session.wallet.get())).toMatchObject({ balance: 995, roundBet: 5 });
     expect(balanceText()).toBe("995.00");
     expect(button(/^BET LOCKED · /)).toBeTruthy();
   });
@@ -321,13 +331,15 @@ describe("D8: duplicate clicks, no pending-submit guard", () => {
       { name: "cashedOut", reason: undefined },
       { name: "commandRejected", reason: "already-cashed-out" },
     ]);
-    const { lastWin, balance } = h.session.wallet.get();
+    const { lastWin, balance } = slot0View(h.session.wallet.get());
     expect(balance).toBe(+(995 + lastWin!.amount).toFixed(2));
     expect(screen.getAllByText("CASHED OUT")).toHaveLength(1);
     expect(queryButton(/^CASH OUT · /)).toBeNull();
 
     h.untilState("betting");
-    expect(h.session.wallet.get().balance).toBe(balance);
-    expect(h.session.wallet.get().history).toEqual([{ mult: lastWin!.mult, crashed: false }]);
+    expect(slot0View(h.session.wallet.get()).balance).toBe(balance);
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
+      { mult: lastWin!.mult, crashed: false },
+    ]);
   });
 });

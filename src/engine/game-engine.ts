@@ -51,13 +51,22 @@ export interface EnginePublicState {
   countdownSeconds: number;
   multiplier: number;
   boost: number;
-  participant: Readonly<ParticipantRoundState> | null;
+  /** E-X3: per-slot participant round state (index = BetSlot). */
+  participants: readonly [
+    Readonly<ParticipantRoundState> | null,
+    Readonly<ParticipantRoundState> | null,
+  ];
   chests: Readonly<[BonusChest, BonusChest, BonusChest]> | null;
   chosenChestId: 0 | 1 | 2 | null;
 }
 
-/** Snapshot schema version — bump on any breaking change to the §14 shape. */
-export const SNAPSHOT_SCHEMA_VERSION = 2;
+/**
+ * Snapshot schema version — bump on any breaking change to the §14 shape.
+ * 3 (E-X3): `round.participant` became the per-slot `round.participants`.
+ * Snapshots are in-memory only (no persistence or transport consumes them),
+ * so a v2 snapshot is simply rejected by restore() as a schema mismatch.
+ */
+export const SNAPSHOT_SCHEMA_VERSION = 3;
 
 /**
  * The complete, serializable engine state (§14): the unit of restore,
@@ -150,7 +159,7 @@ export class GameEngine {
       countdownSeconds: this.machine.countdown,
       multiplier: this.sim.multiplier,
       boost: this.sim.boost,
-      participant: this.machine.participant,
+      participants: this.machine.participants,
       chests: this.machine.chests,
       chosenChestId: this.machine.chosenChestId,
     };

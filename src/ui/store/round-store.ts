@@ -10,7 +10,7 @@
 // Projected and normalized on write (correction C6 to §11's "stored as
 // received"), because two engine facts make a raw mirror unsound:
 //
-// - `participant` is the state machine's live object. The engine flips
+// - `participants` (E-X3: one entry per bet slot) holds the state machine's live objects. The engine flips
 //   `cashedOut`, `cashedOutAt` and `bonusEligible` on it in place, so a
 //   stored reference would change underneath the snapshot and a reference
 //   check would never see the change. It is copied field by field.
@@ -43,6 +43,8 @@ export interface RoundParticipant {
   readonly bonusEligible: boolean;
 }
 
+export type RoundParticipants = readonly [RoundParticipant | null, RoundParticipant | null];
+
 export type RoundChest = Readonly<BonusChest>;
 export type RoundChests = readonly [RoundChest, RoundChest, RoundChest];
 
@@ -53,7 +55,8 @@ export interface RoundState {
   readonly countdownSeconds: number;
   readonly multiplier: number;
   readonly boost: number;
-  readonly participant: RoundParticipant | null;
+  /** E-X3: per-slot participant state, index = BetSlot. */
+  readonly participants: RoundParticipants;
   readonly chests: RoundChests | null;
   readonly chosenChestId: 0 | 1 | 2 | null;
 }
@@ -69,7 +72,7 @@ export interface RoundStoreHandle {
 }
 
 const projectParticipant = (
-  source: EnginePublicState["participant"],
+  source: EnginePublicState["participants"][number],
   previous: RoundParticipant | null,
 ): RoundParticipant | null => {
   if (source === null) return null;
@@ -88,6 +91,16 @@ const projectParticipant = (
     cashedOutAt: source.cashedOutAt,
     bonusEligible: source.bonusEligible,
   });
+};
+
+const projectParticipants = (
+  source: EnginePublicState["participants"],
+  previous: RoundParticipants | null,
+): RoundParticipants => {
+  const p0 = projectParticipant(source[0], previous?.[0] ?? null);
+  const p1 = projectParticipant(source[1], previous?.[1] ?? null);
+  if (previous !== null && previous[0] === p0 && previous[1] === p1) return previous;
+  return Object.freeze([p0, p1] as const);
 };
 
 const sameChest = (a: RoundChest, b: Readonly<BonusChest>): boolean =>
@@ -113,7 +126,7 @@ const projectChests = (
 };
 
 const project = (source: EnginePublicState, previous: RoundState | null): RoundState => {
-  const participant = projectParticipant(source.participant, previous?.participant ?? null);
+  const participants = projectParticipants(source.participants, previous?.participants ?? null);
   const chests = projectChests(source.chests, previous?.chests ?? null);
   if (
     previous !== null &&
@@ -122,7 +135,7 @@ const project = (source: EnginePublicState, previous: RoundState | null): RoundS
     Object.is(previous.countdownSeconds, source.countdownSeconds) &&
     Object.is(previous.multiplier, source.multiplier) &&
     Object.is(previous.boost, source.boost) &&
-    previous.participant === participant &&
+    previous.participants === participants &&
     previous.chests === chests &&
     previous.chosenChestId === source.chosenChestId
   ) {
@@ -134,7 +147,7 @@ const project = (source: EnginePublicState, previous: RoundState | null): RoundS
     countdownSeconds: source.countdownSeconds,
     multiplier: source.multiplier,
     boost: source.boost,
-    participant,
+    participants,
     chests,
     chosenChestId: source.chosenChestId,
   });

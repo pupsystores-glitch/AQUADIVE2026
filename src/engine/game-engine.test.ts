@@ -83,7 +83,7 @@ describe("GameEngine.advance — fixed 60 Hz tick accumulator (§7)", () => {
   it("is deterministic: identical advance + command sequences produce identical snapshots (§7, §14)", () => {
     const run = () => {
       const engine = makeEngine();
-      engine.submit({ type: "placeBet", amount: 10 });
+      engine.submit({ type: "placeBet", slot: 0, amount: 10 });
       for (const dt of [0.007, 0.021, 0.0166, 0.05, 0.001, 0.0333, 1.7, 0.016]) {
         engine.advance(dt);
       }
@@ -99,7 +99,7 @@ describe("GameEngine — command queue at the tick boundary (§13, D4)", () => {
     const engine = makeEngine();
     engine.events.on("betPlaced", ({ amount }) => seen.push(amount));
 
-    engine.submit({ type: "placeBet", amount: 25 });
+    engine.submit({ type: "placeBet", slot: 0, amount: 25 });
     expect(seen).toEqual([]); // queued, not applied
 
     engine.advance(0.008); // sub-tick: no boundary crossed, still queued
@@ -113,11 +113,11 @@ describe("GameEngine — command queue at the tick boundary (§13, D4)", () => {
     const engine = makeEngine();
     const rejected: string[] = [];
     engine.events.on("betPlaced", () => {
-      engine.submit({ type: "placeBet", amount: 99 }); // reentrant submit
+      engine.submit({ type: "placeBet", slot: 0, amount: 99 }); // reentrant submit
     });
     engine.events.on("commandRejected", ({ reason }) => rejected.push(reason));
 
-    engine.submit({ type: "placeBet", amount: 25 });
+    engine.submit({ type: "placeBet", slot: 0, amount: 25 });
     engine.advance(TICK_SECONDS); // applies the bet; listener queues another
     expect(rejected).toEqual([]); // not applied in the same tick
 
@@ -210,14 +210,14 @@ describe("GameEngine — RenderTime + public-state projections (§13, D5)", () =
       countdownSeconds: 5,
       multiplier: 1,
       boost: 0,
-      participant: null,
+      participants: [null, null],
       chests: null,
       chosenChestId: null,
     });
 
-    engine.submit({ type: "placeBet", amount: 25 });
+    engine.submit({ type: "placeBet", slot: 0, amount: 25 });
     advanceTicks(engine, 1);
-    expect(engine.getPublicState().participant).toEqual({
+    expect(engine.getPublicState().participants[0]).toEqual({
       betAmount: 25,
       cashedOut: false,
       cashedOutAt: null,
@@ -226,18 +226,18 @@ describe("GameEngine — RenderTime + public-state projections (§13, D5)", () =
 
     advanceTicks(engine, BETTING_TICKS - 1); // → diving
     advanceTicks(engine, 10); // let the multiplier grow past 1
-    engine.submit({ type: "cashOut" });
+    engine.submit({ type: "cashOut", slot: 0 });
     advanceTicks(engine, 1);
     const ps = engine.getPublicState();
     expect(ps.phase).toBe("diving"); // §5: cashout is not a transition
-    expect(ps.participant?.cashedOut).toBe(true);
-    expect(ps.participant?.cashedOutAt).toBeGreaterThan(1);
-    expect(ps.participant?.bonusEligible).toBe(false); // E-X1: manual cashout never makes it eligible
+    expect(ps.participants[0]?.cashedOut).toBe(true);
+    expect(ps.participants[0]?.cashedOutAt).toBeGreaterThan(1);
+    expect(ps.participants[0]?.bonusEligible).toBe(false); // E-X1: manual cashout never makes it eligible
   });
 
   it("getPublicState: chests and the chosen chest id surface in bonus", () => {
     const engine = makeEngine(1e9);
-    engine.submit({ type: "placeBet", amount: 10 }); // E-X1: auto-cashed participant may pick
+    engine.submit({ type: "placeBet", slot: 0, amount: 10 }); // E-X1: auto-cashed participant may pick
     advanceTicks(engine, BETTING_TICKS);
     advanceUntil(engine, 5000, () => engine.state !== "diving");
     advanceTicks(engine, 84); // impact → bonus
@@ -245,7 +245,7 @@ describe("GameEngine — RenderTime + public-state projections (§13, D5)", () =
     expect(ps.phase).toBe("bonus");
     expect(ps.chests).toHaveLength(3);
     expect(ps.chosenChestId).toBeNull();
-    expect(ps.participant?.bonusEligible).toBe(true);
+    expect(ps.participants[0]?.bonusEligible).toBe(true);
 
     engine.submit({ type: "pickChest", chestId: 2 });
     advanceTicks(engine, 1);

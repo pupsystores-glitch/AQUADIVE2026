@@ -31,8 +31,21 @@
 // subscribes to nothing; its only writers are the betting-panel handlers.
 // Since M1, submit() routes placeBet through wallet.canPlaceStake (valid
 // stake ∧ affordable, docs/07 §23.5), shared with the panel's action state.
+//
+// E-X3 (Dual Bet, 2026-11-14): one bet-input store per slot (`betInputs`),
+// and submit() keeps every forwarded placeBet in flight until the engine
+// answers it (betPlaced or commandRejected). The engine accepts at most one
+// bet per slot, so the most two slots can be debited is the largest stake in
+// flight for each; a bet is forwarded only if it fits the balance next to
+// the OTHER slot's largest stake in flight. Two bets submitted before the
+// next tick can therefore never together exceed the balance (the engine
+// knows no balance; without this it would accept both and the wallet would
+// refuse the second under W3, splitting engine and wallet — I8). A slot's
+// own repeated submissions are not reserved against each other: the engine
+// rejects all but one, so single-slot behavior is unchanged.
 
 import {
+  BET_SLOTS,
   EngineDriver,
   GameEngine,
   LocalRoundAuthority,
@@ -51,7 +64,12 @@ import {
   type RejectionLogger,
 } from "@/ui/store/notification-store";
 import { createRoundStore, type RoundStore } from "@/ui/store/round-store";
-import { createWalletStore, type WalletRefusal, type WalletStore } from "@/ui/store/wallet-store";
+import {
+  createWalletStore,
+  isPlaceableStake,
+  type WalletRefusal,
+  type WalletStore,
+} from "@/ui/store/wallet-store";
 
 /** The renderer surface the session drives — SceneRenderer in production, injectable for headless tests (§8 test seam). */
 export type CanvasRenderer = Pick<SceneRenderer, "resize" | "frame" | "dispose">;
@@ -81,8 +99,8 @@ export interface GameSession {
   readonly notifications: NotificationStore;
   /** The engine public-state mirror (§11): read-only; written only by the session (driver per-frame sync, plus one write on attach). */
   readonly round: RoundStore;
-  /** The betting panel's amount field (§9, V4): session-scoped, starts at DEFAULT_BET, independent of every other store. */
-  readonly betInput: BetInputStore;
+  /** E-X3: each bet slot's amount field (§9, V4), index = BetSlot: session-scoped, starts at DEFAULT_BET, independent of every other store. */
+  readonly betInputs: readonly [BetInputStore, BetInputStore];
   /** The rAF/wall-clock owner. Exposed for tests; production code attaches only via attachCanvas. */
   readonly driver: EngineDriver;
   /**
@@ -98,9 +116,10 @@ export interface GameSession {
   attachCanvas(canvas: HTMLCanvasElement): () => void;
   /**
    * The single command edge for components (§8). placeBet is dropped unless
-   * its amount is a valid stake (M1-D1/D2: whole cents, ≥ 0.01) the wallet
-   * can afford — the PLACE BET enable rule's own predicate (M1-D3, §23.5);
-   * everything is otherwise forwarded unchanged. The engine remains the validator of all
+   * its slot is 0 or 1 and its amount is a valid stake (M1-D1/D2: whole
+   * cents, ≥ 0.01) the wallet can afford once the stakes still in flight are
+   * reserved (E-X3) — the PLACE BET enable rule's own predicate (M1-D3,
+   * §23.5); everything is otherwise forwarded unchanged. The engine remains the validator of all
    * round-state questions (D4).
    */
   submit(command: EngineCommand): void;
@@ -142,7 +161,25 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   // the notification store) and once, immediately, inside attachCanvas.
   const round = createRoundStore(engine.getPublicState());
   // The bet input (§9, U5): plain state, no subscriptions — nothing to wire.
-  const betInput = createBetInputStore(DEFAULT_BET);
+  const betInputs = [createBetInputStore(DEFAULT_BET), createBetInputStore(DEFAULT_BET)] as const;
+  // E-X3: forwarded placeBet commands not yet answered. Each one the engine
+  // applies is answered by exactly one betPlaced (matched by slot and
+  // amount) or commandRejected (which carries the command itself).
+  type PlaceBet = EngineCommand & { type: "placeBet" };
+  const inFlight: PlaceBet[] = [];
+  const release = (match: (c: PlaceBet) => boolean) => {
+    const i = inFlight.findIndex(match);
+    if (i >= 0) inFlight.splice(i, 1);
+  };
+  engine.events.on("betPlaced", ({ slot, amount }) =>
+    release((c) => c.slot === slot && Object.is(c.amount, amount)),
+  );
+  engine.events.on("commandRejected", ({ command }) => {
+    if (command.type === "placeBet") release((c) => c === command);
+  });
+  /** The largest stake in flight for the other slot — what it may still debit. */
+  const otherSlotReserve = (slot: PlaceBet["slot"]) =>
+    inFlight.reduce((max, c) => (c.slot !== slot && c.amount > max ? c.amount : max), 0);
   const driver = new EngineDriver(engine);
   const createRenderer =
     deps.createRenderer ?? ((canvas: HTMLCanvasElement) => new SceneRenderer(canvas));
@@ -152,10 +189,18 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     wallet,
     notifications,
     round: round.store,
-    betInput,
+    betInputs,
     driver,
     submit: (command) => {
-      if (command.type === "placeBet" && !wallet.canPlaceStake(command.amount)) return;
+      if (command.type === "placeBet") {
+        if (!BET_SLOTS.includes(command.slot)) return;
+        // The other slot's stake in flight is already spent from this bet's point of view.
+        const available = +(wallet.get().balance - otherSlotReserve(command.slot)).toFixed(2);
+        if (!isPlaceableStake(command.amount, available)) return;
+        inFlight.push(command);
+      } else if (command.type === "cashOut" && !BET_SLOTS.includes(command.slot)) {
+        return;
+      }
       engine.submit(command);
     },
     attachCanvas: (canvas) => {

@@ -247,7 +247,7 @@ describe("notification store — development diagnostics", () => {
   const reject = (sources: ReturnType<typeof makeSources>, i: number) =>
     sources.emit("commandRejected", {
       roundId: i,
-      command: { type: "cashOut" },
+      command: { type: "cashOut", slot: 0 },
       reason: "not-diving",
     });
 

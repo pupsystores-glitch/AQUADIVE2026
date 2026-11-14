@@ -64,6 +64,8 @@ export const STRINGS = {
     increase: "+",
     /** Trailing space; the chain tier follows as a separate text node. */
     betLabelPrefix: "Bet · ",
+    /** E-X3: a bet slot's panel heading and accessible name (1-based). */
+    slotLabel: (n: number) => `BET ${n}`,
   },
   actions: {
     cashOut: (amount: string) => `CASH OUT · ${amount}`,

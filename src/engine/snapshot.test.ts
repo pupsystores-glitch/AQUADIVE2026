@@ -32,7 +32,7 @@ const advanceTicks = (engine: GameEngine, n: number) => {
 describe("EngineSnapshot — §14 model", () => {
   it("round-trips: restore(snapshot()) reproduces the state, the projections and the re-snapshot", () => {
     const a = makeEngine();
-    a.submit({ type: "placeBet", amount: 25 });
+    a.submit({ type: "placeBet", slot: 0, amount: 25 });
     advanceTicks(a, BETTING_TICKS + 100); // mid-dive, participant riding
 
     const s = a.snapshot();
@@ -50,7 +50,7 @@ describe("EngineSnapshot — §14 model", () => {
 
   it("is plain JSON-serializable data: a JSON round-trip is lossless", () => {
     const a = makeEngine();
-    a.submit({ type: "placeBet", amount: 10 });
+    a.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceTicks(a, BETTING_TICKS + 200);
     const s = a.snapshot();
     expect(JSON.parse(JSON.stringify(s))).toEqual(s);
@@ -78,7 +78,7 @@ describe("EngineSnapshot — §14 model", () => {
 
   it("continues the identical timeline: restore + identical commands + identical RNG (§14 determinism)", () => {
     const a = makeEngine();
-    a.submit({ type: "placeBet", amount: 10 });
+    a.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceTicks(a, BETTING_TICKS + 50);
 
     const b = makeEngine();
@@ -86,8 +86,8 @@ describe("EngineSnapshot — §14 model", () => {
 
     // Identical subsequent inputs on both engines: cash out, ride to the
     // sea floor, through impact and bonus, pick a chest, next round opens.
-    a.submit({ type: "cashOut" });
-    b.submit({ type: "cashOut" });
+    a.submit({ type: "cashOut", slot: 0 });
+    b.submit({ type: "cashOut", slot: 0 });
     for (let i = 0; i < 5000 && a.state === "diving"; i++) {
       a.advance(TICK_SECONDS);
       b.advance(TICK_SECONDS);
@@ -108,13 +108,13 @@ describe("EngineSnapshot — §14 model", () => {
 
   it("discards pending commands and accumulated wall time on restore", () => {
     const a = makeEngine();
-    a.submit({ type: "placeBet", amount: 10 });
+    a.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceTicks(a, BETTING_TICKS + 10); // diving, participant riding
     const s = a.snapshot();
 
     const cashouts: unknown[] = [];
     a.events.on("cashedOut", (p) => cashouts.push(p));
-    a.submit({ type: "cashOut" }); // queued on the abandoned timeline
+    a.submit({ type: "cashOut", slot: 0 }); // queued on the abandoned timeline
     a.advance(0.9 * TICK_SECONDS); // sub-tick wall time accumulated
     a.restore(s);
 
@@ -125,7 +125,7 @@ describe("EngineSnapshot — §14 model", () => {
 
     advanceTicks(a, 5);
     expect(cashouts).toEqual([]); // the queued command died with the timeline
-    expect(a.getPublicState().participant?.cashedOut).toBe(false);
+    expect(a.getPublicState().participants[0]?.cashedOut).toBe(false);
   });
 
   // E-X1 (docs/06 §5): bonus eligibility rides the participant slice and the
@@ -133,13 +133,13 @@ describe("EngineSnapshot — §14 model", () => {
   // continues the identical deterministic completion.
   it("E-X1: restore mid pick-window continues to the identical auto-pick and round end", () => {
     const a = makeEngine();
-    a.submit({ type: "placeBet", amount: 10 });
+    a.submit({ type: "placeBet", slot: 0, amount: 10 });
     for (let i = 0; i < 10000 && a.state !== "bonus"; i++) a.advance(TICK_SECONDS);
     expect(a.state).toBe("bonus");
     advanceTicks(a, 100);
 
     const s = a.snapshot();
-    expect(s.round.participant?.bonusEligible).toBe(true);
+    expect(s.round.participants[0]?.bonusEligible).toBe(true);
     expect(s.round.timerTicks).toBe(360 - 100);
     expect(s.round.chosenChestId).toBeNull();
     expect(JSON.parse(JSON.stringify(s))).toEqual(s);
@@ -166,14 +166,14 @@ describe("EngineSnapshot — §14 model", () => {
 
   it("E-X1: restore mid-bonus for an ineligible participant completes without a chestPicked", () => {
     const a = makeEngine();
-    a.submit({ type: "placeBet", amount: 10 });
+    a.submit({ type: "placeBet", slot: 0, amount: 10 });
     advanceTicks(a, BETTING_TICKS + 30);
-    a.submit({ type: "cashOut" });
+    a.submit({ type: "cashOut", slot: 0 });
     for (let i = 0; i < 10000 && a.state !== "bonus"; i++) a.advance(TICK_SECONDS);
     advanceTicks(a, 50);
 
     const s = a.snapshot();
-    expect(s.round.participant?.bonusEligible).toBe(false);
+    expect(s.round.participants[0]?.bonusEligible).toBe(false);
     expect(s.round.timerTicks).toBe(132 - 50);
 
     const b = makeEngine();
@@ -188,7 +188,7 @@ describe("EngineSnapshot — §14 model", () => {
   });
 
   it("E-X1: the participant shape change bumped the schema; a v1 snapshot is rejected", () => {
-    expect(SNAPSHOT_SCHEMA_VERSION).toBe(2);
+    expect(SNAPSHOT_SCHEMA_VERSION).toBe(3);
     const a = makeEngine();
     const before = a.snapshot();
     const errors: unknown[] = [];
@@ -198,6 +198,48 @@ describe("EngineSnapshot — §14 model", () => {
     expect(errors).toEqual([
       { roundId: 1, code: "snapshot-schema-mismatch", detail: { schemaVersion: 1 } },
     ]);
+  });
+
+  it("E-X3: the per-slot participants shape bumped the schema to 3; a v2 (single-participant) snapshot is rejected, state untouched", () => {
+    const a = makeEngine();
+    a.submit({ type: "placeBet", slot: 1, amount: 7 });
+    advanceTicks(a, 10);
+    const before = a.snapshot();
+    expect(before.round.participants).toEqual([
+      null,
+      { betAmount: 7, cashedOut: false, cashedOutAt: null, bonusEligible: false },
+    ]);
+    const errors: unknown[] = [];
+    a.events.on("engineError", (p) => errors.push(p));
+    const { participants: _p, ...round } = before.round;
+    const v2 = {
+      ...before,
+      schemaVersion: 2,
+      round: { ...round, participant: before.round.participants[1] },
+    } as unknown as typeof before;
+    a.restore(v2);
+    expect(a.snapshot()).toEqual(before);
+    advanceTicks(a, 1);
+    expect(errors).toEqual([
+      { roundId: 1, code: "snapshot-schema-mismatch", detail: { schemaVersion: 2 } },
+    ]);
+  });
+
+  it("E-X3: both slots round-trip through snapshot/restore without aliasing", () => {
+    const a = makeEngine();
+    a.submit({ type: "placeBet", slot: 0, amount: 3 });
+    a.submit({ type: "placeBet", slot: 1, amount: 4 });
+    advanceTicks(a, BETTING_TICKS + 10);
+    a.submit({ type: "cashOut", slot: 1 });
+    advanceTicks(a, 1);
+    const s = a.snapshot();
+    expect(s.round.participants[0]).toMatchObject({ betAmount: 3, cashedOut: false });
+    expect(s.round.participants[1]).toMatchObject({ betAmount: 4, cashedOut: true });
+    const b = makeEngine();
+    b.restore(s);
+    expect(b.snapshot()).toEqual(s);
+    s.round.participants[0]!.betAmount = 999; // the restored engine holds its own copy
+    expect(b.getPublicState().participants[0]?.betAmount).toBe(3);
   });
 
   it("rejects an unknown schema version: engineError reported, state untouched (§18 ring 1)", () => {

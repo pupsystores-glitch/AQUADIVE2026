@@ -3,7 +3,8 @@
 // from the component shell.
 //
 // E-X1 (docs/06 §5): only a bonus-eligible participant (auto-cashed at the
-// jackpot) sees and can use the picker; manual-cashout players and
+// jackpot) sees and can use the picker — E-X3: shown while any bet slot is
+// eligible; the one pick applies to every eligible slot; manual-cashout players and
 // spectators never do — the engine completes their bonus phase itself.
 // Chests, the chosen chest and eligibility are engine state mirrored by the
 // round store (not event history), so a remount during `bonus` restores the
@@ -20,7 +21,9 @@ const { round } = gameSession;
 
 export function ChestPicker() {
   const phase = useStore(round, (r) => r.phase);
-  const bonusEligible = useStore(round, (r) => r.participant?.bonusEligible ?? false);
+  const bonusEligible = useStore(round, (r) =>
+    r.participants.some((p) => p !== null && p.bonusEligible),
+  );
   const chests = useStore(round, (r) => r.chests);
   const chosenChestId = useStore(round, (r) => r.chosenChestId);
   const chosenChest = chests !== null && chosenChestId !== null ? chests[chosenChestId] : null;

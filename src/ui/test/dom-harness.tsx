@@ -21,7 +21,7 @@
 //   unchanged, proving the decomposition rendered the same UI (§21 tier 3).
 
 import { StrictMode, createElement, type ComponentType } from "react";
-import { act, cleanup, render, type RenderResult } from "@testing-library/react";
+import { act, cleanup, render, screen, within, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { onTestFinished, vi } from "vitest";
 import type { EngineStateName } from "@/engine";
@@ -183,6 +183,47 @@ function trackSubscriptions(session: GameSession): SubscriptionCounter {
   wallet.onFlash = (listener) => counted(onFlash(listener));
   return counter;
 }
+
+// ----- E-X3: slot-scoped queries -----
+//
+// Two bet panels render the same controls (PLACE BET, CASH OUT, the amount
+// field, quick bets). A slot's control is looked up in the whole screen
+// EXCEPT the other slot's panel, and must be unique there — so a control of
+// the wrong panel can never satisfy a query, and the non-panel controls
+// (chests, the dev banner) are still found as before.
+
+/** A bet slot's panel: role "group", named "BET 1" / "BET 2". */
+export const slotPanel = (slot: 0 | 1): HTMLElement =>
+  screen.getByRole("group", { name: `BET ${slot + 1}` });
+
+const outsideOther = (slot: 0 | 1, name: string | RegExp): HTMLElement[] => {
+  const other = slotPanel(slot === 0 ? 1 : 0);
+  return screen.queryAllByRole("button", { name }).filter((el) => !other.contains(el));
+};
+
+/** The one button with this name in slot `slot`'s panel or outside both panels. */
+export function slotButton(name: string | RegExp, slot: 0 | 1 = 0): HTMLElement {
+  const found = outsideOther(slot, name);
+  if (found.length !== 1) {
+    throw new Error(
+      `slotButton(${String(name)}, ${slot}): found ${found.length}, expected exactly 1`,
+    );
+  }
+  return found[0];
+}
+
+/** As slotButton, or null when absent (still never more than one). */
+export function querySlotButton(name: string | RegExp, slot: 0 | 1 = 0): HTMLElement | null {
+  const found = outsideOther(slot, name);
+  if (found.length > 1) {
+    throw new Error(`querySlotButton(${String(name)}, ${slot}): found ${found.length}`);
+  }
+  return found[0] ?? null;
+}
+
+/** A slot's amount field. */
+export const slotBetInput = (slot: 0 | 1 = 0): HTMLInputElement =>
+  within(slotPanel(slot)).getByRole("spinbutton") as HTMLInputElement;
 
 // ----- semantic outline -----
 

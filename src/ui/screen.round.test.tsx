@@ -15,10 +15,11 @@ import { Profiler, createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { formatMultiplier } from "@/game/presentation";
-import { bootScreen, type ScreenHarness } from "@/ui/test/dom-harness";
+import { bootScreen, type ScreenHarness, slotButton } from "@/ui/test/dom-harness";
+import { slot0View } from "@/ui/test/wallet-view";
 
 const PICKER = "Pirate Wreck — Pick a Chest";
-const button = (name: string | RegExp) => screen.getByRole("button", { name });
+const button = (name: string | RegExp) => slotButton(name);
 const balanceText = () => screen.getByText("Balance").nextSibling?.textContent;
 const multiplierText = () => screen.getByText("Multiplier").nextElementSibling?.textContent;
 const pickerShown = () => screen.queryByText(PICKER) !== null;
@@ -56,7 +57,7 @@ describe("bonus chest picker across remounts (U4b)", () => {
     h.tick();
     expect(button("+30.00×").hasAttribute("disabled")).toBe(true);
     expect(balanceText()).toBe("30990.00"); // 1990 + (10 × 3000 − 10 × 100)
-    const walletAfterPick = h.session.wallet.get();
+    const walletAfterPick = slot0View(h.session.wallet.get());
 
     mounted.unmount();
     h.mount();
@@ -67,18 +68,18 @@ describe("bonus chest picker across remounts (U4b)", () => {
     expect(balanceText()).toBe("30990.00");
 
     h.frames(1);
-    expect(h.session.wallet.get()).toBe(walletAfterPick); // the remount settled nothing
+    expect(slot0View(h.session.wallet.get())).toBe(walletAfterPick); // the remount settled nothing
     // A second pick is impossible from the UI (disabled) and rejected by the engine.
     h.session.submit({ type: "pickChest", chestId: 0 });
     h.tick();
     expect(picks).toEqual([2]);
-    expect(h.session.wallet.get()).toBe(walletAfterPick);
+    expect(slot0View(h.session.wallet.get())).toBe(walletAfterPick);
 
     h.untilState("betting");
     h.frames(1);
     expect(pickerShown()).toBe(false);
     expect(balanceText()).toBe("30990.00");
-    expect(h.session.wallet.get().history).toEqual([
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
       { mult: 3000, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -106,7 +107,7 @@ describe("bonus chest picker across remounts (U4b)", () => {
     h.frames(1);
     expect(picks).toEqual([0]);
     expect(balanceText()).toBe("2990.00");
-    expect(h.session.wallet.get().history).toEqual([
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
       { mult: 200, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -158,7 +159,7 @@ describe("bonus chest picker across remounts (U4b)", () => {
     expect(button("+6.50×").hasAttribute("disabled")).toBe(true); // revealed in the same frame
     expect(unpicked()).toEqual([true, true]);
     expect(balanceText()).toBe("7490.00"); // 1990 + (10 × 650 − 10 × 100)
-    const walletAfterPick = h.session.wallet.get();
+    const walletAfterPick = slot0View(h.session.wallet.get());
     expect(walletAfterPick.balance).toBe(7490);
 
     h.untilState("betting");
@@ -166,9 +167,9 @@ describe("bonus chest picker across remounts (U4b)", () => {
     expect(picks).toEqual([1]); // the window's expiry never applied chest 0
     expect(rejected).toEqual([]);
     expect(h.session.engine.getPublicState().chosenChestId).toBe(1); // still chest 1: nothing overwrote it
-    expect(h.session.wallet.get().balance).toBe(7490);
+    expect(slot0View(h.session.wallet.get()).balance).toBe(7490);
     expect(balanceText()).toBe("7490.00");
-    expect(h.session.wallet.get().history).toEqual([
+    expect(slot0View(h.session.wallet.get()).history).toEqual([
       { mult: 650, crashed: false },
       { mult: 100, crashed: false },
     ]);
@@ -190,7 +191,7 @@ describe("bonus chest picker across remounts (U4b)", () => {
     expect(balanceText()).toBe("2990.00");
     h.untilState("betting");
     expect(picks).toEqual([0]);
-    expect(h.session.wallet.get().balance).toBe(2990);
+    expect(slot0View(h.session.wallet.get()).balance).toBe(2990);
   });
 
   it("a manual-cashout player gets no picker after a remount, and a pick cannot credit", async () => {
@@ -203,7 +204,7 @@ describe("bonus chest picker across remounts (U4b)", () => {
     h.tick();
     h.untilState("bonus");
     h.frames(1);
-    const wallet = h.session.wallet.get();
+    const wallet = slot0View(h.session.wallet.get());
 
     first.unmount();
     h.mount();
@@ -213,7 +214,7 @@ describe("bonus chest picker across remounts (U4b)", () => {
     expect(unpicked()).toEqual([]);
     h.session.submit({ type: "pickChest", chestId: 2 }); // not reachable from the UI; the engine rejects it
     h.untilState("betting");
-    expect(h.session.wallet.get().balance).toBe(wallet.balance);
+    expect(slot0View(h.session.wallet.get()).balance).toBe(wallet.balance);
     expect(h.session.engine.getPublicState().chosenChestId).toBeNull();
   });
 
@@ -277,7 +278,7 @@ describe("frame-accurate synchronization (U4b)", () => {
         );
       }
       expect(document.body.textContent?.includes(PICKER)).toBe(
-        s.phase === "bonus" && s.participant?.bonusEligible === true,
+        s.phase === "bonus" && s.participants[0]?.bonusEligible === true,
       );
       if (s.phase === "bonus") break;
     }

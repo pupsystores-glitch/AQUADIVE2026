@@ -7,11 +7,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { CASH_FLASH_MS, JACKPOT_FLASH_MS } from "@/game/config";
-import { bootScreen } from "@/ui/test/dom-harness";
+import { bootScreen, slotButton } from "@/ui/test/dom-harness";
+import { slot0View } from "@/ui/test/wallet-view";
 
 const FRAMES_PER_SECOND = 60;
 const framesFor = (ms: number) => (ms / 1000) * FRAMES_PER_SECOND;
-const button = (name: string | RegExp) => screen.getByRole("button", { name });
+const button = (name: string | RegExp) => slotButton(name);
 const flashShown = () => screen.queryByText("CASHED OUT") !== null;
 
 /** Boot, bet 5, dive, cash out on the next tick. Returns the harness and the mounted result. */
@@ -45,7 +46,7 @@ describe("win flash — notification store (U4a)", () => {
 
     h.mount();
     expect(flashShown()).toBe(true); // shown again immediately — not restarted, not lost
-    const lastWin = h.session.wallet.get().lastWin!;
+    const lastWin = slot0View(h.session.wallet.get()).lastWin!;
     expect(screen.getByText(`+${lastWin.amount.toFixed(2)}`)).toBeTruthy();
 
     h.frames(framesFor(CASH_FLASH_MS) - 60 - 2); // just before the original deadline
@@ -97,6 +98,6 @@ describe("win flash — notification store (U4a)", () => {
     expect(flashShown()).toBe(true);
     h.frames(5);
     expect(flashShown()).toBe(false);
-    expect(h.session.wallet.get().balance).toBe(1990); // settlement untouched by the flash lifecycle
+    expect(slot0View(h.session.wallet.get()).balance).toBe(1990); // settlement untouched by the flash lifecycle
   });
 });

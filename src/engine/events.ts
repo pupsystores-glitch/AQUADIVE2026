@@ -13,7 +13,7 @@
 // - Listener exceptions are firewalled: caught and logged, remaining
 //   listeners still run. A broken FX hook must never kill settlement.
 
-import type { EngineCommand } from "./commands";
+import type { BetSlot, EngineCommand } from "./commands";
 import type { BonusChest } from "./domain/outcomes";
 
 /** Engine state names (§5) — the state machine itself lands in E4. */
@@ -22,13 +22,17 @@ export type EngineStateName = "betting" | "diving" | "crashed" | "impact" | "bon
 /** The §12 event map. Every payload carries the roundId it belongs to (§6). */
 export interface EngineEventMap {
   bettingOpened: { roundId: number };
-  betPlaced: { roundId: number; amount: number };
+  /** E-X3: `slot` is the accepted bet's slot. */
+  betPlaced: { roundId: number; slot: BetSlot; amount: number };
   commandRejected: { roundId: number; command: EngineCommand; reason: string };
   diveStarted: { roundId: number };
-  cashedOut: { roundId: number; multiplier: number };
+  /** E-X3: one event per slot cashed out manually. */
+  cashedOut: { roundId: number; slot: BetSlot; multiplier: number };
   crashed: { roundId: number; multiplier: number };
+  /** E-X3: every participating slot not yet cashed out is auto-cashed at the jackpot. */
   shipImpact: { roundId: number; jackpotMultiplier: number };
   chestsRevealed: { roundId: number; chests: [BonusChest, BonusChest, BonusChest] };
+  /** E-X3: one pick per round; it applies to every bonus-eligible slot. */
   chestPicked: {
     roundId: number;
     chestId: 0 | 1 | 2;

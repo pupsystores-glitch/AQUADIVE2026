@@ -22,11 +22,12 @@ export { EngineDriver, type EngineDriverSink } from "./driver";
 export {
   ENGINE_STATE_TO_PHASE,
   type ParticipantRoundState,
+  type ParticipantSlots,
   type RoundSnapshot,
 } from "./state-machine";
 export type { WorldSnapshot } from "./simulation";
 export { EventBus, type EngineEventMap, type EngineStateName } from "./events";
-export type { EngineCommand } from "./commands";
+export { BET_SLOTS, type BetSlot, type EngineCommand } from "./commands";
 export { createMathRandomRng, type Rng } from "./rng";
 export type { BonusChest } from "./domain/outcomes";
 export type { Creature } from "./domain/creatures";

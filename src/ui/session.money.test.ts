@@ -18,6 +18,7 @@ import { actionStateFor } from "./components/action-state";
 import { createGameSession, type GameSession } from "./session";
 import type { WalletRefusal } from "./store/wallet-store";
 import { adjacentDoubles, floorCentsBinary } from "./test/money-oracle";
+import { slot0View } from "@/ui/test/wallet-view";
 
 const FRAME = 1 / 60;
 
@@ -114,10 +115,10 @@ function play(seed: number, rounds: number): RunResult {
 
   const check = () => {
     const pub = engine.getPublicState();
-    const w = wallet.get();
+    const w = slot0View(wallet.get());
     // I8
-    expect(pub.participant !== null).toBe(w.participating);
-    if (pub.participant) expect(w.roundBet).toBe(pub.participant.betAmount);
+    expect(pub.participants[0] !== null).toBe(w.participating);
+    if (pub.participants[0]) expect(w.roundBet).toBe(pub.participants[0].betAmount);
     // I4 / I10 / ledger
     expect(Number.isFinite(w.balance) && w.balance >= 0).toBe(true);
     expect(w.balance).toBe(Number(ledger) / 100);
@@ -139,19 +140,20 @@ function play(seed: number, rounds: number): RunResult {
       if (player.next() >= 0.15) {
         const choice = STAKES[Math.floor(player.next() * STAKES.length)];
         // A few all-in bets exercise the balance boundary.
-        const amount = player.next() < 0.05 ? wallet.get().balance : choice;
-        session.submit({ type: "placeBet", amount });
+        const amount = player.next() < 0.05 ? slot0View(wallet.get()).balance : choice;
+        session.submit({ type: "placeBet", slot: 0, amount });
       }
     }
-    if (state === "diving" && ticksInState === cashAtTick) session.submit({ type: "cashOut" });
+    if (state === "diving" && ticksInState === cashAtTick)
+      session.submit({ type: "cashOut", slot: 0 });
     if (state === "bonus" && ticksInState === pickAtTick) {
       session.submit({ type: "pickChest", chestId: Math.floor(player.next() * 3) as 0 | 1 | 2 });
     }
     engine.advance(FRAME);
     ticksInState++;
     check();
-    if (trail.length === 0 || trail[trail.length - 1] !== wallet.get().balance) {
-      trail.push(wallet.get().balance);
+    if (trail.length === 0 || trail[trail.length - 1] !== slot0View(wallet.get()).balance) {
+      trail.push(slot0View(wallet.get()).balance);
     }
   }
   expect(roundsSeen).toBe(rounds);
@@ -174,7 +176,7 @@ describe("M1 integration — repeated cycles through session.submit only", () =>
     const b = play(7, 40);
     expect(b.events).toEqual(a.events);
     expect(b.trail).toEqual(a.trail);
-    expect(b.session.wallet.get()).toEqual(a.session.wallet.get());
+    expect(slot0View(b.session.wallet.get())).toEqual(slot0View(a.session.wallet.get()));
   }, 120_000);
 });
 
@@ -209,12 +211,12 @@ describe("M1 integration — invalid stakes from every caller", () => {
       session.engine.events.on("commandRejected", (p) => log.push(JSON.stringify(p)));
       if (withInvalid) {
         for (const amount of [0, 0.004, 0.005, 1.005, NaN, Infinity, -1]) {
-          session.submit({ type: "placeBet", amount });
+          session.submit({ type: "placeBet", slot: 0, amount });
         }
       }
-      session.submit({ type: "placeBet", amount: 0.01 });
+      session.submit({ type: "placeBet", slot: 0, amount: 0.01 });
       for (let i = 0; i < 2000; i++) session.engine.advance(FRAME);
-      return { log, snap: session.engine.snapshot(), wallet: session.wallet.get() };
+      return { log, snap: session.engine.snapshot(), wallet: slot0View(session.wallet.get()) };
     };
     const clean = run(false);
     const noisy = run(true);
@@ -244,19 +246,19 @@ describe("M1 integration — invalid stakes from every caller", () => {
     });
     const rejections: unknown[] = [];
     session.engine.events.on("commandRejected", (p) => rejections.push(p));
-    session.engine.submit({ type: "placeBet", amount: 0.005 });
+    session.engine.submit({ type: "placeBet", slot: 0, amount: 0.005 });
     for (let i = 0; i < 3000 && session.engine.state !== "bonus"; i++)
       session.engine.advance(FRAME);
     session.engine.submit({ type: "pickChest", chestId: 0 });
     for (let i = 0; i < 3000 && session.engine.state !== "betting"; i++)
       session.engine.advance(FRAME);
-    expect(session.wallet.get().balance).toBe(DEFAULT_BALANCE);
-    expect(session.wallet.get().lastWin).toBeNull();
-    expect(session.wallet.get().participating).toBe(false);
+    expect(slot0View(session.wallet.get()).balance).toBe(DEFAULT_BALANCE);
+    expect(slot0View(session.wallet.get()).lastWin).toBeNull();
+    expect(slot0View(session.wallet.get()).participating).toBe(false);
     expect(refusals).toEqual([]);
     expect(rejections[0]).toEqual(
       expect.objectContaining({
-        command: { type: "placeBet", amount: 0.005 },
+        command: { type: "placeBet", slot: 0, amount: 0.005 },
         reason: "invalid-amount",
       }),
     );
@@ -301,14 +303,14 @@ describe("M1 integration — W11 at the 2^44 boundary with the real engine (owne
 
     const check = () => {
       const pub = engine.getPublicState();
-      const w = wallet.get();
-      expect(pub.participant !== null).toBe(w.participating); // I8
-      if (pub.participant) expect(w.roundBet).toBe(pub.participant.betAmount);
+      const w = slot0View(wallet.get());
+      expect(pub.participants[0] !== null).toBe(w.participating); // I8
+      if (pub.participants[0]) expect(w.roundBet).toBe(pub.participants[0].betAmount);
       expect(w.balance).toBeLessThan(2 ** 44); // the W11 invariant
     };
     const playRound = (stake: number) => {
       round++;
-      session.submit({ type: "placeBet", amount: stake });
+      session.submit({ type: "placeBet", slot: 0, amount: stake });
       for (let i = 0; i < 20_000 && engine.state !== "bonus"; i++) {
         engine.advance(FRAME);
         check();
@@ -322,11 +324,11 @@ describe("M1 integration — W11 at the 2^44 boundary with the real engine (owne
 
     const S = 7592186044416; // 1e13 − S + 2S = 2^44 exactly
     playRound(1000); // jackpot 1e10 → balance 1e13; chest ×1 → delta 0
-    expect(wallet.get().balance).toBe(10_000_000_000_000);
+    expect(slot0View(wallet.get()).balance).toBe(10_000_000_000_000);
     playRound(S);
-    expect(wallet.get().balance).toBe(10_000_000_000_000 - S);
-    expect(wallet.get().hasCashed).toBe(false); // not settled: held as a claim
-    expect(wallet.get().history).toEqual([
+    expect(slot0View(wallet.get()).balance).toBe(10_000_000_000_000 - S);
+    expect(slot0View(wallet.get()).hasCashed).toBe(false); // not settled: held as a claim
+    expect(slot0View(wallet.get()).history).toEqual([
       { mult: 1e10, crashed: false },
       { mult: 1e10, crashed: false },
     ]); // no entry for round 2 (neither a win nor a loss)
@@ -334,7 +336,7 @@ describe("M1 integration — W11 at the 2^44 boundary with the real engine (owne
 
     // The engine settled each round exactly once; round 2's events credited nothing.
     expect(settlements.filter((e) => e.startsWith("2:"))).toEqual([
-      `2:betPlaced:${JSON.stringify({ roundId: 2, amount: S })}`,
+      `2:betPlaced:${JSON.stringify({ roundId: 2, slot: 0, amount: S })}`,
       `2:shipImpact:${JSON.stringify({ roundId: 2, jackpotMultiplier: 2 })}`,
       `2:chestPicked:${JSON.stringify({ roundId: 2, chestId: 0, chestMultiplier: 1.5, finalMultiplier: 3 })}`,
     ]);
@@ -346,6 +348,7 @@ describe("M1 integration — W11 at the 2^44 boundary with the real engine (owne
     expect(wallet.unresolvedClaims()).toEqual([
       expect.objectContaining({
         roundId: 2,
+        slot: 0,
         stake: S,
         event: "shipImpact",
         rule: "W11",
@@ -354,6 +357,7 @@ describe("M1 integration — W11 at the 2^44 boundary with the real engine (owne
       }),
       expect.objectContaining({
         roundId: 2,
+        slot: 0,
         stake: S,
         event: "chestPicked",
         rule: "W11",
@@ -362,9 +366,11 @@ describe("M1 integration — W11 at the 2^44 boundary with the real engine (owne
       }),
     ]);
     // Exact integer-cent ledger: 1e15 − s − 100 + 200 (jackpot) + 100 (chest delta).
-    expect(BigInt(Math.round(wallet.get().balance * 100))).toBe(1_000_000_000_000_000n - s + 200n);
-    expect(wallet.get().balance).toBe(2407813955586);
-    expect(wallet.get().history.slice(0, 2)).toEqual([
+    expect(BigInt(Math.round(slot0View(wallet.get()).balance * 100))).toBe(
+      1_000_000_000_000_000n - s + 200n,
+    );
+    expect(slot0View(wallet.get()).balance).toBe(2407813955586);
+    expect(slot0View(wallet.get()).history.slice(0, 2)).toEqual([
       { mult: 3, crashed: false },
       { mult: 2, crashed: false },
     ]);
@@ -395,8 +401,8 @@ const recordedSession = (authority: RoundAuthority, refusals: WalletRefusal[]): 
 
 /** I8 at this instant: engine participant ⇔ wallet participating; the locked bet is the engine's betAmount. */
 const expectI8 = (session: GameSession, where = "") => {
-  const participant = session.engine.getPublicState().participant;
-  const w = session.wallet.get();
+  const participant = session.engine.getPublicState().participants[0];
+  const w = slot0View(session.wallet.get());
   expect(participant !== null, `I8 ${where}`).toBe(w.participating);
   if (participant) expect(w.roundBet, `I8 ${where}`).toBe(participant.betAmount);
 };
@@ -455,16 +461,16 @@ describe("M1 integration — statistical edge regression (MT-02)", () => {
       cashed.push({ multiplier, state: engine.state });
     });
     const reachedTarget = () => engine.getPublicState().multiplier >= target;
-    session.submit({ type: "placeBet", amount: stake });
+    session.submit({ type: "placeBet", slot: 0, amount: stake });
     runUntil(session, () => engine.state === "diving");
     runUntil(session, () => engine.state !== "diving" || reachedTarget());
     expect(engine.state).toBe("diving");
-    const before = cents(wallet.get().balance);
-    session.submit({ type: "cashOut" });
+    const before = cents(slot0View(wallet.get()).balance);
+    session.submit({ type: "cashOut", slot: 0 });
     engine.advance(FRAME);
     expect(cashed).toHaveLength(1);
     expect(cashed[0].state).toBe("diving"); // the engine was still diving when the cashout applied
-    return { M: cashed[0].multiplier, C: cents(wallet.get().balance) - before };
+    return { M: cashed[0].multiplier, C: cents(slot0View(wallet.get()).balance) - before };
   };
 
   for (const [stake, target] of cases) {
@@ -537,14 +543,14 @@ describe("M1 integration — every settlement path with boundary stakes (MT-03)"
       let prev = cents(DEFAULT_BALANCE);
       const credits: bigint[] = [];
       const credit = () => {
-        const now = cents(wallet.get().balance);
+        const now = cents(slot0View(wallet.get()).balance);
         credits.push(now - prev);
         prev = now;
       };
       const cashedAt: number[] = [];
       const picks: Array<EngineEventMap["chestPicked"]> = [];
       engine.events.on("betPlaced", () => {
-        prev = cents(wallet.get().balance);
+        prev = cents(slot0View(wallet.get()).balance);
       });
       engine.events.on("cashedOut", ({ multiplier }) => {
         cashedAt.push(multiplier);
@@ -558,11 +564,11 @@ describe("M1 integration — every settlement path with boundary stakes (MT-03)"
       const ended = roundsEnded(session);
       const check = () => expectI8(session);
 
-      if (participates) session.submit({ type: "placeBet", amount: stake });
+      if (participates) session.submit({ type: "placeBet", slot: 0, amount: stake });
       if (path === "manual cashout") {
         runUntil(session, () => engine.state === "diving", check);
         runUntil(session, () => engine.getPublicState().multiplier >= 1.5, check);
-        session.submit({ type: "cashOut" });
+        session.submit({ type: "cashOut", slot: 0 });
       }
       if (path === "jackpot + chest pick") {
         runUntil(session, () => engine.state === "bonus", check);
@@ -632,11 +638,11 @@ describe("M1 integration — every settlement path with boundary stakes (MT-03)"
       expect(refusals).toEqual([]);
       expect(credits).toEqual(expected.credits);
       expect(credits.reduce((a, b) => a + b, 0n)).toBe(expected.total);
-      expect(cents(wallet.get().balance)).toBe(
+      expect(cents(slot0View(wallet.get()).balance)).toBe(
         cents(DEFAULT_BALANCE) - stakeCents + expected.total,
       );
-      expect(wallet.get().history).toEqual(expected.history);
-      expect(wallet.get().lastWin).toEqual(expected.lastWin);
+      expect(slot0View(wallet.get()).history).toEqual(expected.history);
+      expect(slot0View(wallet.get()).lastWin).toEqual(expected.lastWin);
     },
     60_000,
   );
@@ -678,38 +684,42 @@ describe("M1 integration — consistency cases (MT-04)", () => {
     const placed: unknown[] = [];
     engine.events.on("commandRejected", (p) => rejected.push(p));
     engine.events.on("betPlaced", (p) => placed.push(p));
-    const actionBefore = actionStateFor(engine.getPublicState(), wallet.get(), DEFAULT_BET);
+    const actionBefore = actionStateFor(
+      engine.getPublicState(),
+      slot0View(wallet.get()),
+      DEFAULT_BET,
+    );
     expect(actionBefore).toEqual({ kind: "placeBet", enabled: true });
 
-    for (const amount of invalid) engine.submit({ type: "placeBet", amount });
+    for (const amount of invalid) engine.submit({ type: "placeBet", slot: 0, amount });
     engine.advance(FRAME);
     expect(rejected.map((r) => r.reason)).toEqual(invalid.map(() => "invalid-amount"));
     expect(rejected.map((r) => r.command)).toEqual(
-      invalid.map((amount) => ({ type: "placeBet", amount })),
+      invalid.map((amount) => ({ type: "placeBet", slot: 0, amount })),
     );
     expect(placed).toEqual([]);
-    expect(engine.getPublicState().participant).toBeNull();
-    expect(wallet.get()).toMatchObject({
+    expect(engine.getPublicState().participants[0]).toBeNull();
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: DEFAULT_BALANCE,
       participating: false,
       roundBet: 0,
     });
-    expect(actionStateFor(engine.getPublicState(), wallet.get(), DEFAULT_BET)).toEqual(
+    expect(actionStateFor(engine.getPublicState(), slot0View(wallet.get()), DEFAULT_BET)).toEqual(
       actionBefore,
     );
 
     // A full round to jackpot + chest.
     const ended = roundsEnded(session);
     const check = () => {
-      expect(engine.getPublicState().participant).toBeNull();
-      expect(wallet.get().participating).toBe(false);
+      expect(engine.getPublicState().participants[0]).toBeNull();
+      expect(slot0View(wallet.get()).participating).toBe(false);
     };
     runUntil(session, () => engine.state === "bonus", check);
     engine.submit({ type: "pickChest", chestId: 0 });
     runUntil(session, () => ended() === 1, check);
     expect(rejected.slice(invalid.length).map((r) => r.reason)).toEqual(["not-bonus-eligible"]);
     expect(placed).toEqual([]);
-    expect(wallet.get()).toMatchObject({ balance: DEFAULT_BALANCE, lastWin: null });
+    expect(slot0View(wallet.get())).toMatchObject({ balance: DEFAULT_BALANCE, lastWin: null });
     expect(refusals).toEqual([]);
   });
 
@@ -717,20 +727,27 @@ describe("M1 integration — consistency cases (MT-04)", () => {
     const refusals: WalletRefusal[] = [];
     const session = recordedSession(scripted(500, 50), refusals);
     const { engine, wallet } = session;
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     for (const amount of [0.004, 0, NaN, Infinity]) {
-      engine.events.emit("betPlaced", { roundId: engine.getPublicState().roundId, amount });
+      engine.events.emit("betPlaced", {
+        slot: 0,
+        roundId: engine.getPublicState().roundId,
+        amount,
+      });
       engine.events.dispatchQueued();
     }
-    expect(wallet.get()).toBe(before); // no snapshot written
+    expect(slot0View(wallet.get())).toBe(before); // no snapshot written
     expect(refusals.map((r) => `${r.event}:${r.rule}`)).toEqual([
       "betPlaced:W1",
       "betPlaced:W1",
       "betPlaced:W1",
       "betPlaced:W1",
     ]);
-    expect(engine.getPublicState().participant).toBeNull();
-    expect(wallet.get()).toMatchObject({ balance: DEFAULT_BALANCE, participating: false });
+    expect(engine.getPublicState().participants[0]).toBeNull();
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: DEFAULT_BALANCE,
+      participating: false,
+    });
 
     const ended = roundsEnded(session);
     runUntil(
@@ -738,7 +755,7 @@ describe("M1 integration — consistency cases (MT-04)", () => {
       () => ended() === 1,
       () => expectI8(session),
     );
-    expect(wallet.get()).toMatchObject({ balance: DEFAULT_BALANCE, lastWin: null });
+    expect(slot0View(wallet.get())).toMatchObject({ balance: DEFAULT_BALANCE, lastWin: null });
     expect(refusals).toHaveLength(4);
   });
 
@@ -753,21 +770,27 @@ describe("M1 integration — consistency cases (MT-04)", () => {
     const picks: unknown[] = [];
     engine.events.on("chestPicked", (p) => picks.push(p));
 
-    engine.events.emit("betPlaced", { roundId: 1, amount: 10 });
+    engine.events.emit("betPlaced", { roundId: 1, slot: 0, amount: 10 });
     engine.events.dispatchQueued();
-    expect(engine.getPublicState().participant).toBeNull();
-    expect(wallet.get()).toMatchObject({ balance: 990, participating: true, roundBet: 10 });
-    expect(actionStateFor(engine.getPublicState(), wallet.get(), DEFAULT_BET).kind).toBe(
+    expect(engine.getPublicState().participants[0]).toBeNull();
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: 990,
+      participating: true,
+      roundBet: 10,
+    });
+    expect(actionStateFor(engine.getPublicState(), slot0View(wallet.get()), DEFAULT_BET).kind).toBe(
       "betLocked",
     );
 
     runUntil(session, () => engine.state === "diving");
-    expect(engine.getPublicState().participant).toBeNull();
-    expect(actionStateFor(engine.getPublicState(), wallet.get(), DEFAULT_BET).kind).toBe("cashOut");
+    expect(engine.getPublicState().participants[0]).toBeNull();
+    expect(actionStateFor(engine.getPublicState(), slot0View(wallet.get()), DEFAULT_BET).kind).toBe(
+      "cashOut",
+    );
 
     runUntil(session, () => engine.state === "impact");
-    expect(engine.getPublicState().participant).toBeNull();
-    expect(wallet.get()).toMatchObject({
+    expect(engine.getPublicState().participants[0]).toBeNull();
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 1010, // 990 + 10 × J: money moved for a participation the engine never had
       lastWin: { amount: 20, mult: J },
       settledBy: "jackpot",
@@ -776,7 +799,11 @@ describe("M1 integration — consistency cases (MT-04)", () => {
     const ended = roundsEnded(session);
     runUntil(session, () => ended() === 1);
     expect(picks).toEqual([]); // no eligible engine participant: no chest
-    expect(wallet.get()).toMatchObject({ balance: 1010, participating: false, roundBet: 0 });
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: 1010,
+      participating: false,
+      roundBet: 0,
+    });
     expect(refusals).toEqual([]);
   });
 
@@ -784,18 +811,20 @@ describe("M1 integration — consistency cases (MT-04)", () => {
     const refusals: WalletRefusal[] = [];
     const session = recordedSession(scripted(500, 50), refusals);
     const { engine, wallet } = session;
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     engine.advance(FRAME);
-    const before = wallet.get();
+    const before = slot0View(wallet.get());
     expect(before).toMatchObject({ balance: 990, roundBet: 10, participating: true });
 
     for (const amount of [10, 20]) {
-      engine.events.emit("betPlaced", { roundId: 1, amount });
+      engine.events.emit("betPlaced", { slot: 0, roundId: 1, amount });
       engine.events.dispatchQueued();
     }
-    expect(wallet.get()).toBe(before);
+    expect(slot0View(wallet.get())).toBe(before);
     expect(refusals.map((r) => `${r.event}:${r.rule}`)).toEqual(["betPlaced:W2", "betPlaced:W2"]);
-    expect(wallet.get().roundBet).toBe(engine.getPublicState().participant?.betAmount);
+    expect(slot0View(wallet.get()).roundBet).toBe(
+      engine.getPublicState().participants[0]?.betAmount,
+    );
     expectI8(session);
   });
 
@@ -810,18 +839,22 @@ describe("M1 integration — consistency cases (MT-04)", () => {
       for (const amount of amounts) submit(session, amount);
       engine.advance(FRAME);
       expectI8(session);
-      expect(engine.getPublicState().participant?.betAmount).toBe(10);
-      expect(wallet.get()).toMatchObject({ balance: 990, roundBet: 10, participating: true });
-      expect(actionStateFor(engine.getPublicState(), wallet.get(), DEFAULT_BET).kind).toBe(
-        "betLocked",
-      );
+      expect(engine.getPublicState().participants[0]?.betAmount).toBe(10);
+      expect(slot0View(wallet.get())).toMatchObject({
+        balance: 990,
+        roundBet: 10,
+        participating: true,
+      });
+      expect(
+        actionStateFor(engine.getPublicState(), slot0View(wallet.get()), DEFAULT_BET).kind,
+      ).toBe("betLocked");
       expect(refusals).toEqual([]);
       return log;
     };
     const direct = (session: GameSession, amount: number) =>
-      session.engine.submit({ type: "placeBet", amount });
+      session.engine.submit({ type: "placeBet", slot: 0, amount });
     const viaSession = (session: GameSession, amount: number) =>
-      session.submit({ type: "placeBet", amount });
+      session.submit({ type: "placeBet", slot: 0, amount });
 
     expect(run(direct, [0.005, 10])).toEqual(["rejected:invalid-amount", "betPlaced:10"]);
     // The engine checks participation before the amount (E-X2 order).
@@ -851,16 +884,16 @@ describe("M1 integration — consistency cases (MT-04)", () => {
     engine.events.on("stateChanged", ({ from, to }) => order.push(`stateChanged:${from}→${to}`));
     engine.events.on("diveStarted", () => {
       order.push("diveStarted");
-      balanceAtDive.push(wallet.get().balance);
+      balanceAtDive.push(slot0View(wallet.get()).balance);
     });
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     engine.advance(FRAME);
 
     expect(order).toEqual(["betPlaced", "stateChanged:betting→diving", "diveStarted"]);
     expect(balanceAtDive).toEqual([990]);
     expect(engine.state).toBe("diving");
     expectI8(session);
-    expect(actionStateFor(engine.getPublicState(), wallet.get(), DEFAULT_BET)).toEqual({
+    expect(actionStateFor(engine.getPublicState(), slot0View(wallet.get()), DEFAULT_BET)).toEqual({
       kind: "cashOut",
     });
     expect(refusals).toEqual([]);
@@ -878,10 +911,13 @@ describe("M1 integration — restore with a participant (MT-05)", () => {
   it("KNOWN LIMITATION V6/L3 — expected violation, not a guarantee (§23.15 V6, §23.12 case 9): a snapshot with a participant restored into a fresh session — the engine participates, the wallet does not; PLACE BET is offered and rejected; the round pays the wallet nothing; round 2 recovers", () => {
     // MT-05a, forward direction (M1-D11).
     const a = recordedSession(scripted(2, 1.5), []);
-    a.submit({ type: "placeBet", amount: 10 });
+    a.submit({ type: "placeBet", slot: 0, amount: 10 });
     a.engine.advance(FRAME);
     const snapshot = a.engine.snapshot();
-    expect(snapshot.round).toMatchObject({ state: "betting", participant: { betAmount: 10 } });
+    expect(snapshot.round).toMatchObject({
+      state: "betting",
+      participants: [{ betAmount: 10 }, null],
+    });
 
     const refusals: WalletRefusal[] = [];
     const b = recordedSession(scripted(2, 1.5), refusals);
@@ -893,47 +929,58 @@ describe("M1 integration — restore with a participant (MT-05)", () => {
     const ended = roundsEnded(b);
 
     engine.restore(snapshot);
-    expect(engine.getPublicState().participant).toMatchObject({ betAmount: 10, cashedOut: false });
-    expect(wallet.get()).toMatchObject({ balance: 1000, participating: false, roundBet: 0 }); // I8 violated
-    expect(actionStateFor(engine.getPublicState(), wallet.get(), 10)).toEqual({
+    expect(engine.getPublicState().participants[0]).toMatchObject({
+      betAmount: 10,
+      cashedOut: false,
+    });
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: 1000,
+      participating: false,
+      roundBet: 0,
+    }); // I8 violated
+    expect(actionStateFor(engine.getPublicState(), slot0View(wallet.get()), 10)).toEqual({
       kind: "placeBet",
       enabled: true,
     });
-    b.submit({ type: "placeBet", amount: 10 }); // offered by the button, so I3 is violated
+    b.submit({ type: "placeBet", slot: 0, amount: 10 }); // offered by the button, so I3 is violated
     engine.advance(FRAME);
     expect(rejected).toEqual(["already-participating"]);
-    expect(wallet.get().balance).toBe(1000);
+    expect(slot0View(wallet.get()).balance).toBe(1000);
 
     runUntil(b, () => engine.state === "diving");
-    expect(actionStateFor(engine.getPublicState(), wallet.get(), DEFAULT_BET).kind).toBe(
+    expect(actionStateFor(engine.getPublicState(), slot0View(wallet.get()), DEFAULT_BET).kind).toBe(
       "spectating",
     );
 
     runUntil(b, () => engine.state === "impact");
-    expect(engine.getPublicState().participant).toMatchObject({
+    expect(engine.getPublicState().participants[0]).toMatchObject({
       cashedOut: true,
       cashedOutAt: 2,
       bonusEligible: true,
     });
-    expect(wallet.get()).toMatchObject({ balance: 1000, lastWin: null, participating: false });
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: 1000,
+      lastWin: null,
+      participating: false,
+    });
 
     runUntil(b, () => engine.state === "bonus");
     b.submit({ type: "pickChest", chestId: 1 });
     engine.advance(FRAME);
     expect(picks).toEqual([{ roundId: 1, chestId: 1, chestMultiplier: 1.5, finalMultiplier: 3 }]);
-    expect(wallet.get()).toMatchObject({ balance: 1000, lastWin: null });
+    expect(slot0View(wallet.get())).toMatchObject({ balance: 1000, lastWin: null });
     expect(refusals).toEqual([]);
     expect(wallet.unresolvedClaims()).toEqual([]);
 
     // Round 2 recovers: the bet debits and settles exactly (jackpot 2, then chest 0 by timeout).
     runUntil(b, () => ended() === 1);
-    b.submit({ type: "placeBet", amount: 10 });
+    b.submit({ type: "placeBet", slot: 0, amount: 10 });
     runUntil(
       b,
       () => ended() === 2,
       () => expectI8(b, "round 2"),
     );
-    expect(cents(wallet.get().balance)).toBe(100000n - 1000n + 2000n + 1000n); // −10, +20, +(30 − 20)
+    expect(cents(slot0View(wallet.get()).balance)).toBe(100000n - 1000n + 2000n + 1000n); // −10, +20, +(30 − 20)
     expect(refusals).toEqual([]);
     expect(wallet.unresolvedClaims()).toEqual([]);
   });
@@ -948,16 +995,24 @@ describe("M1 integration — restore with a participant (MT-05)", () => {
     const ended = roundsEnded(session);
 
     const snapshot = engine.snapshot(); // round 1 betting, no participant
-    session.submit({ type: "placeBet", amount: 10 });
+    session.submit({ type: "placeBet", slot: 0, amount: 10 });
     engine.advance(FRAME);
-    expect(wallet.get()).toMatchObject({ balance: 990, participating: true, roundBet: 10 });
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: 990,
+      participating: true,
+      roundBet: 10,
+    });
 
     engine.restore(snapshot);
-    expect(engine.getPublicState().participant).toBeNull();
-    expect(wallet.get()).toMatchObject({ balance: 990, participating: true, roundBet: 10 }); // I8 violated
+    expect(engine.getPublicState().participants[0]).toBeNull();
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: 990,
+      participating: true,
+      roundBet: 10,
+    }); // I8 violated
 
     runUntil(session, () => engine.state === "impact");
-    expect(wallet.get()).toMatchObject({
+    expect(slot0View(wallet.get())).toMatchObject({
       balance: 1010, // 990 + 10 × 2: money moves (Q4 correction)
       lastWin: { amount: 20, mult: 2 },
     });
@@ -967,6 +1022,10 @@ describe("M1 integration — restore with a participant (MT-05)", () => {
     expect(refusals).toEqual([]);
     // bettingOpened of round 2 (a different roundId) resets the participation.
     expect(engine.getPublicState().roundId).toBe(2);
-    expect(wallet.get()).toMatchObject({ balance: 1010, participating: false, roundBet: 0 });
+    expect(slot0View(wallet.get())).toMatchObject({
+      balance: 1010,
+      participating: false,
+      roundBet: 0,
+    });
   });
 });

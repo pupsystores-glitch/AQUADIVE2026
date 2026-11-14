@@ -27,7 +27,7 @@ const state = (over: Partial<EnginePublicState> = {}): EnginePublicState => ({
   countdownSeconds: 5,
   multiplier: 1,
   boost: 0,
-  participant: null,
+  participants: [null, null],
   chests: null,
   chosenChestId: null,
   ...over,
@@ -40,11 +40,13 @@ describe("createRoundStore — seed and surface", () => {
   });
 
   it("exposes only get/subscribe; the snapshot and its sub-objects are frozen", () => {
-    const { store } = createRoundStore(state({ participant: participant(), chests: chests() }));
+    const { store } = createRoundStore(
+      state({ participants: [participant(), null], chests: chests() }),
+    );
     expect(Object.keys(store).sort()).toEqual(["get", "subscribe"]);
     const s = store.get();
     expect(Object.isFrozen(s)).toBe(true);
-    expect(Object.isFrozen(s.participant)).toBe(true);
+    expect(Object.isFrozen(s.participants[0])).toBe(true);
     expect(Object.isFrozen(s.chests)).toBe(true);
     expect(s.chests!.every((c) => Object.isFrozen(c))).toBe(true);
     expect(() => {
@@ -54,8 +56,8 @@ describe("createRoundStore — seed and surface", () => {
 
   it("copies only the public fields (an engine object with extra fields does not leak them)", () => {
     const extra = { ...participant(), secret: 1 } as unknown as ParticipantRoundState;
-    const { store } = createRoundStore(state({ participant: extra }));
-    expect(Object.keys(store.get().participant!).sort()).toEqual([
+    const { store } = createRoundStore(state({ participants: [extra, null] }));
+    expect(Object.keys(store.get().participants[0]!).sort()).toEqual([
       "betAmount",
       "bonusEligible",
       "cashedOut",
@@ -68,14 +70,14 @@ describe("createRoundStore — writes, identity and notification", () => {
   it("an unchanged write keeps the snapshot by reference and notifies nobody", () => {
     const p = participant();
     const c = chests();
-    const { store, write } = createRoundStore(state({ participant: p, chests: c }));
+    const { store, write } = createRoundStore(state({ participants: [p, null], chests: c }));
     const before = store.get();
     const listener = vi.fn();
     store.subscribe(listener);
     // A fresh public-state object each time, as getPublicState() builds per frame.
-    for (let i = 0; i < 5; i++) write(state({ participant: p, chests: c }));
+    for (let i = 0; i < 5; i++) write(state({ participants: [p, null], chests: c }));
     // Equal values from different source objects are still unchanged.
-    write(state({ participant: participant(), chests: chests() }));
+    write(state({ participants: [participant(), null], chests: chests() }));
     expect(store.get()).toBe(before);
     expect(listener).not.toHaveBeenCalled();
   });
@@ -104,7 +106,7 @@ describe("createRoundStore — writes, identity and notification", () => {
     const { store, write } = createRoundStore(
       state({
         phase: "bonus",
-        participant: participant({ bonusEligible: true }),
+        participants: [participant({ bonusEligible: true }), null],
         chests: chests(),
       }),
     );
@@ -112,14 +114,14 @@ describe("createRoundStore — writes, identity and notification", () => {
     write(
       state({
         phase: "bonus",
-        participant: participant({ bonusEligible: true }),
+        participants: [participant({ bonusEligible: true }), null],
         chests: chests(),
         chosenChestId: 2,
       }),
     );
     const after = store.get();
     expect(after).not.toBe(before);
-    expect(after.participant).toBe(before.participant);
+    expect(after.participants[0]).toBe(before.participants[0]);
     expect(after.chests).toBe(before.chests);
   });
 });
@@ -127,15 +129,15 @@ describe("createRoundStore — writes, identity and notification", () => {
 describe("createRoundStore — mutable participant data (C6)", () => {
   it("the stored participant is a copy: mutating the source afterwards cannot change the stored snapshot", () => {
     const live = participant();
-    const { store } = createRoundStore(state({ phase: "diving", participant: live }));
+    const { store } = createRoundStore(state({ phase: "diving", participants: [live, null] }));
     const held = store.get();
-    expect(held.participant).not.toBe(live);
+    expect(held.participants[0]).not.toBe(live);
 
     // What the engine does at impact: flip fields on its own object in place.
     live.cashedOut = true;
     live.cashedOutAt = 100;
     live.bonusEligible = true;
-    expect(held.participant).toEqual({
+    expect(held.participants[0]).toEqual({
       betAmount: 10,
       cashedOut: false,
       cashedOutAt: null,
@@ -146,7 +148,9 @@ describe("createRoundStore — mutable participant data (C6)", () => {
 
   it("an in-place change on the SAME source object is detected on the next write", () => {
     const live = participant();
-    const { store, write } = createRoundStore(state({ phase: "diving", participant: live }));
+    const { store, write } = createRoundStore(
+      state({ phase: "diving", participants: [live, null] }),
+    );
     const before = store.get();
     const listener = vi.fn();
     store.subscribe(listener);
@@ -154,27 +158,27 @@ describe("createRoundStore — mutable participant data (C6)", () => {
     live.cashedOut = true;
     live.cashedOutAt = 100;
     live.bonusEligible = true;
-    write(state({ phase: "diving", participant: live })); // same reference, new contents
+    write(state({ phase: "diving", participants: [live, null] })); // same reference, new contents
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(store.get().participant).not.toBe(before.participant);
-    expect(store.get().participant).toEqual({
+    expect(store.get().participants[0]).not.toBe(before.participants[0]);
+    expect(store.get().participants[0]).toEqual({
       betAmount: 10,
       cashedOut: true,
       cashedOutAt: 100,
       bonusEligible: true,
     });
-    expect(before.participant?.bonusEligible).toBe(false);
+    expect(before.participants[0]?.bonusEligible).toBe(false);
   });
 
   it("participant null ⇄ object transitions notify", () => {
     const { store, write } = createRoundStore(state());
     const listener = vi.fn();
     store.subscribe(listener);
-    write(state({ participant: participant() }));
-    expect(store.get().participant).toEqual(participant());
-    write(state({ participant: null }));
-    expect(store.get().participant).toBeNull();
+    write(state({ participants: [participant(), null] }));
+    expect(store.get().participants[0]).toEqual(participant());
+    write(state({ participants: [null, null] }));
+    expect(store.get().participants[0]).toBeNull();
     expect(listener).toHaveBeenCalledTimes(2);
   });
 });
