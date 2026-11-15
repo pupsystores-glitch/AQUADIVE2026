@@ -29,16 +29,22 @@ export const SHIP_IMPACT_FX_SECONDS = 1.4;
 export const SHIP_CHAIN_ATTACH_DY = 40;
 
 /** Top culling margin of the surface ship (px): it is drawn until its origin is this far above the top edge. */
-export const SHIP_CULL_MARGIN_TOP = 120;
+export const SHIP_CULL_MARGIN_TOP = 135;
+// E-X6 S2 (was 120): with a presentation shift the ship is culled before its
+// launch is complete, still bobbing. The rescue boat's lowest point lies
+// attachDy + keel (40 + 78.3) below its origin, plus up to 6 px of heave and
+// 9.5 px of roll at the bow — 134 px — so at 135 it is off screen when culled.
 
 /**
  * Chain length (px) between the hull attachment and the anchor's ring while
  * the anchor rests under a full-size ship: the hull below the attachment
  * (ANCHOR_REST_CHAIN_HULL_PX, which shrinks with the ship's scale) plus a
- * fixed clearance under the keel.
+ * fixed clearance under the keel. E-X6 S2: the rescue boat's keel lies
+ * 78.26 px below its chain hole (SHIP_GEOMETRY.keelDepth), so the hull part
+ * is 78 and the chain 92, keeping the previous 14 px clearance (was 44 / 58).
  */
-export const ANCHOR_REST_CHAIN_PX = 58;
-export const ANCHOR_REST_CHAIN_HULL_PX = 44;
+export const ANCHOR_REST_CHAIN_PX = 92;
+export const ANCHOR_REST_CHAIN_HULL_PX = 78;
 
 /**
  * How far (px) the chain's end reaches below the top of the anchor's shackle
@@ -51,20 +57,32 @@ export const CHAIN_RING_GRIP_PX = 4;
 export const ANCHOR_LAUNCH_MIN_RANGE_PX = 140;
 
 /**
- * Highest screen Y (px) of the surface ship's origin before the dive. On a
- * viewport shorter than 820 px the camera's pinned anchor point would put the
- * ship higher (partly above the top edge), so the pre-dive view is shifted
- * down until the ship sits here — 0.55 · 820 − 400, its position on an
- * 820 px viewport. The shift eases out during the anchor's launch.
+ * Pre-dive ship placement (E-X6 S2, layers/presentation.ts). The rescue boat
+ * is far taller than the previous hull, so its rest position is computed from
+ * its measured geometry (draw/ship.ts SHIP_GEOMETRY) instead of a fixed Y:
+ *
+ * - SHIP_REST_TOP_MARGIN: gap (px) kept between the top edge and the mast top
+ *   at the highest point of its bob, wherever the resting anchor allows it.
+ * - SHIP_REST_HUD_BOTTOM: bottom (logical px) of the multiplier readout in the
+ *   top-left HUD lane on phone scenes. The bow rail, the highest part of the
+ *   ship's left half, rests below it (the previous ship's phone test pinned
+ *   the same 110–113 px clearance).
  */
-export const SHIP_REST_MIN_Y = 51;
+export const SHIP_REST_TOP_MARGIN = 8;
+export const SHIP_REST_HUD_BOTTOM = 113;
+
+// ----- Goldfish collection flight (E-X6 S2.1, layers/presentation.ts) -----
 
 /**
- * Extra drop (px) of the pre-dive ship per unit of ship down-scaling
- * (1 − shipScale). A scaled-down ship spans almost the whole width of a narrow
- * scene, so it rests lower, clear of the upper-left corner of the scene.
+ * Vertical distance (world px) ahead of the anchor's collision point at which
+ * the engine consumes a goldfish: a renderer-side mirror of the engine's
+ * COLLISION_DY_PX (pinned equal by layers/pickup.test.ts; the renderer never
+ * imports the engine). The collection flight starts here.
  */
-export const SHIP_REST_NARROW_DROP = 185;
+export const PICKUP_START_DY_PX = 28;
+
+/** Dive depth (world px) over which a consumed goldfish flies into the anchor and shrinks away. */
+export const PICKUP_FLIGHT_PX = 56;
 
 /** Anchor pendulum before the dive: main swing (rad) and its angular speed (rad/s). */
 export const ANCHOR_REST_SWING = 0.15;

@@ -200,6 +200,23 @@ Status:
 - **Owner decisions** (docs/08 §1.3): approved — Q1, Q3 (A3, D1), Q7, Q8, Q9 and Q15 (for A4a), Q13, Q16 and the zero-engine-change part of Q2. Open — the renderer/UI scopes of Q2 (beyond A3), and Q4–Q6, Q10–Q12, Q14. The recommended defaults are not in force. *(Until A4a this read: "approved — Q1, Q13, Q16 and the zero-engine-change part of Q2. Open — the renderer/UI scopes of Q2, and Q3–Q12, Q14, Q15.")*
 - **Next (A4b, 2026-11-15):** the owner's review of the local A4b commit. Nothing after A4b is started: A5, A6, V1–V7, music, the Safari resume retry (risk 17) and PixiJS are not authorized. *(Until A4b this read as follows.)* The owner's review of A4a.1; then, for A4b, the UI scope ratification (`session.ts`, `audio-host.ts`, docs/08 §13.2), the import exception (D8), the open A4b decisions of the revised plan, and the owner's authorization of A4b. A4b must apply the persisted settings before the audio unlock or any playback (docs/08 §14 risk 14). Nothing after A4a.1 is started. *(Until A4a.1, 2026-11-15, this began: "the owner's review of A4a" and ended "Nothing after A4a is started.")* *(Until A4a, 2026-11-15, this read: "the owner's review of A3; for A4, the UI scope ratification (`session.ts`, docs/08 §13.2), the `session.ts` audio import exception (D8), Q7, Q8, Q9 and Q15; then the owner's authorization of A4. A4 must apply the persisted settings before the audio unlock or any playback (docs/08 §14 risk 14). Nothing after A3 is started.")* *(Until A3, 2026-11-15, this read: "the owner's review of A2; the UI scope ratification for A3 (docs/08 §13.2) and Q3; then the owner's authorization of A3. Nothing after A2 is started.")* *(Until A2, 2026-11-15, this read: "the owner's review of A1.2; Q6; then the owner's authorization of A2. Nothing after A1.2 is started.")* *(Until A1.2, 2026-11-15, this read: "the owner's review of A1.1; the voice-cap analysis for loops (docs/08 §14 risk 12) and Q6; then the owner's authorization of A2. Nothing after A1.1 is started.")* *(Until A1.1, 2026-11-15, this read: "the owner's decision on the A2 decode seam and on Q6, then the owner's authorization of A2. Nothing after A1 is started.")* *(Until the A1 acceptance, 2026-11-15, this read: "owner review of P7-0; then the owner's authorization of A1. Nothing after P7-0 is started.")*
 
+## E-X6 — Ship visual replacement (independent, owner-controlled renderer task, 2026-11-15)
+
+| Stage | Status |
+|---|---|
+| Discovery + revised plan + Option B measurements | Done; approved by the owner |
+| S1 — base artwork, exact transform, chain-hole alignment | **Delivered 2026-11-15 (working tree, uncommitted); awaiting owner review** |
+| S2 — viewport placement, resting-anchor integration | **Delivered 2026-11-15 (working tree, uncommitted); awaiting owner review** |
+| S2.1 — goldfish collection flight | Accepted in principle by the owner (2026-11-16, working tree, uncommitted), with the documented high-speed skipped-flight limitation |
+| S3 — shine overlay | **Delivered 2026-11-16 (working tree, uncommitted); awaiting owner review** |
+| S4 — one amber lamp (far-right rear railing), 2 s on/off cycle | Not authorized (D5, revised 2026-11-16: one lamp only, all other lamps cancelled) |
+| S5 — waving flag | **Cancelled by the owner (2026-11-16): no flag** |
+| S6 — final QA, reduced motion, performance | Not authorized (D6) |
+
+- **Exception E-X6 (S1 + S2 scope):** `src/assets/ship.png`, `src/rendering/assets.ts`, `draw/ship.ts`, `draw/ship.test.ts`, `layers/world.ts`, `layers/presentation.ts`, `layers/presentation.test.ts`, `constants.ts`, and docs 14, 15, 16. No change to `src/engine`, `src/shared`, `src/audio`, the wallet or gameplay. Record: docs/15, "E-X6 S1 + S2".
+- **Exception E-X6 (S3 extension, owner-approved 2026-11-16):** `src/assets/ship-shine.png` (new, owner-supplied, byte-identical copy), `src/rendering/assets.ts`, `draw/ship.ts`, `draw/ship.test.ts`, `layers/world.ts`, and docs 14, 15, 16. No other file. Record: docs/15, "E-X6 S3".
+- **Next:** the owner's review of S3. Do not commit or push. S4 and S6 are not authorized.
+
 ---
 
 Only one task may be active at a time.

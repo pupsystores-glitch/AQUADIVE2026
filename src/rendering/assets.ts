@@ -13,6 +13,8 @@
 
 import anchorImgSrc from "@/assets/anchor.png";
 import seaFloorImgSrc from "@/assets/sea-floor.png";
+import shipImgSrc from "@/assets/ship.png";
+import shipShineImgSrc from "@/assets/ship-shine.png";
 
 export interface AssetHandle {
   readonly image: HTMLImageElement | null;
@@ -65,8 +67,13 @@ class AssetManager {
   }
 }
 
-/** Manifest (§15): the anchor sprite and the sea floor artwork (wreck, treasure, ocean floor). */
-const ASSET_MANIFEST = { anchor: anchorImgSrc, seaFloor: seaFloorImgSrc } as const;
+/** Manifest (§15): the anchor sprite, the sea floor artwork (wreck, treasure, ocean floor), the surface ship artwork (E-X6) and its shine overlay (E-X6 S3). */
+const ASSET_MANIFEST = {
+  anchor: anchorImgSrc,
+  seaFloor: seaFloorImgSrc,
+  ship: shipImgSrc,
+  shipShine: shipShineImgSrc,
+} as const;
 
 export type AssetKey = keyof typeof ASSET_MANIFEST;
 

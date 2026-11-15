@@ -13,15 +13,24 @@ import {
   ANCHOR_RING_Y_FRAC,
   SHIP_CHAIN_ATTACH_DY,
   SHIP_CULL_MARGIN_TOP,
+  SHIP_REST_HUD_BOTTOM,
+  SHIP_REST_TOP_MARGIN,
 } from "../constants";
 import type { RenderState } from "../render-state";
-import { shipChainAttach, shipScale } from "../draw/ship";
+import {
+  SHIP_GEOMETRY,
+  SHIP_HEAVE_MAX,
+  SHIP_ROLL_MAX,
+  shipChainAttach,
+  shipScale,
+} from "../draw/ship";
 import { anchorPinY, anchorPose, anchorSwayX } from "./actor";
 import {
   launchProgress,
   presentationOffsetY,
   presentedShipRestY,
   presentState,
+  shipClearRestY,
   shipRestScreenY,
 } from "./presentation";
 
@@ -37,6 +46,39 @@ const VIEWPORTS: Array<[number, number]> = [
 ];
 const PHONES = VIEWPORTS.slice(0, 2);
 const TIMES = [0, 0.37, 2.5, 17.123];
+
+// E-X6 S2: the seven-size QA matrix as logical scenes (docs/07 §19 gate 8):
+// phones at the 0.84 scene-fit scale; desktop stages about 73–76 % of the
+// window width, 820 logical px tall below an 820 px stage.
+const QA_MATRIX: Array<[string, number, number]> = [
+  ["375x667", 375 / 0.84, 427 / 0.84],
+  ["390x844", 390 / 0.84, 604 / 0.84],
+  ["768x1024", 907, 820],
+  ["1280x800", (0.73 * 1280) / (800 / 820), 820],
+  ["1366x768", (0.73 * 1366) / (768 / 820), 820],
+  ["1440x900", 0.73 * 1440, 900],
+  ["1920x1080", 0.76 * 1920, 1080],
+];
+
+/**
+ * The one tested scene too short for the whole rescue boat, its HUD clearance
+ * and a resting anchor above its pinned diving position all at once (E-X6 S2):
+ * the boat stays fully in view, and the anchor rests below its pinned position.
+ */
+const isShortPhone = (w: number, h: number) => w === 375 / 0.84 && h === 427 / 0.84;
+
+/** Highest rise of a ship point `x` px beside the hole during its bob (heave + roll). */
+const bobRise = (x: number) => SHIP_HEAVE_MAX + Math.abs(x) * Math.sin(SHIP_ROLL_MAX);
+
+/** Screen Y of the mast top and of the bow rail at the top of their bob, for the resting ship. */
+function restTops(w: number, h: number) {
+  const k = shipScale(w);
+  const hole = presentedShipRestY(w, h) + SHIP_CHAIN_ATTACH_DY;
+  return {
+    mast: hole - SHIP_GEOMETRY.mastRise * k - bobRise(SHIP_GEOMETRY.mastX * k),
+    bowRail: hole - SHIP_GEOMETRY.bowRailRise * k - bobRise(SHIP_GEOMETRY.bowX * k),
+  };
+}
 
 /** The camera as SceneRenderer sets it up for a frame at `worldY`. */
 function cameraAt(w: number, h: number, worldY: number): Camera {
@@ -129,16 +171,51 @@ describe("presentationOffsetY", () => {
       expect(shipRestScreenY(h)).toBeLessThan(0); // pinned camera: ship above the top edge
       const shipY = cameraAt(w, h, 0).worldToScreenY(SHIP_WORLD_Y);
       expect(shipY).toBeCloseTo(presentedShipRestY(w, h), 9);
-      // Hull top (gunwale 62 px above the attachment at full size), with heave:
-      // below the multiplier readout, which ends about 113 logical px down.
-      const hullTop = shipY + SHIP_CHAIN_ATTACH_DY - 62 * k - 6;
-      expect(hullTop).toBeGreaterThan(110);
+      // E-X6 S2: the previous hull's top was its gunwale, 62 px above the
+      // attachment. The rescue boat's left half (under the HUD lane) is highest
+      // at its bow rail, SHIP_GEOMETRY.bowRailRise (131.7 px) above the hole;
+      // at the top of its bob (heave + roll at the bow tip) it stays below the
+      // multiplier readout, which ends about 113 logical px down — as before.
+      expect(restTops(w, h).bowRail).toBeGreaterThan(110);
     }
   });
 
-  it("is 0 on viewports 820 px and taller with a full-size ship, so their view is unchanged", () => {
-    for (const [w, h] of VIEWPORTS.slice(2)) {
-      expect(shipScale(w)).toBe(1);
+  it("rests the whole rescue boat in view, mast included, on every QA viewport (E-X6 S2)", () => {
+    // Supersedes "is 0 on viewports 820 px and taller …": the boat's mast rises
+    // 280 px above the hole, so viewports up to about 1196 px tall now shift the
+    // pre-dive view down until the whole boat shows.
+    for (const [name, w, h] of QA_MATRIX) {
+      const tops = restTops(w, h);
+      expect(tops.mast, name).toBeGreaterThanOrEqual(0); // never clipped by the top edge
+      expect(tops.bowRail, name).toBeGreaterThanOrEqual(SHIP_REST_HUD_BOTTOM - 1e-9);
+      expect(cameraAt(w, h, 0).worldToScreenY(SHIP_WORLD_Y), name).toBeCloseTo(
+        presentedShipRestY(w, h),
+        9,
+      );
+    }
+    // With air above the mast wherever the anchor allows it (all but the short phone).
+    for (const [name, w, h] of QA_MATRIX.slice(1)) {
+      expect(restTops(w, h).mast, name).toBeGreaterThan(0);
+    }
+    expect(restTops(1459, 1080).mast).toBeCloseTo(SHIP_REST_TOP_MARGIN, 9);
+  });
+
+  it("places the boat no lower than it needs: the floor, plus the top margin where the anchor allows", () => {
+    for (const [name, w, h] of QA_MATRIX) {
+      const tops = restTops(w, h);
+      // The mast has at most SHIP_REST_TOP_MARGIN of air — unless the bow rail's
+      // HUD clearance is what holds the boat down.
+      const hudBound = Math.abs(tops.bowRail - SHIP_REST_HUD_BOTTOM) < 1e-9;
+      expect(hudBound || tops.mast <= SHIP_REST_TOP_MARGIN + 1e-9, name).toBe(true);
+    }
+  });
+
+  it("is 0 where the pinned camera already shows the whole boat", () => {
+    for (const [w, h] of [
+      [1459, 1300],
+      [1089, 1440],
+    ]) {
+      expect(shipRestScreenY(h)).toBeGreaterThanOrEqual(shipClearRestY(w, h));
       for (const y of [0, 10, 100, 400]) expect(presentationOffsetY(y, w, h)).toBe(0);
     }
   });
@@ -172,10 +249,60 @@ describe("anchorPose — betting (depth 0)", () => {
         expect(p.chainStartY).toBe(shipY + attach.y);
         const len = Math.hypot(p.chainEndX - p.chainStartX, p.chainEndY - p.chainStartY);
         expect(Math.abs(len - restChain(w))).toBeLessThan(4); // short, just clearing the hull
-        // The whole anchor is on screen, above its pinned diving position.
+        // The whole anchor is on screen, above its pinned diving position —
+        // except on the short phone (E-X6 S2: there the full rescue boat leaves
+        // no room above the pin; see isShortPhone), where it rests below it.
         expect(p.y + ANCHOR_DRAW_H / 2).toBeLessThan(h);
-        expect(p.y).toBeLessThan(anchorPinY(h));
+        if (isShortPhone(w, h)) expect(p.y).toBeGreaterThan(anchorPinY(h));
+        else expect(p.y).toBeLessThan(anchorPinY(h));
       }
+    }
+  });
+
+  it("hangs the resting anchor clear below the keel, on every QA viewport (E-X6 S2)", () => {
+    const attach = { x: 0, y: 0 };
+    for (const [name, w, h] of QA_MATRIX) {
+      const k = shipScale(w);
+      for (let t = 0; t < 30; t += 0.25) {
+        const p = snapshot(0, w, h, t);
+        shipChainAttach(t, 1, SHIP_CHAIN_ATTACH_DY, k, attach);
+        const keelY = presentedShipRestY(w, h) + attach.y + SHIP_GEOMETRY.keelDepth * k;
+        // The chain's end (inside the shackle ring) hangs below the keel …
+        expect(p.chainEndY - keelY, name).toBeGreaterThan(8);
+        // … and the whole anchor, ring to crown, is on screen.
+        expect(p.chainEndY, name).toBeGreaterThan(0);
+        expect(p.y + ANCHOR_DRAW_H / 2, name).toBeLessThan(h);
+      }
+    }
+  });
+
+  it("uses the measured keel for the rest chain: 14 px of clearance at full size", () => {
+    expect(ANCHOR_REST_CHAIN_HULL_PX).toBe(78);
+    expect(ANCHOR_REST_CHAIN_PX).toBe(92);
+    expect(ANCHOR_REST_CHAIN_HULL_PX).toBeCloseTo(SHIP_GEOMETRY.keelDepth, 0);
+    expect(ANCHOR_REST_CHAIN_PX - SHIP_GEOMETRY.keelDepth).toBeGreaterThan(13);
+  });
+
+  it("removes the ship only once its keel is above the top edge (no visible pop)", () => {
+    for (const [name, w, h] of QA_MATRIX) {
+      // The first depth at which the World layer culls the ship (its test, verbatim).
+      let y = 0;
+      let camera = cameraAt(w, h, 0);
+      while (camera.isVisibleY(SHIP_WORLD_Y, SHIP_CULL_MARGIN_TOP, 80)) {
+        y += 0.25;
+        camera = cameraAt(w, h, y);
+      }
+      // In its last drawn frame the ship may still be bobbing (the presentation
+      // shift culls it before the launch completes): its lowest point at the
+      // bottom of a full bob — keel, heave, and roll at the bow — is already
+      // above the top edge, so nothing visible disappears.
+      const k = shipScale(w);
+      const lowest =
+        cameraAt(w, h, y - 0.25).worldToScreenY(SHIP_WORLD_Y) +
+        SHIP_CHAIN_ATTACH_DY +
+        SHIP_GEOMETRY.keelDepth * k +
+        bobRise(SHIP_GEOMETRY.bowX * k);
+      expect(lowest, name).toBeLessThan(0);
     }
   });
 
@@ -230,7 +357,10 @@ describe("anchorPose — launch", () => {
         for (let y = 2.5; y < range; y += 2.5) {
           const p = snapshot(y, w, h, t);
           expect(Math.hypot(p.x - prev.x, p.y - prev.y)).toBeLessThan(12);
-          expect(p.y).toBeGreaterThanOrEqual(prev.y); // the anchor only descends
+          // The anchor only descends — on the short phone, where it rests below
+          // its pinned position (E-X6 S2, isShortPhone), it only rises to it.
+          if (isShortPhone(w, h)) expect(p.y).toBeLessThanOrEqual(prev.y);
+          else expect(p.y).toBeGreaterThanOrEqual(prev.y);
           const len = Math.hypot(p.chainEndX - p.chainStartX, p.chainEndY - p.chainStartY);
           const prevLen = Math.hypot(
             prev.chainEndX - prev.chainStartX,
