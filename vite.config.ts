@@ -10,12 +10,11 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
-  preview: {
-    allowedHosts: true,
-    port: process.env.PORT ? parseInt(process.env.PORT) : 4173,
-    host: true
-  }
+  vite: {
+    preview: {
+      allowedHosts: true,
+      port: process.env.PORT ? parseInt(process.env.PORT) : 4173,
+      host: true,
+    },
+  },
 });
-
-
-
