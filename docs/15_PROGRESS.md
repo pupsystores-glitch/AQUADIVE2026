@@ -50,11 +50,15 @@ M2 (the rest of integer minor units) is still deferred.
 
 **Sprint 5 / Phase 7 started 2026-11-15 — supersedes "Phase 7 is not started" above.** **TASK 008 (Audio & Visual Effects) is active.** The owner approved the Phase 7 architecture and authorized **P7-0 only**: the blueprint `docs/08_AUDIO_FX_ARCHITECTURE.md` and the tracking updates. No runtime code, dependency or asset is added. A1 is not started. See "TASK 008" below.
 
+**A1 accepted 2026-11-15 — supersedes "A1 is not started" above.** The owner authorized A1 on the P7-0 blueprint (`0e7ff80`). A1, the `AudioManager` core, is committed as `3761062` and pushed to `origin/develop`, and the owner accepted it on its recorded validation evidence. It is not wired, so the app is unchanged. **A2 (sound bank and manifest) is the next step. It is not authorized and not started.** See "Step A1" below.
+
 ---
 
 ## TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) (ACTIVE, started 2026-11-15)
 
-### Step P7-0 — Phase 7 architecture blueprint (documentation only) — DELIVERED 2026-11-15; AWAITING OWNER REVIEW
+### Step P7-0 — Phase 7 architecture blueprint (documentation only) — DONE (`0e7ff80`, 2026-11-15); the owner authorized A1 on it
+
+*(Until the A1 acceptance, 2026-11-15, this heading read "DELIVERED 2026-11-15; AWAITING OWNER REVIEW".)*
 
 - **Task ID:** TASK 008, step P7-0. **Date:** 2026-11-15.
 - **Authorization:** the owner approved the *Sprint 5 / Phase 7: Audio & Visual Effects Architecture Proposal* (2026-11-15) as the basis for Phase 7, and authorized P7-0 only.
@@ -68,6 +72,27 @@ M2 (the rest of integer minor units) is still deferred.
 - **Not done (by instruction):** no runtime source change, no dependency, no audio or visual asset, no A1, no Phase 8. No audio asset exists and no licence is cleared.
 - **Validation (2026-11-15, on the P7-0 tree):** exactly the six P7-0 files changed (`git status`); `git diff --check` clean; LF line endings in every changed file; `tsc --noEmit` clean; 572/572 tests across 42 files; ESLint 0 errors + 6 pre-existing warnings with end-of-line neutralized (the raw run's 7,470 errors are all CRLF `Delete ␍` on pre-existing working-tree files, recovery item 1); production build passes; `src/engine`, `src/shared`, `src/rendering` and `src/ui` unchanged. `src/audio/README.md` is Prettier-clean. The other five documents are not Prettier-formatted, as their HEAD versions were not (repository convention: compact Markdown tables). SSR smoke not run: no runtime file changed.
 - **Risks:** none introduced by this step. Phase 7 risks are in docs/08 §14. The chief one is that Phase 7 cannot ship without step-scoped renderer and UI changes, which are not yet ratified.
+
+### Step A1 — `AudioManager` core — DONE (`3761062`, 2026-11-15); ACCEPTED BY THE OWNER
+
+- **Task ID:** TASK 008, step A1. **Date:** 2026-11-15.
+- **Authorization:** the owner authorized A1 after P7-0, and accepted the delivery at `3761062` on its recorded validation evidence (2026-11-15).
+- **Summary:** the generic Web Audio core of docs/08 §3.2, §3.3 and §7, with no game knowledge and no dependency.
+  - The `AudioContext` is created lazily inside the first `unlock()`, never at module scope or construction (SSR-safe). `AudioContext` / `webkitAudioContext` are feature-detected; with neither, or a throwing constructor, the manager runs silent and logs once.
+  - Bus graph: `music` / `ambience` / `sfx` → `master` → `DynamicsCompressor` limiter → output. Gains are clamped to 0..1, non-finite values are ignored, and changes use `setTargetAtTime`.
+  - Unlock inside the gesture: `resume()` plus a 1-sample silent buffer (the iOS prime). The context runs only while unlocked, not muted and not host-suspended. An `interrupted` state, or a suspend the manager did not ask for, re-locks it and calls `onUnlockRequired`.
+  - Voices: one-shots and loops (`LoopHandle`: gain, rate, low-pass, fade-out stop), at most 16. At the cap the lowest-priority voice is dropped, the oldest on a tie.
+  - Cues come from an injected `CueResolver` (the A2 seam). A missing or malformed cue is silent.
+  - `navigator.audioSession` is not touched (Q15 open).
+- **Files:** created `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`. No other file. Nothing imports the module yet.
+- **Validation (recorded in the commit, 2026-11-15):** `tsc --noEmit` clean; 623/623 tests across 43 files (51 new, the 572 existing unchanged); ESLint 0 errors + 6 pre-existing warnings (end-of-line neutralized), the new files clean raw; production build passes; SSR smoke HTTP 200 with canvas markup; `git diff --check` clean; `src/engine`, `src/shared`, `src/rendering`, `src/ui` and the package files unchanged.
+- **Re-verified on `3761062` during the A2 reconciliation (2026-11-15):** `tsc --noEmit` clean; 623/623 tests across 43 files; ESLint 0 errors + 6 warnings; production build passes. Note: inside the agent's sandboxed Bash shell, every suite fails at load (`Cannot read properties of undefined (reading 'config')`), including the frozen `src/shared` suites. The same run in PowerShell is fully green, so this is an environment limit, not a repository fault. Gates are run in PowerShell.
+- **Process deviation (recorded for provenance):** the A1 commit did not carry its tracking updates to docs 14/15/16, as U1 did not (see TASK 007). This entry closes that gap. `docs/04_DEVELOPMENT_ROADMAP.md` ("A1 is not started") and `src/audio/README.md` ("No audio code … exist yet") are still stale; they are outside this documentation update and are corrected in a later approved step.
+- **Remaining risks:**
+  - No decode path. The manager keeps its single context private, and `AudioContextLike` has no `decodeAudioData`, so A2 cannot produce `AudioBuffer`s without a change to `audio-manager.ts`. That change is outside A2's §12 file list and needs the owner's decision.
+  - The unlock, interruption and suspend behavior is proven against the fake context only. Real-device proof waits for the device matrix (Q14); audible proof waits for A6.
+  - The limiter settings, the 15 ms parameter time constant and the voice-steal fade are untuned engineering defaults until the A6 listening pass.
+  - Voice priorities are numbers chosen by the A2 manifest; no tier policy exists yet.
 
 ---
 

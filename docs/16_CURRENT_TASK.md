@@ -1,6 +1,6 @@
 # CURRENT TASK
 
-**TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) — ACTIVE since 2026-11-15.** Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`. The owner approved the architecture; **only P7-0 (the blueprint) is authorized.** See "Current: Sprint 5 / TASK 008 / Phase 7" below.
+**TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) — ACTIVE since 2026-11-15.** Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`. The owner approved the architecture. **P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted; A2 is next and not authorized.** See "Current: Sprint 5 / TASK 008 / Phase 7" below. *(Until the A1 acceptance, 2026-11-15, this read: "The owner approved the architecture; **only P7-0 (the blueprint) is authorized.**")*
 
 *(Until P7-0, 2026-11-15, this line read: "**No task is active.** TASK 007 — Sprint 4: User Interface (Phase 6) — **COMPLETED 2026-11-15** (active since 2026-08-17). The next planned phase is Phase 7 (Audio & Visual Effects). It is not started, and its planning begins only on the owner's instruction." The Sprint 4 paragraphs that follow are kept as the record of TASK 007. Their freeze rules still apply in Phase 7: `src/engine` and `src/shared` take no change, and `src/rendering` stays frozen until the proposed E-X5 scope is ratified for a step, docs/08 §13.)*
 
@@ -34,9 +34,18 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 | E-X3 — Dual Bet (engine freeze exception + M1 per-slot amendment + dual panel) | **Owner-approved 2026-11-14; committed in `be10b19`, on `origin/develop`.** This implements the layout decision above: BET 1 and BET 2 side by side on phones and `tab`, stacked in the `desk` rail, both real engine slots. Engine (docs/06 §13.2): `slot` on `placeBet`/`cashOut`/`betPlaced`/`cashedOut`, `invalid-slot`, per-slot impact auto-cash, one chest pick for all eligible slots, `participants`, snapshot v3. Wallet (docs/07 §23.17): every rule per slot, per-slot fault isolation, W2/W3 per slot. Session (docs/07 §8): `betInputs`, in-flight stake reservation. UI (docs/07 §13.3): `BetSlotPanel` ×2, `slot` props, quick bets hidden below `tab`. **Validation not recorded** (the commit message has none). **Pending:** owner browser QA, including 375×667 and 390×844 (no overflow, no unnecessary scroll, canvas unclipped) |
 | Sprint 4 close-out (Steps 1–4) | **Completed 2026-11-15.** Owner approved gates 7–8 (gameplay incl. Dual Bet, mobile, seven-size matrix); E-X4 and D1–D4 ratified; G1 `6e28ce0`, G2 `9bded6b`, G3 `3346ed8`, G4 docs; 572/572 tests. **TASK 007 / Phase 6 closed.** M1 deferred, not closed |
 
-## Current: Sprint 5 / TASK 008 / Phase 7 — P7-0 DELIVERED (2026-11-15); AWAITING OWNER REVIEW
+## Current: Sprint 5 / TASK 008 / Phase 7 — A1 DONE AND ACCEPTED (2026-11-15); A2 NEXT, NOT AUTHORIZED
 
-Blueprint and full record: `docs/08_AUDIO_FX_ARCHITECTURE.md`; progress entry in `docs/15_PROGRESS.md`, "TASK 008".
+Blueprint and full record: `docs/08_AUDIO_FX_ARCHITECTURE.md`; progress entries in `docs/15_PROGRESS.md`, "TASK 008" ("Step P7-0", "Step A1").
+
+- **Done:** P7-0, the blueprint (`0e7ff80`). A1, the `AudioManager` core (`3761062`, pushed): accepted by the owner 2026-11-15 on its recorded validation evidence. 623/623 tests across 43 files; `tsc` clean; ESLint 0 errors + 6 pre-existing warnings; build passes; SSR smoke 200. Not wired; the app is unchanged.
+- **Next: A2, sound bank and manifest (docs/08 §12). Not authorized, not started.**
+- **A2 blocker, awaiting the owner:** the `AudioManager` keeps its single `AudioContext` private and offers no decode, so the sound bank cannot turn fetched bytes into `AudioBuffer`s. The proposed fix is an explicit `decode()` seam on the `AudioManager`. A decode requested before the first unlock waits until the context exists, so no second context is created and nothing reaches into private fields. It changes `src/audio/audio-manager.ts`, which is outside A2's §12 file list. It therefore needs the owner's decision and an A2 scope amendment (and a matching docs/08 §7 amendment) before any file changes. **Proposed, not approved.**
+- **Also needed before A2:** Q6, the audio format, which shapes the manifest.
+- **Stale, to correct in a later approved step:** `docs/04_DEVELOPMENT_ROADMAP.md` still says "A1 is not started", and `src/audio/README.md` still says no audio code exists.
+- **Stop condition:** do not start A2, change `audio-manager.ts`, install dependencies, add sound assets, or change gameplay, engine, renderer, UI, RNG or settlement logic.
+
+*(The P7-0 record follows, as it stood when P7-0 was delivered.)*
 
 - **Owner approval (2026-11-15):** the Phase 7 architecture, as proposed. Native Web Audio with a lightweight `AudioManager` and no dependency; the existing Canvas 2D renderer, no PixiJS; event-driven audio and FX; the approved underwater atmosphere preserved; **no change** to the engine, RNG, money settlement, Dual Bet or gameplay outcomes; one atomic commit per approved step.
 - **Approved sequence:** P7-0 → A1 → A2 → A3 → A4 → V1 → V2 → V3 → V4 → V5 → V6 → V7 → A6 → A5 → P7-C (docs/08 §12).
