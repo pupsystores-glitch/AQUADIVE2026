@@ -8,15 +8,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FADE_TIME_CONSTANTS,
   LIMITER_SETTINGS,
+  LOOP_VOICES,
   MAX_PLAYBACK_RATE,
   MAX_VOICES,
   MIN_FILTER_HZ,
   MIN_PLAYBACK_RATE,
+  ONE_SHOT_VOICES,
   PARAM_TIME_CONSTANT_S,
+  TAIL_VOICES,
+  VOICE_RECLAIM_GRACE_S,
   VOICE_STEAL_FADE_S,
   createAudioManager,
   createBrowserAudioContext,
   type AudioManager,
+  type LoopHandle,
   type ResolvedCue,
 } from "./audio-manager";
 import {
@@ -28,7 +33,7 @@ import {
   type FakeGainNode,
 } from "./test/fake-audio-context";
 
-type Cue = "clink" | "boom" | "whisper" | "rattle" | "missing";
+type Cue = "clink" | "boom" | "whisper" | "rattle" | "bed" | "drone" | "missing";
 
 const CUES: Readonly<Partial<Record<Cue, ResolvedCue>>> = {
   clink: { buffer: fakeBuffer(0.2), bus: "sfx", gain: 0.8, priority: 1 },
@@ -42,6 +47,9 @@ const CUES: Readonly<Partial<Record<Cue, ResolvedCue>>> = {
     loopStart: 0.05,
     loopEnd: 29.95,
   },
+  // A1.2: an essential bed (ambience or music) and a plain, non-essential loop.
+  bed: { buffer: fakeBuffer(20), bus: "music", gain: 0.6, priority: 2, essential: true },
+  drone: { buffer: fakeBuffer(10), bus: "ambience", gain: 0.4, priority: 1 },
 };
 
 const setup = (
@@ -74,6 +82,28 @@ const voiceSources = (context: FakeAudioContext): FakeAudioBufferSourceNode[] =>
   context.sources.filter((source) => !context.buffers.includes(source.buffer as never));
 
 const voiceGainOf = (source: FakeAudioBufferSourceNode) => source.connections[0] as FakeGainNode;
+
+/** The 1-sample unlock primes. */
+const primesOf = (context: FakeAudioContext): FakeAudioBufferSourceNode[] =>
+  context.sources.filter((source) => context.buffers.includes(source.buffer as never));
+
+/**
+ * Sources the manager still holds a slot for (A1.2): started, and still
+ * carrying the manager's `onended`, which it clears only when it releases one.
+ */
+const heldSources = (context: FakeAudioContext): FakeAudioBufferSourceNode[] =>
+  context.sources.filter((source) => source.startedAt !== null && source.onended !== null);
+
+/**
+ * The strict cap (A1.2): at most MAX_VOICES held sources, and every source
+ * still physically playing is held — no slot is freed while its source plays.
+ */
+const expectStrictCap = (context: FakeAudioContext) => {
+  expect(heldSources(context).length).toBeLessThanOrEqual(MAX_VOICES);
+  for (const source of context.sources) {
+    if (source.isPlaying()) expect(source.onended).not.toBeNull();
+  }
+};
 
 const silenceConsole = () => ({
   warn: vi.spyOn(console, "warn").mockImplementation(() => {}),
@@ -711,105 +741,535 @@ describe("loops", () => {
     expect(second.stoppedAt).toBe(0);
   });
 
-  it("a loop requested before unlock is inert, and stays so after unlock", async () => {
-    const { audio, context } = setup();
+  // A1.2 rewrite (owner-approved): until A1.1 this read "a loop requested
+  // before unlock is inert, and stays so after unlock". The kept guarantee:
+  // nothing plays, and no context exists, before the gesture; a stopped
+  // handle never plays. A1.2 adds: the loop waits, and starts at unlock.
+  it("a loop requested before unlock waits; it starts at unlock with the settings given meanwhile", async () => {
+    const { audio, context, createContext, resolveCue } = setup();
     const handle = audio.loop("rattle");
+    handle.setGain(0.5);
+    handle.setRate(1.5);
+    handle.setFilter(900);
+    expect(createContext).not.toHaveBeenCalled();
+    expect(resolveCue).not.toHaveBeenCalled();
+
     await audio.unlock();
-    handle.setGain(1);
-    handle.stop(0);
-    expect(voiceSources(context)).toHaveLength(0);
+    const [source] = voiceSources(context);
+    expect(voiceSources(context)).toHaveLength(1);
+    expect(source.loop).toBe(true);
+    expect(voiceGainOf(source).gain.value).toBe(0.25); // cue gain 0.5 × 0.5
+    expect(source.playbackRate.value).toBe(1.5);
+    expect(context.filters[0].frequency.value).toBe(900);
+
+    const cancelled = setup();
+    const never = cancelled.audio.loop("rattle");
+    never.stop(0); // stopped before unlock: it never plays
+    await cancelled.audio.unlock();
+    expect(voiceSources(cancelled.context)).toHaveLength(0);
   });
 });
 
-describe("voice cap", () => {
-  const fill = async (cue: Cue = "clink") => {
+// The seven voice-cap tests below are A1.2 rewrites (owner-approved): A1's
+// single 16-voice pool became three fixed pools under a strict cap. Each
+// keeps its original guarantee at pool scale; each notes what it read before.
+describe("voice cap: pools and stealing (A1.2)", () => {
+  /** Unlocks, then ends the unlock prime, so both tail slots are free. */
+  const unlocked = async () => {
     const harness = setup();
     await harness.audio.unlock();
-    for (let i = 0; i < MAX_VOICES; i++) harness.audio.play(cue);
+    for (const prime of primesOf(harness.context)) prime.end();
     return harness;
   };
 
-  it("allows MAX_VOICES (16) voices without stealing", async () => {
-    const { context } = await fill();
+  const fill = async (cue: Cue = "clink") => {
+    const harness = await unlocked();
+    for (let i = 0; i < ONE_SHOT_VOICES; i++) harness.audio.play(cue);
+    return harness;
+  };
+
+  it("the cap of 16 is three fixed pools: 6 loops, 8 one-shots, 2 tail slots", () => {
     expect(MAX_VOICES).toBe(16);
+    expect([LOOP_VOICES, ONE_SHOT_VOICES, TAIL_VOICES]).toEqual([6, 8, 2]);
+    expect(LOOP_VOICES + ONE_SHOT_VOICES + TAIL_VOICES).toBe(MAX_VOICES);
+  });
+
+  // Was: "allows MAX_VOICES (16) voices without stealing".
+  it("allows ONE_SHOT_VOICES (8) one-shots without stealing", async () => {
+    const { context } = await fill();
     const sources = voiceSources(context);
-    expect(sources).toHaveLength(16);
+    expect(sources).toHaveLength(ONE_SHOT_VOICES);
     expect(sources.every((source) => source.stoppedAt === null)).toBe(true);
   });
 
-  it("at the cap, a higher-priority voice steals the oldest lowest-priority one", async () => {
+  // Was: "at the cap, a higher-priority voice steals the oldest lowest-priority one".
+  it("at a full one-shot pool, a higher-priority one-shot steals the oldest lowest-priority one", async () => {
     const { audio, context } = await fill();
-    context.advance(1);
+    context.advance(0.05); // the clinks (0.2 s) are still playing
     audio.play("boom");
     const sources = voiceSources(context);
-    expect(sources).toHaveLength(17);
-    expect(sources[0].stoppedAt).toBe(1 + VOICE_STEAL_FADE_S);
+    expect(sources).toHaveLength(ONE_SHOT_VOICES + 1);
+    expect(sources[0].stoppedAt).toBe(0.05 + VOICE_STEAL_FADE_S);
     expect(voiceGainOf(sources[0]).gain.lastTarget()?.value).toBe(0);
     expect(sources.slice(1).every((source) => source.stoppedAt === null)).toBe(true);
+    expectStrictCap(context);
   });
 
-  it("an equal-priority voice steals the oldest", async () => {
+  // Was: "an equal-priority voice steals the oldest".
+  it("an equal-priority one-shot steals the oldest", async () => {
     const { audio, context } = await fill();
     audio.play("clink");
     const sources = voiceSources(context);
-    expect(sources).toHaveLength(17);
+    expect(sources).toHaveLength(ONE_SHOT_VOICES + 1);
     expect(sources[0].stoppedAt).not.toBeNull();
     expect(sources[1].stoppedAt).toBeNull();
   });
 
+  // Was: "the lowest priority goes first, whatever its age" (16-voice fill).
   it("the lowest priority goes first, whatever its age", async () => {
-    const harness = setup();
-    await harness.audio.unlock();
-    harness.audio.play("boom");
-    harness.audio.play("whisper");
-    for (let i = 0; i < MAX_VOICES - 2; i++) harness.audio.play("clink");
-    harness.audio.play("boom");
-    const sources = voiceSources(harness.context);
+    const { audio, context } = await unlocked();
+    audio.play("boom");
+    audio.play("whisper");
+    for (let i = 0; i < ONE_SHOT_VOICES - 2; i++) audio.play("clink");
+    audio.play("boom");
+    const sources = voiceSources(context);
     expect(sources[1].stoppedAt).not.toBeNull(); // the whisper
     expect(sources.filter((source) => source.stoppedAt !== null)).toHaveLength(1);
   });
 
-  it("a newcomer below every playing voice is dropped", async () => {
+  // Was: "a newcomer below every playing voice is dropped" — including a
+  // loop, which got an inert handle. One-shots are still dropped; a loop at a
+  // full loop pool now waits, and starts once a loop slot frees.
+  it("a one-shot below every playing one-shot is dropped; a loop at a full loop pool waits", async () => {
     const { audio, context } = await fill();
     audio.play("whisper");
-    expect(voiceSources(context)).toHaveLength(16);
+    expect(voiceSources(context)).toHaveLength(ONE_SHOT_VOICES);
     expect(voiceSources(context).every((source) => source.stoppedAt === null)).toBe(true);
-    const handle = audio.loop("whisper");
-    handle.setGain(1);
-    expect(voiceSources(context)).toHaveLength(16);
+
+    const loops = Array.from({ length: LOOP_VOICES }, () => audio.loop("rattle"));
+    const late = audio.loop("drone");
+    late.setGain(0.5);
+    const loopSources = () => voiceSources(context).filter((source) => source.loop);
+    expect(loopSources()).toHaveLength(LOOP_VOICES);
+    loops[0].stop(0);
+    loopSources()[0].end();
+    expect(loopSources()).toHaveLength(LOOP_VOICES + 1);
+    const lateSource = loopSources()[LOOP_VOICES];
+    expect(lateSource.buffer).toBe(CUES.drone?.buffer);
+    expect(voiceGainOf(lateSource).gain.value).toBe(0.2); // cue gain 0.4 × 0.5
   });
 
-  it("ended and stopping voices free their slots", async () => {
+  // Was: "ended and stopping voices free their slots". An ended voice still
+  // frees its slot at once; a stopping or stolen voice no longer does: it
+  // keeps its slot until it is known to have ended (strict cap).
+  it("an ended voice frees its slot at once; a stopping or stolen voice keeps it until it has ended", async () => {
     const { audio, context } = await fill();
     voiceSources(context)[3].end();
     audio.play("whisper");
-    expect(voiceSources(context)).toHaveLength(17);
+    expect(voiceSources(context)).toHaveLength(ONE_SHOT_VOICES + 1);
     expect(voiceSources(context).every((source) => source.stoppedAt === null)).toBe(true);
 
-    const harness = setup();
-    await harness.audio.unlock();
-    const handle = harness.audio.loop("rattle");
-    for (let i = 0; i < MAX_VOICES - 1; i++) harness.audio.play("clink");
-    handle.stop(5); // still fading out
-    harness.audio.play("whisper");
-    const fresh = voiceSources(harness.context);
-    expect(fresh).toHaveLength(17);
-    expect(fresh.filter((source) => source.stoppedAt !== null)).toEqual([fresh[0]]);
+    const harness = await unlocked();
+    const loops = Array.from({ length: LOOP_VOICES }, () => harness.audio.loop("rattle"));
+    loops[0].stop(5); // still fading out
+    harness.audio.loop("drone");
+    const loopSources = voiceSources(harness.context).filter((source) => source.loop);
+    expect(loopSources).toHaveLength(LOOP_VOICES); // the drone waits
+    expect(loopSources.filter((source) => source.stoppedAt !== null)).toEqual([loopSources[0]]);
+    expectStrictCap(harness.context);
   });
 
-  it("a stolen loop's handle goes inert", async () => {
+  // Was: "a stolen loop's handle goes inert" (16 one-shots stole a
+  // priority-0 loop). One-shots can no longer touch a loop at all; a loop
+  // preempted by an essential loop is covered under "essential loops".
+  it("one-shots never steal a loop, whatever its priority", async () => {
     const harness = setup({
       cues: { ...CUES, rattle: { ...(CUES.rattle as ResolvedCue), priority: 0 } },
     });
     await harness.audio.unlock();
     const handle = harness.audio.loop("rattle");
-    for (let i = 0; i < MAX_VOICES; i++) harness.audio.play("clink");
+    for (let i = 0; i < MAX_VOICES; i++) harness.audio.play("boom");
     const [loopSource] = voiceSources(harness.context);
-    expect(loopSource.stoppedAt).not.toBeNull();
+    expect(loopSource.loop).toBe(true);
+    expect(loopSource.stoppedAt).toBeNull();
     const gain = voiceGainOf(loopSource);
     const count = gain.gain.automation.length;
     handle.setGain(1);
-    expect(gain.gain.automation).toHaveLength(count);
+    expect(gain.gain.automation.length).toBeGreaterThan(count); // still controlled
+    expectStrictCap(harness.context);
+  });
+});
+
+describe("strict cap: every live source counts (A1.2)", () => {
+  it("a concurrent SFX burst over playing loops never exceeds the cap", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    for (let i = 0; i < LOOP_VOICES; i++) audio.loop(i % 2 ? "bed" : "rattle");
+    const order: Cue[] = ["clink", "boom", "whisper"];
+    for (let i = 0; i < 100; i++) {
+      audio.play(order[i % 3]);
+      expectStrictCap(context);
+      if (i % 10 === 0) context.advance(0.01);
+    }
+    expect(heldSources(context).length).toBe(MAX_VOICES);
+    expect(
+      voiceSources(context).filter((source) => source.loop && source.stoppedAt === null),
+    ).toHaveLength(LOOP_VOICES);
+  });
+
+  it("calling stop() is not proof: a stolen voice keeps its tail slot, so a full tail blocks the next steal", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    for (const prime of primesOf(context)) prime.end();
+    for (let i = 0; i < ONE_SHOT_VOICES; i++) audio.play("clink");
+    audio.play("boom");
+    audio.play("boom"); // two steals: the tail is full
+    expect(voiceSources(context).filter((source) => source.stoppedAt !== null)).toHaveLength(2);
+    audio.play("boom"); // no tail slot: dropped, nothing else is stopped
+    expect(voiceSources(context)).toHaveLength(ONE_SHOT_VOICES + 2);
+    expect(heldSources(context)).toHaveLength(ONE_SHOT_VOICES + TAIL_VOICES);
+
+    voiceSources(context)[0].end(); // the first stolen voice reports its end
+    audio.play("boom");
+    expect(voiceSources(context)).toHaveLength(ONE_SHOT_VOICES + 3);
+    expectStrictCap(context);
+  });
+
+  it("a lost onended: the clock frees the slot VOICE_RECLAIM_GRACE_S after the scheduled end, never before", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    for (const prime of primesOf(context)) prime.end();
+    for (let i = 0; i < ONE_SHOT_VOICES; i++) audio.play("clink"); // 0.2 s each; onended withheld
+    const clinks = voiceSources(context);
+
+    context.advance(0.2 + VOICE_RECLAIM_GRACE_S - 0.01);
+    audio.play("whisper"); // below every clink: dropped, the slots are still held
+    expect(voiceSources(context)).toHaveLength(ONE_SHOT_VOICES);
+    expect(heldSources(context)).toHaveLength(ONE_SHOT_VOICES);
+
+    context.advance(0.02); // past 0.2 s + grace
+    audio.play("whisper");
+    expect(voiceSources(context)).toHaveLength(ONE_SHOT_VOICES + 1);
+    expect(heldSources(context)).toHaveLength(1);
+    for (const clink of clinks) expect(clink.connections).toEqual([]);
+
+    clinks[0].end(); // the delayed onended, after the clock reclaimed it: no effect
+    expect(heldSources(context)).toHaveLength(1);
+    expectStrictCap(context);
+  });
+
+  it("a stopped loop without onended is reclaimed by the clock after its fade, and a waiting loop starts", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const loops = Array.from({ length: LOOP_VOICES }, () => audio.loop("rattle"));
+    const waiting = audio.loop("drone");
+    loops[0].stop(1);
+    context.advance(1 + VOICE_RECLAIM_GRACE_S / 2);
+    waiting.setGain(1); // any manager call sweeps; still within the grace
+    expect(voiceSources(context).filter((source) => source.loop)).toHaveLength(LOOP_VOICES);
+    context.advance(VOICE_RECLAIM_GRACE_S);
+    waiting.setGain(1);
+    const loopSources = voiceSources(context).filter((source) => source.loop);
+    expect(loopSources).toHaveLength(LOOP_VOICES + 1);
+    expect(loopSources.at(-1)?.buffer).toBe(CUES.drone?.buffer);
+    expectStrictCap(context);
+  });
+
+  it("without clock progress nothing is reclaimed, however often the manager is called", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    for (const prime of primesOf(context)) prime.end();
+    for (let i = 0; i < ONE_SHOT_VOICES; i++) audio.play("boom");
+    for (let i = 0; i < 50; i++) audio.play("whisper");
+    expect(voiceSources(context)).toHaveLength(ONE_SHOT_VOICES);
+    expect(heldSources(context)).toHaveLength(ONE_SHOT_VOICES);
+  });
+
+  it("the unlock prime holds a tail slot; with the tail full a gesture skips the prime and still resumes", async () => {
+    silenceConsole();
+    const { audio, context } = setup({ context: { rejectResume: true } });
+    await audio.unlock();
+    await audio.unlock();
+    await audio.unlock();
+    expect(context.resumeCalls).toBe(3);
+    expect(primesOf(context)).toHaveLength(TAIL_VOICES); // the third gesture skipped it
+    expect(heldSources(context)).toHaveLength(TAIL_VOICES);
+
+    context.rejectResume = false;
+    await audio.unlock();
+    expect(context.resumeCalls).toBe(4);
+    expect(context.state).toBe("running");
+    audio.play("clink");
+    expect(voiceSources(context)).toHaveLength(1);
+
+    context.advance(1 / context.sampleRate + VOICE_RECLAIM_GRACE_S); // the primes have played
+    audio.play("clink");
+    expect(heldSources(context)).toHaveLength(2); // the primes are released; two clinks remain
+    expectStrictCap(context);
+  });
+
+  it("a re-unlock first reclaims tail sources that have ended without onended, so it still primes", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    for (const prime of primesOf(context)) prime.end();
+    for (let i = 0; i < ONE_SHOT_VOICES; i++) audio.play("whisper");
+    audio.play("boom");
+    audio.play("boom"); // the tail holds two stolen whispers; their onended is lost
+    context.advance(VOICE_STEAL_FADE_S + VOICE_RECLAIM_GRACE_S);
+    context.interrupt();
+    await audio.unlock(); // the re-armed gesture
+    expect(primesOf(context)).toHaveLength(2);
+    expect(context.state).toBe("running");
+    expectStrictCap(context);
+  });
+});
+
+describe("pending loops (A1.2)", () => {
+  it("a waiting loop starts when its cue becomes resolvable", async () => {
+    let bed: ResolvedCue | null = null;
+    const context = new FakeAudioContext();
+    const audio = createAudioManager<"bed">({
+      resolveCue: () => bed,
+      createContext: () => context,
+    });
+    await audio.unlock();
+    const handle = audio.loop("bed");
+    handle.setFilter(500);
+    expect(voiceSources(context)).toHaveLength(0);
+    bed = CUES.bed ?? null; // the sound bank finished decoding
+    handle.setFilter(500); // the next manager call starts it
+    expect(voiceSources(context)).toHaveLength(1);
+    expect(context.filters[0].frequency.value).toBe(500);
+  });
+
+  it("waiting loops start in a fixed order: essential first, then higher priority, then the earlier request", async () => {
+    const cues: Partial<Record<string, ResolvedCue>> = {
+      ...CUES,
+      clink: { buffer: fakeBuffer(1), bus: "sfx", gain: 1, priority: 9 }, // a non-essential loop, high priority
+      whisper: { buffer: fakeBuffer(1), bus: "ambience", gain: 1, priority: 0, essential: true },
+    };
+    const { audio, context } = setup({ cues });
+    await audio.unlock();
+    const blockers = Array.from({ length: LOOP_VOICES }, () => audio.loop("bed")); // essential: never preempted
+    audio.loop("drone"); // non-essential, priority 1
+    audio.loop("clink"); // non-essential, priority 9
+    audio.loop("whisper"); // essential, priority 0
+    audio.loop("drone"); // non-essential, priority 1, later
+    const started: unknown[] = [];
+    for (const blocker of blockers.slice(0, 4)) {
+      const before = voiceSources(context).length;
+      blocker.stop(0);
+      voiceSources(context)
+        .filter((source) => source.stoppedAt !== null && !source.ended)
+        .forEach((source) => source.end());
+      const fresh = voiceSources(context).slice(before);
+      expect(fresh).toHaveLength(1); // exactly the next loop in order, and no preemption churn
+      started.push(fresh[0].buffer);
+    }
+    expect(voiceSources(context).filter((source) => source.stoppedAt === null)).toHaveLength(
+      LOOP_VOICES,
+    );
+    expect(started).toEqual([
+      cues.whisper?.buffer,
+      cues.clink?.buffer,
+      cues.drone?.buffer,
+      cues.drone?.buffer,
+    ]);
+  });
+
+  it("stop() cancels a waiting loop: it never starts, before or after unlock", async () => {
+    const { audio, context } = setup();
+    const before = audio.loop("rattle");
+    before.stop(1);
+    await audio.unlock();
+    const loops = Array.from({ length: LOOP_VOICES }, () => audio.loop("rattle"));
+    const after = audio.loop("drone");
+    after.stop(0);
+    loops[0].stop(0);
+    voiceSources(context)[0].end();
+    expect(voiceSources(context).some((source) => source.buffer === CUES.drone?.buffer)).toBe(
+      false,
+    );
+    expect(voiceSources(context)).toHaveLength(LOOP_VOICES);
+    after.setGain(1);
+    expect(voiceSources(context)).toHaveLength(LOOP_VOICES);
+  });
+
+  it("never creates a duplicate source: repeated calls, unlocks and state changes start a waiting loop once", async () => {
+    const { audio, context } = setup();
+    const handle = audio.loop("rattle");
+    await audio.unlock();
+    await audio.unlock();
+    for (let i = 0; i < 20; i++) {
+      handle.setGain(i / 20);
+      handle.setRate(1 + i / 40);
+      audio.setMuted(i % 2 === 0);
+      audio.suspend();
+      audio.resume();
+    }
+    context.interrupt();
+    await audio.unlock();
+    context.systemResume();
+    expect(voiceSources(context)).toHaveLength(1);
+    expectStrictCap(context);
+  });
+
+  it("a loop requested while interrupted starts at the re-unlock", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    context.interrupt();
+    const handle = audio.loop("bed");
+    expect(voiceSources(context)).toHaveLength(0);
+    await audio.unlock();
+    expect(voiceSources(context)).toHaveLength(1);
+    handle.stop(0);
+    expect(voiceSources(context)[0].stoppedAt).toBe(0);
+  });
+
+  it("when Web Audio is unavailable, waiting loops are cancelled and later loops are inert", async () => {
+    silenceConsole();
+    const audio = createAudioManager<Cue>({
+      resolveCue: () => CUES.rattle ?? null,
+      createContext: () => null,
+    });
+    const waiting = audio.loop("rattle");
+    await audio.unlock();
+    expect(() => {
+      waiting.setGain(1);
+      waiting.stop(0);
+      audio.loop("rattle").setGain(1);
+    }).not.toThrow();
+  });
+});
+
+describe("essential loops (A1.2)", () => {
+  const fullOf = async (cue: Cue) => {
+    const harness = setup();
+    await harness.audio.unlock();
+    for (const prime of primesOf(harness.context)) prime.end();
+    const handles: LoopHandle[] = [];
+    for (let i = 0; i < LOOP_VOICES; i++) handles.push(harness.audio.loop(cue));
+    return { ...harness, handles };
+  };
+
+  it("at a full loop pool an essential loop preempts the weakest non-essential loop, which waits and restarts after its old voice has ended", async () => {
+    const { audio, context, handles } = await fullOf("drone");
+    handles[0].setGain(0.5);
+    context.advance(0.5);
+    audio.loop("bed");
+    const sources = voiceSources(context);
+    expect(sources).toHaveLength(LOOP_VOICES + 1);
+    const old = sources[0];
+    expect(old.stoppedAt).toBe(0.5 + VOICE_STEAL_FADE_S); // the oldest drone fades out in the tail
+    expect(sources.at(-1)?.buffer).toBe(CUES.bed?.buffer);
+
+    const automations = voiceGainOf(old).gain.automation.length;
+    handles[0].setGain(0.8); // the old voice is no longer controlled
+    expect(voiceGainOf(old).gain.automation).toHaveLength(automations);
+
+    handles[1].stop(0);
+    voiceSources(context)[1].end(); // a loop slot frees while the old voice still fades
+    expect(voiceSources(context)).toHaveLength(LOOP_VOICES + 1); // no duplicate for handle 0
+    old.end();
+    const restarted = voiceSources(context).at(-1);
+    expect(voiceSources(context)).toHaveLength(LOOP_VOICES + 2);
+    expect(restarted?.buffer).toBe(CUES.drone?.buffer);
+    expect(voiceGainOf(restarted as FakeAudioBufferSourceNode).gain.value).toBeCloseTo(0.32, 12); // 0.4 × 0.8
+    expectStrictCap(context);
+  });
+
+  it("an essential loop is never preempted: an essential newcomer at a pool of essential loops waits", async () => {
+    const { audio, context } = await fullOf("bed");
+    audio.loop("bed");
+    expect(voiceSources(context)).toHaveLength(LOOP_VOICES);
+    expect(voiceSources(context).every((source) => source.stoppedAt === null)).toBe(true);
+  });
+
+  it("a non-essential loop never preempts, whatever its priority", async () => {
+    const harness = setup({
+      cues: { ...CUES, rattle: { ...(CUES.rattle as ResolvedCue), priority: 100 } },
+    });
+    await harness.audio.unlock();
+    for (let i = 0; i < LOOP_VOICES; i++) harness.audio.loop("drone");
+    harness.audio.loop("rattle");
+    expect(voiceSources(harness.context)).toHaveLength(LOOP_VOICES);
+    expect(voiceSources(harness.context).every((source) => source.stoppedAt === null)).toBe(true);
+  });
+
+  it("preemption needs a free tail slot; otherwise the essential loop waits until one frees", async () => {
+    const { audio, context } = await fullOf("drone");
+    for (let i = 0; i < ONE_SHOT_VOICES; i++) audio.play("clink");
+    audio.play("boom");
+    audio.play("boom"); // the tail is full of stolen clinks
+    audio.loop("bed");
+    expect(voiceSources(context).some((source) => source.buffer === CUES.bed?.buffer)).toBe(false);
+    voiceSources(context)
+      .filter((source) => !source.loop && source.stoppedAt !== null)[0]
+      .end(); // a tail slot frees
+    expect(voiceSources(context).some((source) => source.buffer === CUES.bed?.buffer)).toBe(true);
+    expectStrictCap(context);
+  });
+});
+
+describe("crossfades and rapid state changes (A1.2)", () => {
+  it("a crossfade keeps the old loop's slot until it has ended; rapid crossfades wait instead of exceeding the pool", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    let current = audio.loop("bed");
+    for (let i = 0; i < 10; i++) {
+      current.stop(1.5);
+      current = audio.loop(i % 2 ? "bed" : "drone");
+      expectStrictCap(context);
+    }
+    expect(voiceSources(context).filter((source) => source.loop)).toHaveLength(LOOP_VOICES);
+    context.advance(1.5 + VOICE_RECLAIM_GRACE_S);
+    current.setGain(1); // the faded loops are reclaimed; the waiting ones start
+    const live = voiceSources(context).filter((source) => source.loop && source.stoppedAt === null);
+    expect(live.length).toBeGreaterThanOrEqual(1);
+    expect(heldSources(context).length).toBeLessThanOrEqual(LOOP_VOICES + TAIL_VOICES);
+    expectStrictCap(context);
+  });
+
+  it("rapid mute, suspend, interruption and unlock changes keep the run state and the cap consistent", async () => {
+    const { audio, context, onUnlockRequired } = setup();
+    await audio.unlock();
+    const bed = audio.loop("bed");
+    for (let i = 0; i < 12; i++) {
+      audio.setMuted(i % 3 === 0);
+      if (i % 4 === 0) audio.suspend();
+      else audio.resume();
+      audio.play("clink");
+      if (i === 5) context.interrupt();
+      if (i === 7) await audio.unlock();
+      context.advance(0.05);
+      expectStrictCap(context);
+    }
+    audio.setMuted(false);
+    audio.resume();
+    expect(context.state).toBe("running");
+    expect(onUnlockRequired).toHaveBeenCalledTimes(1);
+    expect(voiceSources(context).filter((source) => source.loop)).toHaveLength(1);
+    bed.stop(0);
+  });
+
+  it("admission is deterministic: the same call sequence gives the same voices", async () => {
+    const run = async () => {
+      const { audio, context } = setup();
+      await audio.unlock();
+      const script: Array<() => void> = [
+        () => audio.loop("drone"),
+        () => audio.play("clink"),
+        () => audio.play("whisper"),
+        () => audio.loop("bed"),
+        () => audio.play("boom"),
+      ];
+      for (let i = 0; i < 60; i++) {
+        script[i % script.length]();
+        if (i % 7 === 0) context.advance(0.03);
+      }
+      return context.sources.map((source) => [source.buffer, source.startedAt, source.stoppedAt]);
+    };
+    expect(await run()).toEqual(await run());
   });
 });
 
@@ -863,6 +1323,32 @@ describe("dispose", () => {
     audio.dispose();
     await audio.unlock();
     expect(createContext).not.toHaveBeenCalled();
+  });
+
+  it("releases every pool and cancels waiting loops; late onended calls and old handles do nothing (A1.2)", async () => {
+    const { audio, context } = setup();
+    const early = audio.loop("bed"); // waiting for unlock
+    await audio.unlock();
+    const loops = Array.from({ length: LOOP_VOICES }, () => audio.loop("drone"));
+    const waiting = audio.loop("drone"); // waiting for a loop slot
+    for (let i = 0; i < ONE_SHOT_VOICES; i++) audio.play("clink");
+    audio.play("boom"); // a stolen clink fades in the tail
+    loops[1].stop(2); // a stopping loop
+    const before = context.sources.length;
+
+    audio.dispose();
+    expect(heldSources(context)).toHaveLength(0);
+    for (const source of context.sources) {
+      expect(source.stoppedAt).not.toBeNull();
+      expect(source.connections).toEqual([]);
+    }
+    expect(() => {
+      for (const source of context.sources) source.end();
+      early.setGain(1);
+      waiting.setRate(2);
+      loops[0].stop(0);
+    }).not.toThrow();
+    expect(context.sources).toHaveLength(before);
   });
 });
 

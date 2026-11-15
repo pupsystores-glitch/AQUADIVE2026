@@ -2,11 +2,11 @@
 
 Audio system (roadmap Phase 7). Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`.
 
-**Status (2026-11-15, A1.1):** `audio-manager.ts` exists: the generic core
-(A1) and its `decode()` interface (A1.1, docs/08 §7.1), with the fake context
-and tests. Nothing imports it yet. **No audio asset exists.** The other modules
-below are planned for steps A2–A6, and each one needs its own owner
-authorization.
+**Status (2026-11-15, A1.2):** `audio-manager.ts` exists: the generic core
+(A1), its `decode()` interface (A1.1, docs/08 §7.1) and its voice pools and
+protected loops (A1.2, docs/08 §7.2), with the fake context and tests. Nothing
+imports it yet. **No audio asset exists.** The other modules below are planned
+for steps A2–A6, and each one needs its own owner authorization.
 
 ## Responsibility
 
@@ -14,8 +14,9 @@ Event-driven sound on the native Web Audio API, with no audio dependency
 (owner decision, docs/08 §1.1):
 
 - an `AudioManager` with `music` / `ambience` / `sfx` buses into a `master`
-  gain and a limiter, a voice cap, crossfades, lazy context creation and
-  unlock on the first user gesture;
+  gain and a limiter, a strict 16-source voice cap in fixed loop, one-shot
+  and tail pools, pending and essential loops, crossfades, lazy context
+  creation and unlock on the first user gesture;
 - a `SoundBank` that fetches, decodes (through `AudioManager.decode()`, with
   the manager's single context) and caches buffers; a missing or failed asset
   stays silent and is logged once;

@@ -16,7 +16,9 @@
 // `statechange` before its promise resolves. The hooks `interrupt()`,
 // `systemSuspend()` and `systemResume()` simulate the browser changing the
 // state by itself (iOS interruption, a phone call ending). `currentTime`
-// moves only through `advance()`; playback ends only through `end()`.
+// moves only through `advance()`; `onended` fires only through `end()`, so
+// a test can withhold or delay it. Each source also reports whether it is
+// physically still playing (`isPlaying()`, A1.2), independent of `onended`.
 //
 // Decoding (A1.1) is manual: each `decodeAudioData` call is recorded as a
 // `FakeDecodeRequest`, and a test settles it with `succeed()` / `fail()`, or
@@ -150,8 +152,13 @@ export class FakeAudioBufferSourceNode extends FakeAudioNode implements AudioBuf
   loopEnd = 0;
   readonly playbackRate = new FakeAudioParam(1);
   onended: (() => void) | null = null;
+  /** The `when` passed to `start()`. */
   startedAt: number | null = null;
   stoppedAt: number | null = null;
+  /** Context time playback begins: `when`, or the current time if that is later (A1.2). */
+  playStartedAt: number | null = null;
+  /** Set by `end()`: the test reported the end of playback. */
+  ended = false;
 
   constructor(private readonly context: FakeAudioContext) {
     super("bufferSource");
@@ -160,6 +167,7 @@ export class FakeAudioBufferSourceNode extends FakeAudioNode implements AudioBuf
   start(when = 0): void {
     if (this.startedAt !== null) throw new Error("InvalidStateError: start() called twice");
     this.startedAt = when;
+    this.playStartedAt = Math.max(when, this.context.currentTime);
   }
 
   stop(when?: number): void {
@@ -169,7 +177,27 @@ export class FakeAudioBufferSourceNode extends FakeAudioNode implements AudioBuf
 
   /** Simulates the end of playback (natural end, or a scheduled stop reached). */
   end(): void {
+    this.ended = true;
     this.onended?.();
+  }
+
+  /**
+   * The context time after which this source produces no more output: its
+   * scheduled stop or, without `loop`, the end of its buffer at its rate.
+   * `Infinity` for a loop not stopped (A1.2).
+   */
+  get playsUntil(): number {
+    if (this.playStartedAt === null) return Number.NEGATIVE_INFINITY;
+    let until = this.stoppedAt ?? Number.POSITIVE_INFINITY;
+    if (!this.loop && this.buffer) {
+      until = Math.min(until, this.playStartedAt + this.buffer.duration / this.playbackRate.value);
+    }
+    return until;
+  }
+
+  /** Physically live now: started, not reported ended, and not past `playsUntil` (A1.2). */
+  isPlaying(): boolean {
+    return this.playStartedAt !== null && !this.ended && this.context.currentTime < this.playsUntil;
   }
 }
 

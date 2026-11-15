@@ -1,6 +1,6 @@
 # CURRENT TASK
 
-**TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) — ACTIVE since 2026-11-15.** Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`. The owner approved the architecture. **P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. A1.1 (the `AudioManager` decode interface) is delivered and awaits the owner's review. A2 is next and not authorized.** See "Current: Sprint 5 / TASK 008 / Phase 7" below. *(Until A1.1, 2026-11-15, this read: "**P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted; A2 is next and not authorized.**")* *(Until the A1 acceptance, 2026-11-15, this read: "The owner approved the architecture; **only P7-0 (the blueprint) is authorized.**")*
+**TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) — ACTIVE since 2026-11-15.** Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`. The owner approved the architecture. **P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted; A1.1 is in `ad9e959`. A1.2 (voice pools and protected loops) is delivered and awaits the owner's review. A2 is next and not authorized.** See "Current: Sprint 5 / TASK 008 / Phase 7" below. *(Until A1.2, 2026-11-15, this read: "A1.1 (the `AudioManager` decode interface) is delivered and awaits the owner's review. A2 is next and not authorized.")* *(Until A1.1, 2026-11-15, this read: "**P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted; A2 is next and not authorized.**")* *(Until the A1 acceptance, 2026-11-15, this read: "The owner approved the architecture; **only P7-0 (the blueprint) is authorized.**")*
 
 *(Until P7-0, 2026-11-15, this line read: "**No task is active.** TASK 007 — Sprint 4: User Interface (Phase 6) — **COMPLETED 2026-11-15** (active since 2026-08-17). The next planned phase is Phase 7 (Audio & Visual Effects). It is not started, and its planning begins only on the owner's instruction." The Sprint 4 paragraphs that follow are kept as the record of TASK 007. Their freeze rules still apply in Phase 7: `src/engine` and `src/shared` take no change, and `src/rendering` stays frozen until the proposed E-X5 scope is ratified for a step, docs/08 §13.)*
 
@@ -34,9 +34,24 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 | E-X3 — Dual Bet (engine freeze exception + M1 per-slot amendment + dual panel) | **Owner-approved 2026-11-14; committed in `be10b19`, on `origin/develop`.** This implements the layout decision above: BET 1 and BET 2 side by side on phones and `tab`, stacked in the `desk` rail, both real engine slots. Engine (docs/06 §13.2): `slot` on `placeBet`/`cashOut`/`betPlaced`/`cashedOut`, `invalid-slot`, per-slot impact auto-cash, one chest pick for all eligible slots, `participants`, snapshot v3. Wallet (docs/07 §23.17): every rule per slot, per-slot fault isolation, W2/W3 per slot. Session (docs/07 §8): `betInputs`, in-flight stake reservation. UI (docs/07 §13.3): `BetSlotPanel` ×2, `slot` props, quick bets hidden below `tab`. **Validation not recorded** (the commit message has none). **Pending:** owner browser QA, including 375×667 and 390×844 (no overflow, no unnecessary scroll, canvas unclipped) |
 | Sprint 4 close-out (Steps 1–4) | **Completed 2026-11-15.** Owner approved gates 7–8 (gameplay incl. Dual Bet, mobile, seven-size matrix); E-X4 and D1–D4 ratified; G1 `6e28ce0`, G2 `9bded6b`, G3 `3346ed8`, G4 docs; 572/572 tests. **TASK 007 / Phase 6 closed.** M1 deferred, not closed |
 
-## Current: Sprint 5 / TASK 008 / Phase 7 — A1.1 DELIVERED (2026-11-15), AWAITING OWNER REVIEW; A2 NEXT, NOT AUTHORIZED
+## Current: Sprint 5 / TASK 008 / Phase 7 — A1.2 DELIVERED (2026-11-15), AWAITING OWNER REVIEW; A2 NEXT, NOT AUTHORIZED
 
-Blueprint and full record: `docs/08_AUDIO_FX_ARCHITECTURE.md` (§7.1 for A1.1); progress entries in `docs/15_PROGRESS.md`, "TASK 008" ("Step P7-0", "Step A1", "Step A1.1").
+Blueprint and full record: `docs/08_AUDIO_FX_ARCHITECTURE.md` (§7.1 for A1.1, §7.2 for A1.2); progress entries in `docs/15_PROGRESS.md`, "TASK 008" ("Step P7-0", "Step A1", "Step A1.1", "Step A1.2").
+
+- **A1.2 (2026-11-15):** the owner authorized voice pools and protected loops as their own step before A2, after the A2 architecture report.
+  - **Delivered:**
+    - a strict cap of 16 live sources in fixed pools (6 loop, 8 one-shot, 2 tail), with the unlock prime counted in the tail;
+    - a slot frees only on `onended` or the context clock past the scheduled end plus 0.1 s, never on `stop()`;
+    - pending loops instead of inert handles;
+    - essential loops that are never preempted;
+    - deterministic admission, pending-loop cancellation and disposal cleanup;
+    - 20 damaged UTF-8 comment lines corrected in place; the 3 others were inside comments that A1.2 rewrote.
+  - **Tests:** 8 A1 tests rewritten (the owner approved all 8; the authorization had named 5) and 22 new.
+  - **Validation:** 685/685 tests across 43 files; `tsc` clean; ESLint 0 errors + 6 pre-existing warnings; build passes; SSR smoke 200.
+  - Committed and pushed. Not wired; the app is unchanged. **This resolves the voice-cap item below (docs/08 §14 risk 12).**
+- **Stop condition (A1.2):** do not start A2, implement the sound bank or manifest, implement `maxInstances` (deferred), add audio files or licences, install dependencies, or change gameplay, engine, renderer, UI, RNG or settlement logic. Wait for the owner's explicit approval.
+
+*(The A1.1 record follows, as it stood before A1.2.)*
 
 - **A1.1 (2026-11-15):** the owner authorized the decode interface as its own step before A2. `AudioManager.decode(data)` decodes with the single context, waits for the first unlock without creating a context, never rejects, and settles exactly once, with `null` on errors, on unsupported environments and on `dispose()`. Committed and pushed. 663/663 tests across 43 files; `tsc` clean; ESLint 0 errors + 6 pre-existing warnings; build passes; SSR smoke 200. Not wired; the app is unchanged. **This resolves the A2 decode blocker below.**
 - **Before A2 (owner's instructions):** analyze and test the voice-cap policy for ambience and music loops (docs/08 §14 risk 12; fixed tiers alone are not enough). Q6 stays Open; the owner's planning preference is AAC-LC `.m4a`, subject to browser validation. The proposed manifest rules are provisionally acceptable and do **not** authorize A2.

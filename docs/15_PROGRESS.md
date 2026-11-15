@@ -54,6 +54,8 @@ M2 (the rest of integer minor units) is still deferred.
 
 **A1.1 delivered 2026-11-15.** The owner authorized the `AudioManager` decode interface as its own step before A2. It is committed and pushed and awaits the owner's review. **A2 is still not authorized.** See "Step A1.1" below.
 
+**A1.2 delivered 2026-11-15.** A1.1 is in `ad9e959`. The owner authorized voice pools and protected loops as their own step before A2. It is committed and pushed and awaits the owner's review. **A2 is still not authorized.** See "Step A1.2" below.
+
 ---
 
 ## TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) (ACTIVE, started 2026-11-15)
@@ -115,7 +117,70 @@ M2 (the rest of integer minor units) is still deferred.
   - Proven against the fake context only. Real `decodeAudioData` behavior, AAC-LC support included, waits for A2/A6 and the device matrix (Q14).
   - A request made before unlock stays pending until a gesture or `dispose()`. That is by design (no context before a gesture), but A2 must not wait on it before the game can start.
   - The docs are not Prettier-formatted, as at HEAD (repository convention).
-- **Voice-cap analysis (owner's instruction, recorded for A2; no code change):** see docs/08 §14 risk 12. Fixed tiers alone do not guarantee that loops survive: an equal-priority newcomer steals the oldest voice, which is usually the loop; a loop refused at a full cap gets an inert handle with no retry; a one-shot tier above the loops steals them; fading voices are not counted toward the cap. To be decided and tested before A2.
+- **Voice-cap analysis (owner's instruction, recorded for A2; no code change):** see docs/08 §14 risk 12. Fixed tiers alone do not guarantee that loops survive: an equal-priority newcomer steals the oldest voice, which is usually the loop; a loop refused at a full cap gets an inert handle with no retry; a one-shot tier above the loops steals them; fading voices are not counted toward the cap. To be decided and tested before A2. *(2026-11-15: resolved by A1.2, below.)*
+
+### Step A1.2 — Voice pools and protected loops — DELIVERED 2026-11-15; AWAITING OWNER REVIEW
+
+- **Task ID:** TASK 008, step A1.2. **Date:** 2026-11-15.
+- **Authorization:** granted by the owner after the A2 architecture report, as one atomic commit before A2 (docs/08 §1.1). It does not cover A2, the sound bank, the manifest or `maxInstances` (deferred).
+- **Pre-checks:** every document in `/docs` read in full. `develop` was clean and equal to `origin/develop` at `ad9e959`.
+- **Owner decisions taken during the step (2026-11-15):**
+  1. The authorization named five A1 tests to update. The fixed pools and the strict cap make 8 A1 tests out of date, and the owner approved rewriting all 8.
+  2. The unlock prime is counted in the tail pool. A gesture with both tail slots live skips the prime and still calls `resume()`.
+- **Summary** (docs/08 §7.2):
+  - **Strict cap.** At most 16 live playback sources: playing, fading, stolen and preempted voices and unlock primes alike.
+  - **Fixed pools.** 6 loop, 8 one-shot and 2 tail slots (`LOOP_VOICES`, `ONE_SHOT_VOICES`, `TAIL_VOICES`). They sum to `MAX_VOICES`, so the cap holds by construction. One-shots never take a loop slot.
+  - **Slot release.** Only on evidence of the end: `onended`, or `currentTime ≥ endsBy + VOICE_RECLAIM_GRACE_S` (0.1 s), where `endsBy` is the scheduled stop or a one-shot's natural end. `stop()` is never taken as proof. There are no timers: the clock sweep runs on every manager call. A late `onended` is ignored.
+  - **One-shot admission.** A1's rule (the lowest priority goes, the oldest on a tie), now within the one-shot pool. A steal needs a free tail slot, where the stolen voice fades. Otherwise the newcomer is dropped.
+  - **Pending loops** replace A1's inert handles:
+    - a loop waits before unlock, while interrupted, while its cue is unresolvable, or while the loop pool is full;
+    - it keeps its gain, rate and filter;
+    - it starts in a fixed order: essential first, then priority, then request order;
+    - `stop()` cancels it;
+    - a handle never has two live sources.
+  - **Essential loops** (`ResolvedCue.essential`): never preempted. At a full loop pool, an essential newcomer preempts the weakest non-essential loop (if a tail slot is free). The preempted loop restarts once its old voice has ended.
+  - **Teardown.** `dispose()` and an unsupported environment cancel every pending loop.
+  - **Unlock.** It first reclaims ended sources by the clock, then primes into a free tail slot.
+  - **Validation.** A malformed cue now also needs a buffer with a finite, non-negative duration.
+- **UTF-8 repair (comment-only).** At HEAD, 23 comment lines in `audio-manager.ts` held double-encoded UTF-8. The count of 22 in the authorization came from a search for `â€` / `Â`, which misses line 12: it holds only the `→` sequence `â†’`. All 23 are comment lines.
+  - 20 are corrected in place. The file matches HEAD byte for byte once comment lines are masked.
+  - The other 3 (lines 17, 54 and 519) sat inside the doc comments that A1.2 rewrites: the "Voices" header bullet, the `MAX_VOICES` doc and the prime doc. Their replacements are correctly encoded.
+  - No other `src/audio` file or doc was damaged.
+- **Test changes.** The 8 owner-approved rewrites each keep their original guarantee, and each test notes its old title:
+  1. "allows MAX_VOICES (16)" → "allows ONE_SHOT_VOICES (8) one-shots without stealing".
+  2. "higher-priority voice steals the oldest lowest-priority one" → the same within the one-shot pool.
+  3. "equal-priority voice steals the oldest" → the same within the one-shot pool.
+  4. "the lowest priority goes first" → the same, with an 8-slot fill.
+  5. "a newcomer below every playing voice is dropped" → one-shots still dropped; a loop at a full loop pool waits.
+  6. "ended and stopping voices free their slots" → ended voices free at once; stopping and stolen voices keep their slot.
+  7. "a stolen loop's handle goes inert" → "one-shots never steal a loop" (loop preemption is covered under essential loops).
+  8. "a loop requested before unlock is inert" → it waits, and starts at unlock with the settings given meanwhile.
+  - **22 new tests:** pool sizes; a 100-sound burst; stop-not-proof; lost and delayed `onended`; clock reclaim of a stopped loop; no reclaim without clock progress; prime in the tail; re-unlock reclaims before priming; 6 pending-loop tests (late cue, fixed order, cancellation, no duplicates across repeated unlock and state changes, interrupted request, unsupported environment); 4 essential-loop tests; crossfades; rapid state changes; deterministic admission; disposal of every pool.
+  - A strict-cap assertion checks, after the operations, that at most 16 sources are held, and that every source the fake reports as still physically playing is held.
+- **Fake context (additive).** `playStartedAt`, `ended`, `playsUntil`, `isPlaying()`. Existing fields and behavior are unchanged.
+- **Files:** modified `src/audio/audio-manager.ts`, `src/audio/audio-manager.test.ts`, `src/audio/test/fake-audio-context.ts`; docs `docs/08` (§1.1, §7, §7.2, §12, §14 risk 12, §18), `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md`. No other file. Nothing imports the module yet.
+- **Validation (2026-11-15, PowerShell, `C:\`, on the A1.2 tree):**
+
+| Gate | Result |
+|---|---|
+| Vitest, full suite (`--maxWorkers=2`) | **685/685 passed, 43/43 files** (22 new; 8 rewritten as approved; every other test unchanged) |
+| `tsc --noEmit` | Clean |
+| ESLint, full project, end-of-line neutralized | 0 errors, 6 warnings (pre-existing, shadcn `src/components/ui`) |
+| ESLint raw + Prettier, `src/audio` | Clean |
+| Production build | Passes |
+| SSR smoke (fresh dev server) | HTTP 200, canvas markup, no error strings, no server-log errors |
+| `git diff --check` | Clean |
+| Freeze | `src/engine`, `src/shared`, `src/rendering`, `src/ui`, `src/components`, `src/routes`, `src/game`, `src/styles.css`, `src/assets`, `src/routeTree.gen.ts`, package and lock files: no diff |
+
+- **Mutation check (manual, reverted; 16 mutants).**
+  - **Caught (13):** freeing the slot on `stop()`; reclaiming without the grace; no clock reclaim at all; one-shots in loop slots; restarting a preempted loop while its old voice fades; an uncounted prime; preemptable essential loops; stealing without a tail slot; no precedence sort (caught only after the ordering test was tightened); equal priority unable to steal; non-essential preemption; no sweep before the prime; `onended` without promotion.
+  - **Survived (3, cleanup only, not observable):** leaving a cancelled request in the pending list, on `stop()`, on `dispose()` and in an unsupported environment. The `status` guard already stops such a request from ever starting, so the list cleanup only bounds memory.
+- **Limitations:**
+  - Proven against the fake context only. Real `onended` timing, `currentTime` granularity and the iOS unlock with a skipped prime wait for the device matrix (Q14).
+  - A lost `onended` frees its slot at the first manager call after its end plus 0.1 s. A4's per-frame handle updates make that one frame.
+  - A pending loop the caller never stops still starts once it fits. The director must stop every handle it drops.
+  - The priority and `essential` values are the A2 manifest's to set.
+  - The docs are not Prettier-formatted, as at HEAD (repository convention).
 
 ---
 

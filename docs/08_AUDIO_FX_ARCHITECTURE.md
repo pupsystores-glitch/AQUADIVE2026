@@ -2,7 +2,7 @@
 
 **Sprint 5 / Phase 7 / TASK 008.** This is the Phase 7 blueprint, written in step **P7-0**.
 
-**Status (2026-11-15, A1.1):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization. *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
+**Status (2026-11-15, A1.2):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`), A1 (`3761062`) and A1.1 (`ad9e959`) are done. **A1.2, voice pools and protected loops (§7.2), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization. *(Until A1.2 this read: "P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.**")* *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
 
 **Source of truth:** the *Sprint 5 / Phase 7: Audio & Visual Effects Architecture Proposal* (2026-11-15), audited against the repository at `0ebe7c9`. This document records it without redesign. Where the owner's authorization narrows it, the narrowing is marked **[OWNER]**.
 
@@ -28,6 +28,15 @@ This blueprint sits beside the binding contracts `docs/05_RENDERING_ARCHITECTURE
 - **Git:** one atomic commit per approved implementation step.
 - **Blueprint file name:** `docs/08_AUDIO_FX_ARCHITECTURE.md`.
 - **A1.1, the `AudioManager` decode interface** (owner authorization, 2026-11-15): a separate atomic step between A1 and A2. It adds `decode()` to the `AudioManager` (§7.1) so the A2 sound bank decodes with the manager's single context. Scope: `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`, and the architecture and tracking documents. Not in scope: the sound bank, the manifest, audio files, licences, and every engine, RNG, settlement, rendering, gameplay or UI file. It does not authorize A2.
+- **A1.2, voice pools and protected loops** (owner authorization, 2026-11-15, after the A2 architecture report): a separate atomic step before A2 (§7.2). Approved:
+  - the 6 loop / 8 one-shot / 2 steal-tail pools, under a strict cap of 16 live sources;
+  - pending loops instead of permanently inert handles;
+  - essential-loop protection, deterministic admission, pending-loop cancellation and disposal cleanup;
+  - rewriting the A1 tests that encode the old voice policy, keeping their safety guarantees. The authorization named five tests. The design makes 8 out of date, and the owner approved all 8 on 2026-11-15;
+  - counting the unlock prime in the tail pool (owner decision, 2026-11-15; see §7.2);
+  - correcting the damaged UTF-8 comment lines in `audio-manager.ts`, comment-only.
+
+  **Deferred:** `maxInstances` (per-cue limits) needs its own approved step. Scope: `src/audio/audio-manager.ts`, `src/audio/audio-manager.test.ts`, `src/audio/test/fake-audio-context.ts`, and the architecture and tracking documents. Not in scope: the sound bank, the manifest, A2, and every engine, shared, rendering, UI, gameplay, RNG, settlement, dependency or asset file.
 
 ### 1.2 What the owner did not approve [OWNER]
 
@@ -262,7 +271,7 @@ interface AudioManager {
   setBusGain(bus: "master" | "music" | "ambience" | "sfx", gain: number): void; // clamped 0..1
   setMuted(muted: boolean): void;
   play(cue: CueKey, opts?: { rate?: number; gain?: number }): void; // no-op until unlocked / loaded
-  loop(cue: CueKey): LoopHandle; // { setGain, setRate, setFilter, stop(fadeS) }
+  loop(cue: CueKey): LoopHandle; // { setGain, setRate, setFilter, stop(fadeS) }; pending until it fits (A1.2, §7.2)
   decode(data: ArrayBuffer): Promise<AudioBufferLike | null>; // A1.1, §7.1; never rejects
   suspend(): void;
   resume(): void;
@@ -305,6 +314,67 @@ setMotion(opts: { reduced: boolean }): void;
 - **Failure policy:** the manager does not log decode failures, because it does not know which asset failed. The sound bank logs each failed asset once (§3.2).
 - **The caller's bytes:** browsers may detach the `ArrayBuffer`, so the caller passes a buffer it does not reuse.
 - **Abstraction:** `AudioContextLike` gains `decodeAudioData(data, success?, error?)`, which returns a promise-like or nothing. The test fake records each call as a request that the test settles by hand.
+
+### 7.2 Voice pools and protected loops (A1.2) [OWNER]
+
+This replaces A1's single 16-voice policy. It resolves risk 12 (§14).
+
+**Strict cap.** At most `MAX_VOICES` = 16 playback sources are live at any moment. A source is live from `start()` until it is known to have ended. Every kind counts:
+
+- playing voices;
+- fading voices (a stopped loop during its fade);
+- stolen and preempted voices;
+- the 1-sample unlock prime.
+
+**Three fixed pools.** Each slot holds one live source. The pools sum to 16, so the cap holds by construction.
+
+| Pool | Constant | Slots | Holds |
+|---|---|---|---|
+| Loop | `LOOP_VOICES` | 6 | Loops, including stopped loops while they fade |
+| One-shot | `ONE_SHOT_VOICES` | 8 | One-shots |
+| Tail | `TAIL_VOICES` | 2 | Stolen and preempted voices while they fade out, and unlock primes |
+
+A one-shot never takes a loop slot, and a loop never takes a one-shot slot.
+
+**When a slot frees.** A slot frees only on evidence that its source has ended. Calling `stop()` is never proof. There are two kinds of evidence:
+
+1. the source's `onended`;
+2. the context clock: `currentTime ≥ endsBy + VOICE_RECLAIM_GRACE_S` (0.1 s). `endsBy` is the scheduled stop time, or for a one-shot its start plus `duration / rate`. Once the clock is past it, the context has rendered past the end, so the source no longer plays. The grace covers render-quantum granularity and a coarsened `currentTime`.
+
+- A suspended context's clock stands still, so nothing is reclaimed while it is muted, hidden or interrupted.
+- There are no timers. The clock check runs on every manager call: `play`, `loop`, every handle method, `unlock` and a system resume. So when an `onended` is lost, the slot frees at the first call after its end plus the grace. (A4's per-frame handle updates make that one frame.)
+- A late `onended` after a clock reclaim is ignored. A slot is never freed twice.
+
+**One-shot admission (deterministic).**
+
+- A free one-shot slot: the one-shot plays.
+- A full pool: the lowest-priority one-shot (the oldest on a tie) is stolen, if the newcomer's priority is not lower and a tail slot is free. The stolen voice moves to the tail and fades over `VOICE_STEAL_FADE_S`.
+- Otherwise the newcomer is dropped.
+
+**Pending loops.** `loop()` always returns a working handle. It is inert only after `dispose()`, or when Web Audio is unavailable. The loop starts at once when it fits. Otherwise it is **pending**:
+
+- before the first unlock, or while the context is interrupted;
+- while its cue cannot be resolved, for example while the A2 sound bank is still decoding;
+- while the loop pool is full.
+
+A pending handle keeps its gain, rate and filter and applies them when the loop starts. `stop()` cancels it, so it never starts. Waiting loops start in a fixed order: essential first, then higher priority, then the earlier request. A handle has at most one live source at a time.
+
+**Essential loops.** `ResolvedCue.essential`: the A2 manifest marks ambience and music beds.
+
+- An essential loop is never preempted. One-shots never affect any loop.
+- When the loop pool is full, an essential newcomer preempts the lowest-priority non-essential playing loop (the oldest on a tie), if a tail slot is free. Otherwise it waits.
+- The preempted voice fades out in the tail. Its handle becomes pending again and restarts only after its old voice has ended, so the handle never has two live sources.
+- A non-essential loop never preempts.
+
+**Crossfades.** A stopped loop keeps its loop slot during its fade. So at most 6 loops are live at once, fading ones included, and further crossfade partners wait.
+
+**Unlock prime** (owner decision, 2026-11-15). The prime holds a tail slot. If both tail slots are live when a gesture arrives (two stolen voices still fading, or two earlier primes on a context that has not run yet), that gesture skips the prime; `resume()` still runs. Each unlock first reclaims ended sources by the clock, so a tail slot freed during an interruption is used. **Limitation:** on the supported iOS 16+, `resume()` inside the gesture is what unlocks, but no real device has confirmed it yet (Q14).
+
+**Dispose.** It cancels every pending loop, then stops and releases every source in every pool.
+
+**Caller obligations (A4).** Stop every handle you no longer want: a pending loop still starts when it fits, even much later. Set `essential` only on beds that must never drop out.
+
+**Not in A1.2:** `maxInstances` and other per-cue limits (deferred by the owner), and the priority and `essential` values themselves (A2 manifest).
 
 ---
 
@@ -395,6 +465,7 @@ Each step is one commit, followed by verify → commit → push → wait for app
 | **P7-0** | `docs: Phase 7 audio & FX blueprint` | C `docs/08_AUDIO_FX_ARCHITECTURE.md`; M `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None | — (authorized 2026-11-15) |
 | A1 | `feat(audio): AudioManager core` | C `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts` | None (not wired) | Authorization; import rule (§6) |
 | A1.1 | `feat(audio): AudioManager decode interface (A1.1)` | M `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1; inserted before A2) |
+| A1.2 | `feat(audio): voice pools and protected loops (A1.2)` | M `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1; inserted before A2) |
 | A2 | `feat(audio): sound bank and manifest` | C `src/audio/sound-bank.ts`, `src/audio/manifest.ts` + tests | None | Authorization; Q6 (format shapes the manifest) |
 | A3 | `feat(ui): sound settings store` | C `src/ui/store/sound-settings-store.ts` + test | None | Authorization; UI scope ratification (new file in `src/ui`); Q3 (default) |
 | A4 | `feat(audio): director, music and session wiring` | C `src/audio/director.ts`, `src/audio/music.ts` + tests; M `src/ui/session.ts` | None (no assets yet) | Authorization; UI scope (`session.ts`); Q3, Q7, Q8, Q9, Q15 |
@@ -478,6 +549,8 @@ Follows the E-X1–E-X4 precedent (docs/07 §19 gate 4). Presentation only. `src
 
     Strictly higher loop tiers do stop one-shots from stealing loops. They do not cover the cases above. The policy needs a decision before A2 fixes the manifest's priorities. No change is made in A1.1.
 
+    **Resolved by A1.2 (2026-11-15, §7.2).** One-shots and loops have separate pools, so no one-shot can steal a loop, whatever the tiers. A loop that cannot start waits as a pending loop and starts once it fits, instead of getting an inert handle. Fading and stolen voices keep their slots until they have ended, so the real source count never exceeds 16. An essential loop is never preempted.
+
 ---
 
 ## 15. Definition of Done and acceptance gates
@@ -531,3 +604,4 @@ docs/05 §6 (`shake`, `zoom` reserved), §12 (FX list), §14 item 9 (`quality` f
 
 - **2026-11-15 — P7-0.** Blueprint created from the owner-approved proposal. Records the approved direction (§1.1), the boundaries (§1.2), the decision register (§1.3), the commit plan (§12), the proposed exception scopes (§13) and the acceptance gates (§15). No implementation.
 - **2026-11-15 — A1.1.** The owner authorized the decode interface as a separate step before A2 (§1.1). Added §7.1 and the `decode()` line in §7, the A1.1 row in §12, the owner's Q6 planning preference in §1.3 (Q6 stays Open), and risk 12, the voice-cap analysis, in §14. A2 is not authorized.
+- **2026-11-15 — A1.2.** The owner authorized voice pools and protected loops as a separate step before A2 (§1.1). Added §7.2, the A1.2 row in §12, the resolution note on risk 12 in §14, and a note on `loop()` in §7. `maxInstances` is deferred. A2 is not authorized.
