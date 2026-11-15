@@ -1,6 +1,6 @@
 # CURRENT TASK
 
-**TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) — ACTIVE since 2026-11-15.** Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`. The owner approved the architecture. **P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted; A1.1 is in `ad9e959`. A1.2 (voice pools and protected loops) is delivered and awaits the owner's review. A2 is next and not authorized.** See "Current: Sprint 5 / TASK 008 / Phase 7" below. *(Until A1.2, 2026-11-15, this read: "A1.1 (the `AudioManager` decode interface) is delivered and awaits the owner's review. A2 is next and not authorized.")* *(Until A1.1, 2026-11-15, this read: "**P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted; A2 is next and not authorized.**")* *(Until the A1 acceptance, 2026-11-15, this read: "The owner approved the architecture; **only P7-0 (the blueprint) is authorized.**")*
+**TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) — ACTIVE since 2026-11-15.** Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`. The owner approved the architecture. **P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted; A1.1 is in `ad9e959`; A1.2 is in `0de6d73`, accepted. A2 (sound bank and manifest) is delivered and awaits the owner's review. A3 is next and not authorized.** See "Current: Sprint 5 / TASK 008 / Phase 7" below. *(Until A2, 2026-11-15, this read: "A1.2 (voice pools and protected loops) is delivered and awaits the owner's review. A2 is next and not authorized.")* *(Until A1.2, 2026-11-15, this read: "A1.1 (the `AudioManager` decode interface) is delivered and awaits the owner's review. A2 is next and not authorized.")* *(Until A1.1, 2026-11-15, this read: "**P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted; A2 is next and not authorized.**")* *(Until the A1 acceptance, 2026-11-15, this read: "The owner approved the architecture; **only P7-0 (the blueprint) is authorized.**")*
 
 *(Until P7-0, 2026-11-15, this line read: "**No task is active.** TASK 007 — Sprint 4: User Interface (Phase 6) — **COMPLETED 2026-11-15** (active since 2026-08-17). The next planned phase is Phase 7 (Audio & Visual Effects). It is not started, and its planning begins only on the owner's instruction." The Sprint 4 paragraphs that follow are kept as the record of TASK 007. Their freeze rules still apply in Phase 7: `src/engine` and `src/shared` take no change, and `src/rendering` stays frozen until the proposed E-X5 scope is ratified for a step, docs/08 §13.)*
 
@@ -34,9 +34,24 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 | E-X3 — Dual Bet (engine freeze exception + M1 per-slot amendment + dual panel) | **Owner-approved 2026-11-14; committed in `be10b19`, on `origin/develop`.** This implements the layout decision above: BET 1 and BET 2 side by side on phones and `tab`, stacked in the `desk` rail, both real engine slots. Engine (docs/06 §13.2): `slot` on `placeBet`/`cashOut`/`betPlaced`/`cashedOut`, `invalid-slot`, per-slot impact auto-cash, one chest pick for all eligible slots, `participants`, snapshot v3. Wallet (docs/07 §23.17): every rule per slot, per-slot fault isolation, W2/W3 per slot. Session (docs/07 §8): `betInputs`, in-flight stake reservation. UI (docs/07 §13.3): `BetSlotPanel` ×2, `slot` props, quick bets hidden below `tab`. **Validation not recorded** (the commit message has none). **Pending:** owner browser QA, including 375×667 and 390×844 (no overflow, no unnecessary scroll, canvas unclipped) |
 | Sprint 4 close-out (Steps 1–4) | **Completed 2026-11-15.** Owner approved gates 7–8 (gameplay incl. Dual Bet, mobile, seven-size matrix); E-X4 and D1–D4 ratified; G1 `6e28ce0`, G2 `9bded6b`, G3 `3346ed8`, G4 docs; 572/572 tests. **TASK 007 / Phase 6 closed.** M1 deferred, not closed |
 
-## Current: Sprint 5 / TASK 008 / Phase 7 — A1.2 DELIVERED (2026-11-15), AWAITING OWNER REVIEW; A2 NEXT, NOT AUTHORIZED
+## Current: Sprint 5 / TASK 008 / Phase 7 — A2 DELIVERED (2026-11-15), AWAITING OWNER REVIEW; A3 NEXT, NOT AUTHORIZED
 
-Blueprint and full record: `docs/08_AUDIO_FX_ARCHITECTURE.md` (§7.1 for A1.1, §7.2 for A1.2); progress entries in `docs/15_PROGRESS.md`, "TASK 008" ("Step P7-0", "Step A1", "Step A1.1", "Step A1.2").
+Blueprint and full record: `docs/08_AUDIO_FX_ARCHITECTURE.md` (§7.1 for A1.1, §7.2 for A1.2, §7.3 for A2); progress entries in `docs/15_PROGRESS.md`, "TASK 008" ("Step P7-0", "Step A1", "Step A1.1", "Step A1.2", "Step A2").
+
+- **A2 (2026-11-15):** the owner accepted A1.2 at `0de6d73` and authorized the sound bank and manifest.
+  - **Delivered:**
+    - `manifest.ts`: 15 one-shot and 3 loop cue ids, typed apart; bus, gain, priority tier, essential flag (the two ambience beds only), optional loop points. **Every `asset` is `null`**, so every cue is unavailable and silent. The tick (Q9) and music (Q8) are left out.
+    - `sound-bank.ts`: fetch, then `AudioManager.decode()`, then a cached, frozen cue for the manager's resolver. Deduplicated loads that never reject; failures silent, logged once, not retried; `evict()` / `dispose()` with aborts and generation guards; `onReady` to wake pending loops.
+    - `audio-manager.ts` is unchanged.
+  - **Tests:** 72 new, including 9 integration tests against the real AudioManager.
+  - **Validation:** 757/757 tests across 45 files; `tsc` clean; ESLint 0 errors + 6 pre-existing warnings; build passes; SSR smoke 200.
+  - Committed and pushed. Not wired; the app is unchanged.
+- **For the owner:** a pending loop starts at the next manager call after its cue is ready. A2 relies on `onReady` plus an A4 caller obligation (docs/08 §14 risk 13). A public `AudioManager.refresh()` is the alternative. It is proposed only and needs its own approval.
+- **Open decisions** (docs/08 §1.3): Q2 scopes, Q3–Q12, Q14, Q15. A2 decided none of them.
+- **Next:** the owner's review of A2; then, for A3, the UI scope ratification (docs/08 §13.2), Q3, and the owner's authorization.
+- **Stop condition (A2):** do not start A3 or any later step, wire audio into the session, add or download audio files or licences, invent asset URLs, change `audio-manager.ts`, install dependencies, or change gameplay, engine, renderer, UI, RNG or settlement logic. Wait for the owner's explicit approval.
+
+*(The A1.2 record follows, as it stood before A2.)*
 
 - **A1.2 (2026-11-15):** the owner authorized voice pools and protected loops as their own step before A2, after the A2 architecture report.
   - **Delivered:**

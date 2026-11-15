@@ -2,7 +2,7 @@
 
 **Sprint 5 / Phase 7 / TASK 008.** This is the Phase 7 blueprint, written in step **P7-0**.
 
-**Status (2026-11-15, A1.2):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`), A1 (`3761062`) and A1.1 (`ad9e959`) are done. **A1.2, voice pools and protected loops (§7.2), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization. *(Until A1.2 this read: "P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.**")* *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
+**Status (2026-11-15, A2):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`) and A1.2 (`0de6d73`, accepted) are done. **A2, the sound bank and manifest (§7.3), is authorized and delivered in its own commit.** A3 and every later step need their own explicit authorization. *(Until A2 this read: "P7-0 (`0e7ff80`), A1 (`3761062`) and A1.1 (`ad9e959`) are done. **A1.2, voice pools and protected loops (§7.2), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization.")* *(Until A1.2 this read: "P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.**")* *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
 
 **Source of truth:** the *Sprint 5 / Phase 7: Audio & Visual Effects Architecture Proposal* (2026-11-15), audited against the repository at `0ebe7c9`. This document records it without redesign. Where the owner's authorization narrows it, the narrowing is marked **[OWNER]**.
 
@@ -37,6 +37,7 @@ This blueprint sits beside the binding contracts `docs/05_RENDERING_ARCHITECTURE
   - correcting the damaged UTF-8 comment lines in `audio-manager.ts`, comment-only.
 
   **Deferred:** `maxInstances` (per-cue limits) needs its own approved step. Scope: `src/audio/audio-manager.ts`, `src/audio/audio-manager.test.ts`, `src/audio/test/fake-audio-context.ts`, and the architecture and tracking documents. Not in scope: the sound bank, the manifest, A2, and every engine, shared, rendering, UI, gameplay, RNG, settlement, dependency or asset file.
+- **A2, the sound bank and manifest** (owner authorization, 2026-11-15, after accepting A1.2 at `0de6d73`): §7.3. Approved scope: a typed manifest and a SoundBank that reuse `AudioManager.decode()` and its single, lazy context, with typed cue ids and metadata, asynchronous loading, caching, deduplication, controlled failures, pending-loop resolution without duplicate sources, explicit cleanup and generation guards, and tests. Files: new modules and tests in `src/audio`, and the architecture and tracking documents. **Not authorized:** any change to `audio-manager.ts` (an insufficient API stops the step for a separate proposal); any audio file, download, generated asset or invented production URL; deciding Q3–Q12, Q14 or Q15; the director, music controller, settings, UI, renderer effects, gameplay wiring and A3 onward; every engine, shared, rendering, UI, RNG, settlement or dependency file.
 
 ### 1.2 What the owner did not approve [OWNER]
 
@@ -55,7 +56,7 @@ Status values: **Approved** (the owner decided), **Open** (the owner has not dec
 | Q3 | Default sound state | **Open** | On after the first user gesture | A4 wiring defaults, A5 |
 | Q4 | Sound control | **Open** | A single mute button in TopBar | A5 |
 | Q5 | Asset supply and allowed licences | **Open** | The owner supplies or commissions the files. Allowed: CC0, royalty-free commercial; CC-BY only with a credit entry. Not allowed: any NC licence. Every EULA checked for a gambling clause | A6 |
-| Q6 | Audio format | **Open.** Owner's planning preference (2026-11-15): AAC-LC in `.m4a`, subject to browser compatibility validation. Not a decision | `.m4a` (AAC-LC) only | A2 manifest shape, A6 |
+| Q6 | Audio format | **Open.** Owner's planning preference (2026-11-15): AAC-LC in `.m4a`, subject to browser compatibility validation. Not a decision. *(A2: the manifest records no URL, file name or extension, so its shape does not depend on Q6; §7.3.)* | `.m4a` (AAC-LC) only | A6 |
 | Q7 | Spectator and Dual Bet audio | **Open** | Crash and jackpot play for everyone; cashout only for the player's own slots; two cashouts in the same tick play one cue | A4 |
 | Q8 | Music | **Open** | Ambience plus a minimal music bed | A4 (`music.ts`), A6 |
 | Q9 | Countdown ticks for the last 3 s | **Open** | — (no recommendation; the owner's preference) | A4 |
@@ -278,6 +279,17 @@ interface AudioManager {
   dispose(): void;
 }
 
+// src/audio/sound-bank.ts (A2, §7.3)
+interface SoundBank<CueId> {
+  readonly resolve: CueResolver<CueId>; // passed to createAudioManager; sync, cached, no allocation
+  load(cue: CueId): Promise<CueLoadResult>; // "ready" | "failed" | "unavailable" | "cancelled"; never rejects
+  loadAll(cues?: readonly CueId[]): Promise<readonly CueLoadResult[]>;
+  status(cue: CueId): CueStatus; // "unavailable" | "unloaded" | "loading" | "ready" | "failed"
+  onReady(listener: (cue: CueId) => void): () => void;
+  evict(cue: CueId): void;
+  dispose(): void;
+}
+
 // src/audio/director.ts
 function createAudioDirector(
   events: EventBus<EngineEventMap>,
@@ -376,6 +388,45 @@ A pending handle keeps its gain, rate and filter and applies them when the loop 
 
 **Not in A1.2:** `maxInstances` and other per-cue limits (deferred by the owner), and the priority and `essential` values themselves (A2 manifest).
 
+### 7.3 Sound bank and manifest (A2) [OWNER]
+
+Two modules. `manifest.ts` is game-specific data. `sound-bank.ts` is generic over the cue ids of any manifest. Neither changes `audio-manager.ts`; both use its public API only.
+
+**Manifest (`src/audio/manifest.ts`).**
+
+- **Cue ids.** `ONE_SHOT_CUES` (15) and `LOOP_CUES` (3) are `as const` lists. `CueId` is their union; `OneShotCueId` and `LoopCueId` keep the two kinds apart. A mapped type makes every one-shot id a `OneShotCueDefinition` and every loop id a `LoopCueDefinition`, so a one-shot cannot carry loop fields (compile-time, tested with `@ts-expect-error`).
+- **Entry fields.** `kind` (`"oneShot"` | `"loop"`), `category` (the voice bus: `sfx`, `ambience` or `music`), `gain` (0..1), `priority` (a `CUE_PRIORITY` tier: detail 1, action 2, outcome 3) and `asset` (`{ url }` or `null`). Loops also have `essential` and optional `loopStart` / `loopEnd` (both or neither, 0 ≤ start < end).
+- **The cue list** is the §8 required set: bet clinks ×2, chain unspool, water splash, tension creaks ×2, goldfish chime, cashout coins, chain snap, crash boom, floor thud, jackpot stinger, treasure shimmer, chest lid creak and chest coin burst (one-shots); the chain rattle and the surface and underwater ambience beds (loops). **Only the two beds are essential.**
+- **Left out, because they depend on open decisions:** the countdown tick (Q9) and every music bed (Q8). No cue uses the `music` bus. They are added once those questions are answered.
+- **No asset.** Every `asset` is `null`: no URL, file name or extension is recorded (Q5, Q6 open). A cue with no asset is *unavailable*: never fetched, never playable, silent. A6 fills `asset` in with owner-supplied, licensed files.
+- **Values are engineering defaults**, untuned until A6: every cue gain is 1 (the mix lives in the bus gains), and the tiers only order cues inside their own pool. No cue defines loop points yet; they depend on the real files.
+- **Validation.** `validateSoundManifest()` / `cueDefinitionProblems()` are pure checks. The real manifest is tested to be valid. The bank refuses to load an invalid entry.
+
+**SoundBank (`src/audio/sound-bank.ts`).**
+
+- **Pipeline.** `load(cue)` → `fetch(asset.url)` → `decoder.decode(bytes)` → a frozen `ResolvedCue`, cached. The decoder is the AudioManager's own `decode()` (§7.1), so the single context decodes everything; the bank never creates, holds or reaches a context. A load started before the first unlock fetches its bytes, then waits inside `decode()` until the unlock.
+- **`resolve` is the manager's `CueResolver`.** Synchronous and pure, with no allocation per call: it returns the cached object of a ready cue, or `null`.
+- **Deduplication.** A cue has at most one cache entry. Concurrent loads share one fetch, one decode and one promise. Loads of different cues run in parallel.
+- **Results.** Every promise resolves; none rejects. `load()` resolves `"ready"`, `"failed"`, `"unavailable"` (no asset, or not in the manifest; inherited keys such as `toString` included) or `"cancelled"` (evicted or disposed first).
+- **Failure policy** (docs/05 §15). A network error, a non-OK response such as a missing file, a failing body, a decode `null` (or a rejecting foreign decoder), a missing `fetch`, or an invalid manifest entry leaves the cue `"failed"`: silent, logged once per cue (`console.warn`), not retried. `evict()` then `load()` is the explicit retry. An unavailable cue is expected until A6 and is not logged.
+- **Cleanup.** `evict(cue)` drops one cache entry; `dispose()` drops all of them and the `onReady` listeners. Either aborts the in-flight fetch (when `AbortController` exists) and settles the waiting load with `"cancelled"`. After `dispose()` every call is a no-op and `load()` resolves `"cancelled"`. A voice already playing a buffer keeps it until the voice ends: the manager owns voices.
+- **Stale completions.** Each async step (after the fetch, after the body, after the decode) checks that its cache entry is still the cue's current entry and that the bank is not disposed. A stale response's body is never read, stale bytes are never decoded, and a stale buffer never refills the cache or fires `onReady`. A load started after an evict cannot be overwritten by the earlier one.
+- **Waking pending loops.** The manager re-resolves its pending loops only on its next call (`play`, `loop`, any `LoopHandle` method, unlock, a voice ending); it has no public refresh, and A2 does not add one. `onReady(listener)` fires once each time a cue becomes ready, after `resolve` serves it, so the caller can make that call at once. The manager's request guards then start the loop exactly once, with one live source, however often it is woken (tested against the real manager). Listener errors are caught and logged.
+- **SSR.** No global is read at import or construction. `fetch` and `AbortController` are read when a load starts. Without `AbortController` loads still work, guarded by the entry checks alone.
+- **Wiring (A4).** The manager needs the resolver and the bank needs the decoder, so one is late-bound: `createAudioManager({ resolveCue: (cue) => bank.resolve(cue) })`, then `createSoundBank({ manifest, decoder: audio })`. Dispose the bank before the manager: a manager disposed first settles the bank's waiting decodes with `null`, which the bank reports as failures.
+
+**Pool contract.** The bank adds no voice and no playback path; the 6 / 8 / 2 pools and the strict 16-source cap of §7.2 hold unchanged. With test assets on every manifest cue, all three loops plus a 60-play one-shot burst stay at or below 16 live sources, and both essential beds keep playing.
+
+**Caller obligations (A4).** On `onReady`, make a manager call that refreshes the pending loops (a per-frame handle update does). Stop every loop handle you no longer want, as before. Dispose the bank before the manager.
+
+**Limitations.**
+
+- Proven against fakes only: the fake fetch and decoder, and the real AudioManager over the fake context. Real `fetch`, CORS, caching headers and real decoding wait for A6 and the device matrix (Q14).
+- A pending loop starts at the first manager call after its cue is ready, not by itself. `onReady` closes that gap only when the caller acts on it. A public `AudioManager.refresh()` would remove the obligation; it would change `audio-manager.ts` and needs its own approval. **Proposed only, not implemented.**
+- No per-cue retry policy, no cache budget and no automatic eviction. Memory is bounded by the manifest (one buffer per cue); `evict()` is the release.
+- Two cues with the same URL would load it twice. No current cue has a URL, so this is moot until A6.
+- `maxInstances` stays deferred (§7.2).
+
 ---
 
 ## 8. Assets and licensing
@@ -466,7 +517,7 @@ Each step is one commit, followed by verify → commit → push → wait for app
 | A1 | `feat(audio): AudioManager core` | C `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts` | None (not wired) | Authorization; import rule (§6) |
 | A1.1 | `feat(audio): AudioManager decode interface (A1.1)` | M `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1; inserted before A2) |
 | A1.2 | `feat(audio): voice pools and protected loops (A1.2)` | M `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1; inserted before A2) |
-| A2 | `feat(audio): sound bank and manifest` | C `src/audio/sound-bank.ts`, `src/audio/manifest.ts` + tests | None | Authorization; Q6 (format shapes the manifest) |
+| A2 | `feat(audio): sound bank and manifest (A2)` | C `src/audio/sound-bank.ts`, `src/audio/manifest.ts`, `src/audio/sound-bank.test.ts`, `src/audio/manifest.test.ts`, `src/audio/test/fake-fetch.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1). Q6 no longer blocks it: the manifest records no format (§7.3) |
 | A3 | `feat(ui): sound settings store` | C `src/ui/store/sound-settings-store.ts` + test | None | Authorization; UI scope ratification (new file in `src/ui`); Q3 (default) |
 | A4 | `feat(audio): director, music and session wiring` | C `src/audio/director.ts`, `src/audio/music.ts` + tests; M `src/ui/session.ts` | None (no assets yet) | Authorization; UI scope (`session.ts`); Q3, Q7, Q8, Q9, Q15 |
 | V1 | `feat(rendering): FX queue, camera shake, motion flag` | C `src/rendering/fx-queue.ts` + test; M `src/rendering/scene-renderer.ts`, `src/rendering/camera.ts`, `src/ui/session.ts` | None | Authorization; renderer + UI scope; Q11, Q12 |
@@ -550,6 +601,7 @@ Follows the E-X1–E-X4 precedent (docs/07 §19 gate 4). Presentation only. `src
     Strictly higher loop tiers do stop one-shots from stealing loops. They do not cover the cases above. The policy needs a decision before A2 fixes the manifest's priorities. No change is made in A1.1.
 
     **Resolved by A1.2 (2026-11-15, §7.2).** One-shots and loops have separate pools, so no one-shot can steal a loop, whatever the tiers. A loop that cannot start waits as a pending loop and starts once it fits, instead of getting an inert handle. Fading and stolen voices keep their slots until they have ended, so the real source count never exceeds 16. An essential loop is never preempted.
+13. **A pending loop waits for the next manager call** (recorded in A2, 2026-11-15, §7.3). When a cue finishes loading, the manager is not told; the loop starts at its next call. The bank's `onReady` lets A4 make that call at once. If A4 neglects it, a bed starts late, up to the next handle update or play. Mitigation: A4's per-frame handle updates, and a test in A4 that a bed starts on the frame its cue becomes ready. A public `AudioManager.refresh()` is the alternative; it needs its own approval.
 
 ---
 
@@ -605,3 +657,4 @@ docs/05 §6 (`shake`, `zoom` reserved), §12 (FX list), §14 item 9 (`quality` f
 - **2026-11-15 — P7-0.** Blueprint created from the owner-approved proposal. Records the approved direction (§1.1), the boundaries (§1.2), the decision register (§1.3), the commit plan (§12), the proposed exception scopes (§13) and the acceptance gates (§15). No implementation.
 - **2026-11-15 — A1.1.** The owner authorized the decode interface as a separate step before A2 (§1.1). Added §7.1 and the `decode()` line in §7, the A1.1 row in §12, the owner's Q6 planning preference in §1.3 (Q6 stays Open), and risk 12, the voice-cap analysis, in §14. A2 is not authorized.
 - **2026-11-15 — A1.2.** The owner authorized voice pools and protected loops as a separate step before A2 (§1.1). Added §7.2, the A1.2 row in §12, the resolution note on risk 12 in §14, and a note on `loop()` in §7. `maxInstances` is deferred. A2 is not authorized.
+- **2026-11-15 — A2.** The owner accepted A1.2 (`0de6d73`) and authorized the sound bank and manifest (§1.1). Added §7.3, the `SoundBank` interface in §7, the A2 row in §12 (with its exact file list), a note on Q6 in §1.3 (Q6 stays Open), and risk 13 in §14. `audio-manager.ts` is unchanged. No asset, URL or format is recorded. Q3–Q12, Q14 and Q15 stay Open. A3 is not authorized.

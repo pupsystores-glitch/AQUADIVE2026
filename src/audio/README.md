@@ -2,11 +2,15 @@
 
 Audio system (roadmap Phase 7). Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`.
 
-**Status (2026-11-15, A1.2):** `audio-manager.ts` exists: the generic core
+**Status (2026-11-15, A2):** `audio-manager.ts` exists: the generic core
 (A1), its `decode()` interface (A1.1, docs/08 §7.1) and its voice pools and
-protected loops (A1.2, docs/08 §7.2), with the fake context and tests. Nothing
-imports it yet. **No audio asset exists.** The other modules below are planned
-for steps A2–A6, and each one needs its own owner authorization.
+protected loops (A1.2, docs/08 §7.2), with the fake context and tests. A2 adds
+`manifest.ts` (the typed cue list) and `sound-bank.ts` (fetch, decode through
+the manager, cache; docs/08 §7.3), with `test/fake-fetch.ts` and tests.
+Nothing outside `src/audio` imports any of them yet. **No audio asset exists:
+every manifest entry has `asset: null`, so every cue is unavailable and
+silent.** The other modules below are planned for steps A3–A6, and each one
+needs its own owner authorization.
 
 ## Responsibility
 
@@ -18,8 +22,13 @@ Event-driven sound on the native Web Audio API, with no audio dependency
   and tail pools, pending and essential loops, crossfades, lazy context
   creation and unlock on the first user gesture;
 - a `SoundBank` that fetches, decodes (through `AudioManager.decode()`, with
-  the manager's single context) and caches buffers; a missing or failed asset
-  stays silent and is logged once;
+  the manager's single context) and caches buffers, deduplicates loads, and
+  cancels them on `evict()` / `dispose()` with stale results ignored; a
+  missing or failed asset stays silent and is logged once; its `onReady`
+  tells the caller when a pending loop's cue can now start;
+- a typed manifest: one-shot and loop cue ids, bus, gain, priority tier,
+  essential beds, optional loop points, and an `asset` that stays `null` until
+  licensed files are supplied (A6);
 - an `AudioDirector`, the only place that maps engine events and per-frame
   state to cues, and a `MusicController` for the phase music;
 - depth-based ambience: a low-pass whose cutoff falls as `depthRatio` rises.
@@ -50,7 +59,8 @@ them into the `AudioManager`, which is a passive sink.
 
 ## Planned contents (docs/08 §6)
 
-`audio-manager.ts` (A1), `sound-bank.ts` and `manifest.ts` (A2), `director.ts`
-and `music.ts` (A4), `test/fake-audio-context.ts` and `*.test.ts`. Licensed
+`audio-manager.ts` (A1), `sound-bank.ts` and `manifest.ts` (A2, done),
+`director.ts` and `music.ts` (A4), `test/fake-audio-context.ts`,
+`test/fake-fetch.ts` and `*.test.ts`. Licensed
 assets and `CREDITS.md` go in `src/assets/audio/` (A6), supplied by the owner;
 no asset or licence is cleared yet.
