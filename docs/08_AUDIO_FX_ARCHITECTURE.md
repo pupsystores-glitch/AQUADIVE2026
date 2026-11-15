@@ -2,7 +2,7 @@
 
 **Sprint 5 / Phase 7 / TASK 008.** This is the Phase 7 blueprint, written in step **P7-0**.
 
-**Status (2026-11-15, A2):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`) and A1.2 (`0de6d73`, accepted) are done. **A2, the sound bank and manifest (§7.3), is authorized and delivered in its own commit.** A3 and every later step need their own explicit authorization. *(Until A2 this read: "P7-0 (`0e7ff80`), A1 (`3761062`) and A1.1 (`ad9e959`) are done. **A1.2, voice pools and protected loops (§7.2), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization.")* *(Until A1.2 this read: "P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.**")* *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
+**Status (2026-11-15, A3):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`), A1.2 (`0de6d73`, accepted) and A2 (`03bb7dc`) are done. **A3, the sound settings store (§3.5), is authorized and delivered in its own commit.** A4 and every later step need their own explicit authorization. *(Until A3 this read: "P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`) and A1.2 (`0de6d73`, accepted) are done. **A2, the sound bank and manifest (§7.3), is authorized and delivered in its own commit.** A3 and every later step need their own explicit authorization.")* *(Until A2 this read: "P7-0 (`0e7ff80`), A1 (`3761062`) and A1.1 (`ad9e959`) are done. **A1.2, voice pools and protected loops (§7.2), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization.")* *(Until A1.2 this read: "P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.**")* *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
 
 **Source of truth:** the *Sprint 5 / Phase 7: Audio & Visual Effects Architecture Proposal* (2026-11-15), audited against the repository at `0ebe7c9`. This document records it without redesign. Where the owner's authorization narrows it, the narrowing is marked **[OWNER]**.
 
@@ -38,6 +38,18 @@ This blueprint sits beside the binding contracts `docs/05_RENDERING_ARCHITECTURE
 
   **Deferred:** `maxInstances` (per-cue limits) needs its own approved step. Scope: `src/audio/audio-manager.ts`, `src/audio/audio-manager.test.ts`, `src/audio/test/fake-audio-context.ts`, and the architecture and tracking documents. Not in scope: the sound bank, the manifest, A2, and every engine, shared, rendering, UI, gameplay, RNG, settlement, dependency or asset file.
 - **A2, the sound bank and manifest** (owner authorization, 2026-11-15, after accepting A1.2 at `0de6d73`): §7.3. Approved scope: a typed manifest and a SoundBank that reuse `AudioManager.decode()` and its single, lazy context, with typed cue ids and metadata, asynchronous loading, caching, deduplication, controlled failures, pending-loop resolution without duplicate sources, explicit cleanup and generation guards, and tests. Files: new modules and tests in `src/audio`, and the architecture and tracking documents. **Not authorized:** any change to `audio-manager.ts` (an insufficient API stops the step for a separate proposal); any audio file, download, generated asset or invented production URL; deciding Q3–Q12, Q14 or Q15; the director, music controller, settings, UI, renderer effects, gameplay wiring and A3 onward; every engine, shared, rendering, UI, RNG, settlement or dependency file.
+- **A3, the sound settings store** (owner authorization, 2026-11-15, after the A3 pre-implementation architecture report): §3.5. Owner decisions:
+  - **D1 — approved (answers Q3):** sound is on by default (`muted: false`), all four volumes default to `1.0`, and saved preferences override the defaults. Playback stays blocked until the required user gesture.
+  - **D2 — approved:** UI-X1 is ratified for the exact A3 files (§13.2), including the `src/ui/README.md` update and one store-table row in `docs/07_UI_ARCHITECTURE.md` §9.
+  - **D3 — approved:** `ambience` joins the sound settings (§3.2).
+  - **D4 — approved:** the store holds finite, linear 0–1 values. The designed mix gains are applied separately, in A4. No loudness curve in A3.
+  - **D5 — approved:** a malformed version-1 record keeps its individually valid fields; invalid fields fall back to the defaults. Unsupported schema versions are rejected.
+  - **D6 — approved:** cross-tab synchronization and debounced persistence are out of scope.
+  - **D7 — deferred to A5:** whether raising a volume unmutes.
+  - **D8 — approved in principle:** the session applies the settings to the `AudioManager` in A4. The `src/ui/session.ts` audio import exception must be ratified explicitly in A4; A3 does not implement it.
+  - **Safety requirement for A4:** `restore()` is not assumed to run before the first user gesture. A4 must guarantee, and test, that the persisted mute and volume settings are applied before the audio unlock or any playback (§14 risk 14).
+
+  Scope: C `src/ui/store/sound-settings-store.ts`, C `src/ui/store/sound-settings-store.test.ts`; M `src/ui/README.md`, `docs/07_UI_ARCHITECTURE.md` (§9 table row only), and the architecture and tracking documents. **Not authorized:** `src/ui/session.ts`, the `AudioManager`, the SoundBank, the manifest, components, gameplay, renderer, engine, shared modules, dependencies, audio assets; A4, A5, the director, the music controller and any playback wiring.
 
 ### 1.2 What the owner did not approve [OWNER]
 
@@ -52,8 +64,8 @@ Status values: **Approved** (the owner decided), **Open** (the owner has not dec
 | # | Question | Status | Recommended default [REC] | Blocks |
 |---|---|---|---|---|
 | Q1 | Audio technology | **Approved** — native Web Audio, no dependency (not Howler.js) | — | — |
-| Q2 | Renderer and UI exceptions; zero engine change | **Partly approved.** Zero engine change: **approved** (no `goldfishConsumed` / `boostExpired` event is added). Renderer and UI exceptions: **approved in principle**; file scopes **not ratified** (§13) | Ratify each step's scope from §13 before that step starts | A3, A4, A5, V1–V7 |
-| Q3 | Default sound state | **Open** | On after the first user gesture | A4 wiring defaults, A5 |
+| Q2 | Renderer and UI exceptions; zero engine change | **Partly approved.** Zero engine change: **approved** (no `goldfishConsumed` / `boostExpired` event is added). Renderer and UI exceptions: **approved in principle**; file scopes **not ratified** (§13), except UI-X1 for A3 (ratified 2026-11-15, D2) | Ratify each step's scope from §13 before that step starts | A3, A4, A5, V1–V7 |
+| Q3 | Default sound state | **Approved (A3, D1, 2026-11-15):** sound on by default (`muted: false`), every volume `1.0`, saved preferences override the defaults; playback still waits for the user gesture. *(Until A3 this read "Open".)* | On after the first user gesture | — |
 | Q4 | Sound control | **Open** | A single mute button in TopBar | A5 |
 | Q5 | Asset supply and allowed licences | **Open** | The owner supplies or commissions the files. Allowed: CC0, royalty-free commercial; CC-BY only with a credit entry. Not allowed: any NC licence. Every EULA checked for a gambling clause | A6 |
 | Q6 | Audio format | **Open.** Owner's planning preference (2026-11-15): AAC-LC in `.m4a`, subject to browser compatibility validation. Not a decision. *(A2: the manifest records no URL, file name or extension, so its shape does not depend on Q6; §7.3.)* | `.m4a` (AAC-LC) only | A6 |
@@ -68,7 +80,7 @@ Status values: **Approved** (the owner decided), **Open** (the owner has not dec
 | Q15 | iOS silent switch | **Open** | Respect it (do not set `navigator.audioSession.type = "playback"`) | A1/A4 behavior on iOS |
 | Q16 | Order: A5 after A6; V1–V7 while assets are sourced | **Approved** — the sequence in §1.1 | — | — |
 
-**Decisions the owner flagged for confirmation:** audio assets (Q5), licensing (Q5), device QA (Q14), and user-facing behavior (Q3, Q4, Q7, Q9, Q11, Q12, Q15). These stay **Open** until the owner answers them.
+**Decisions the owner flagged for confirmation:** audio assets (Q5), licensing (Q5), device QA (Q14), and user-facing behavior (Q3, Q4, Q7, Q9, Q11, Q12, Q15). These stay **Open** until the owner answers them. *(Q3 was answered in A3, D1.)*
 
 ---
 
@@ -135,7 +147,7 @@ The native Web Audio API with a thin, hand-rolled `AudioManager`. No dependency.
 - **`SoundBank`:** fetch → `decodeAudioData` → a cache of `AudioBuffer`s keyed by cue. A missing or failed asset stays silent and is logged once, the same failure policy as the image AssetManager (docs/05 §15).
 - **`AudioDirector`** (game-specific): the **only** place that maps engine events and per-frame state to cues. It subscribes to `engine.events` at session scope, like the wallet and notification stores.
 - **`MusicController`:** a small state machine for phases (surface, dive, outcome stinger, reset) with crossfades.
-- **Sound settings:** a UI-owned store (`master`, `music`, `sfx`, `muted`), persisted in `localStorage` inside try/catch. The session pushes it into the `AudioManager`, which is a passive sink.
+- **Sound settings:** a UI-owned store (`master`, `music`, `ambience`, `sfx`, `muted`), persisted in `localStorage` inside try/catch. The session pushes it into the `AudioManager`, which is a passive sink. Built in A3 (§3.5). *(A3, D3: `ambience` added. Until A3 the list read `master`, `music`, `sfx`, `muted`.)*
 
 ### 3.3 Lifecycle [REC]
 
@@ -170,6 +182,20 @@ The native Web Audio API with a thin, hand-rolled `AudioManager`. No dependency.
   - No sound before a user gesture (browsers require this anyway).
   - A "Reduce effects" option also removes stingers and keeps dynamics calm (Q12 open).
   - Sound never carries information the UI does not also show.
+
+### 3.5 Sound settings store (A3) [OWNER]
+
+`src/ui/store/sound-settings-store.ts`. The owner's decisions D1–D8 are in §1.1.
+
+- **Shape:** `{ muted, master, music, ambience, sfx }`. The four channel names match the `AudioManager` buses (D3). Every snapshot is frozen.
+- **Defaults (D1):** `muted: false`, every volume `1.0`. Saved preferences override them. The store plays nothing; playback still waits for the user gesture.
+- **Values (D4):** linear and finite in 0..1. User input is clamped to 0..1; a non-finite value or an unknown channel is ignored. No loudness curve. The designed mix gains are A4's.
+- **Writers:** `setMuted`, `toggleMuted`, `setVolume(channel, value)`, and `restore()`. Equal-value writes keep the snapshot and notify nobody (docs/07 §9). Raising a volume does not change `muted` (D7 is deferred to A5).
+- **Persistence:** one `localStorage` record under `aquadive.soundSettings`: `{ version: 1, muted, master, music, ambience, sfx }`. Each change writes the whole record at once: no debounce, no cross-tab sync (D6). Resolving `localStorage`, `getItem` and `setItem` are each inside try/catch. A failed write keeps the in-memory change and never throws.
+- **Reading (D5):** a missing record, unparseable JSON, a non-object, or a `version` other than `1` gives the defaults. A version-1 record keeps each valid field; each invalid or missing field takes its default. A stored volume outside 0..1 is invalid; it is not clamped. A read never writes back, so a record from another version is left untouched until the user changes a setting.
+- **Lifecycle:** construction reads no storage and touches no global (SSR-safe). `restore()` reads the record once, on the client, and returns what it found (`missing`, `valid`, `salvaged`, `corrupt`, `unsupported-version`, `unavailable`, or `skipped`). If the user changes a setting before `restore()`, that change wins, is saved, and `restore()` is skipped.
+- **Import rule:** the store imports only `./store`. It does not import `src/audio`.
+- **Not wired in A3.** In A4 the session pushes these settings into the `AudioManager` (D8) and must apply them before the audio unlock or any playback, whether or not `restore()` has already run (§14 risk 14).
 
 ---
 
@@ -518,7 +544,7 @@ Each step is one commit, followed by verify → commit → push → wait for app
 | A1.1 | `feat(audio): AudioManager decode interface (A1.1)` | M `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1; inserted before A2) |
 | A1.2 | `feat(audio): voice pools and protected loops (A1.2)` | M `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1; inserted before A2) |
 | A2 | `feat(audio): sound bank and manifest (A2)` | C `src/audio/sound-bank.ts`, `src/audio/manifest.ts`, `src/audio/sound-bank.test.ts`, `src/audio/manifest.test.ts`, `src/audio/test/fake-fetch.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1). Q6 no longer blocks it: the manifest records no format (§7.3) |
-| A3 | `feat(ui): sound settings store` | C `src/ui/store/sound-settings-store.ts` + test | None | Authorization; UI scope ratification (new file in `src/ui`); Q3 (default) |
+| A3 | `feat(ui): sound settings store (A3)` | C `src/ui/store/sound-settings-store.ts`, `src/ui/store/sound-settings-store.test.ts`; M `src/ui/README.md`, `docs/07` (§9 table row), `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16` | None (not wired) | — (authorized 2026-11-15, §1.1; UI-X1 ratified for A3; Q3 answered by D1) |
 | A4 | `feat(audio): director, music and session wiring` | C `src/audio/director.ts`, `src/audio/music.ts` + tests; M `src/ui/session.ts` | None (no assets yet) | Authorization; UI scope (`session.ts`); Q3, Q7, Q8, Q9, Q15 |
 | V1 | `feat(rendering): FX queue, camera shake, motion flag` | C `src/rendering/fx-queue.ts` + test; M `src/rendering/scene-renderer.ts`, `src/rendering/camera.ts`, `src/ui/session.ts` | None | Authorization; renderer + UI scope; Q11, Q12 |
 | V2 | `feat(rendering): marine snow and depth vignette` | C `src/rendering/draw/particles.ts` + test; M `src/rendering/layers/environment.ts`, `src/rendering/layers/background.ts`, `src/rendering/theme.ts` | F1, F2 | Authorization; renderer scope; Q10 (F1, F2) |
@@ -563,7 +589,7 @@ Follows the E-X1–E-X4 precedent (docs/07 §19 gate 4). Presentation only. `src
 
 | Step | Proposed file scope |
 |---|---|
-| A3 | C `src/ui/store/sound-settings-store.ts`, C `src/ui/store/sound-settings-store.test.ts` |
+| A3 | **Ratified 2026-11-15 (D2).** C `src/ui/store/sound-settings-store.ts`, C `src/ui/store/sound-settings-store.test.ts`; M `src/ui/README.md`; M `docs/07_UI_ARCHITECTURE.md` (one row in the §9 store table) |
 | A4 | M `src/ui/session.ts` (construct the director, unlock and visibility wiring, driver-sink `AudioFrame`); M or C session tests for the wiring |
 | V1 | M `src/ui/session.ts` (forward `crashed` / `bettingOpened` to `SceneRenderer.trigger`) |
 | V6 | M `src/ui/components/ChestPicker.tsx` (F8 only), M `src/styles.css` (F8 keyframes) + DOM test |
@@ -602,6 +628,7 @@ Follows the E-X1–E-X4 precedent (docs/07 §19 gate 4). Presentation only. `src
 
     **Resolved by A1.2 (2026-11-15, §7.2).** One-shots and loops have separate pools, so no one-shot can steal a loop, whatever the tiers. A loop that cannot start waits as a pending loop and starts once it fits, instead of getting an inert handle. Fading and stolen voices keep their slots until they have ended, so the real source count never exceeds 16. An essential loop is never preempted.
 13. **A pending loop waits for the next manager call** (recorded in A2, 2026-11-15, §7.3). When a cue finishes loading, the manager is not told; the loop starts at its next call. The bank's `onReady` lets A4 make that call at once. If A4 neglects it, a bed starts late, up to the next handle update or play. Mitigation: A4's per-frame handle updates, and a test in A4 that a bed starts on the frame its cue becomes ready. A public `AudioManager.refresh()` is the alternative; it needs its own approval.
+14. **Settings may be restored after the first gesture** (owner requirement, A3, 2026-11-15, §3.5). Nothing guarantees that `restore()` runs before the first user gesture. If the session unlocks audio first and applies the settings later, a muted user could hear sound briefly, or at the wrong volume. A4 must apply the persisted mute and volumes to the `AudioManager` before the unlock or any playback, and test it.
 
 ---
 
@@ -658,3 +685,4 @@ docs/05 §6 (`shake`, `zoom` reserved), §12 (FX list), §14 item 9 (`quality` f
 - **2026-11-15 — A1.1.** The owner authorized the decode interface as a separate step before A2 (§1.1). Added §7.1 and the `decode()` line in §7, the A1.1 row in §12, the owner's Q6 planning preference in §1.3 (Q6 stays Open), and risk 12, the voice-cap analysis, in §14. A2 is not authorized.
 - **2026-11-15 — A1.2.** The owner authorized voice pools and protected loops as a separate step before A2 (§1.1). Added §7.2, the A1.2 row in §12, the resolution note on risk 12 in §14, and a note on `loop()` in §7. `maxInstances` is deferred. A2 is not authorized.
 - **2026-11-15 — A2.** The owner accepted A1.2 (`0de6d73`) and authorized the sound bank and manifest (§1.1). Added §7.3, the `SoundBank` interface in §7, the A2 row in §12 (with its exact file list), a note on Q6 in §1.3 (Q6 stays Open), and risk 13 in §14. `audio-manager.ts` is unchanged. No asset, URL or format is recorded. Q3–Q12, Q14 and Q15 stay Open. A3 is not authorized.
+- **2026-11-15 — A3.** The owner authorized the sound settings store after the A3 pre-implementation report (§1.1, D1–D8). Added §3.5, `ambience` in §3.2 (D3), the A3 bullet in §1.1, Q3 answered in §1.3 (D1), the UI-X1 ratification for A3 in §1.3 Q2 and §13.2 (D2), the A3 row in §12 (with its exact file list), and risk 14 in §14. D7 is deferred to A5. Not wired; no audio file changed. Q4–Q12, Q14 and Q15 stay Open. A4 is not authorized.

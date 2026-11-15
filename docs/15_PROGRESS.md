@@ -58,6 +58,8 @@ M2 (the rest of integer minor units) is still deferred.
 
 **A2 delivered 2026-11-15.** The owner accepted A1.2 at `0de6d73` and authorized A2, the sound bank and manifest. It is committed and pushed and awaits the owner's review. It is not wired, and no asset exists. **A3 is not authorized.** See "Step A2" below.
 
+**A3 delivered 2026-11-15.** A2 is in `03bb7dc`. The owner authorized A3, the sound settings store, with decisions D1–D8 (docs/08 §1.1). It is committed and pushed and awaits the owner's review. It is not wired. **A4 is not authorized.** See "Step A3" below.
+
 ---
 
 ## TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) (ACTIVE, started 2026-11-15)
@@ -223,6 +225,41 @@ M2 (the rest of integer minor units) is still deferred.
   - Gains, tiers and loop points are placeholders for the A6 listening pass; no cue is playable until A6.
   - The docs are not Prettier-formatted, as at HEAD (repository convention).
 - **Owner decisions still open:** Q2 (UI/renderer scopes), Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q14, Q15. A2 decided none of them.
+
+### Step A3 — Sound settings store — DELIVERED 2026-11-15; AWAITING OWNER REVIEW
+
+- **Task ID:** TASK 008, step A3. **Date:** 2026-11-15.
+- **Authorization:** the owner authorized A3 after the A3 pre-implementation architecture report, as one atomic commit (docs/08 §1.1). Decisions: D1 (answers Q3: sound on, volumes 1.0, saved preferences override, playback still waits for the gesture); D2 (UI-X1 ratified for the exact A3 files); D3 (`ambience`); D4 (linear 0..1, no loudness curve, mix gains in A4); D5 (salvage valid version-1 fields, reject other versions); D6 (no cross-tab sync, no debounce); D7 deferred to A5 (volume raise and unmute); D8 approved in principle (session wiring in A4; the `session.ts` audio import exception is ratified in A4). Added requirement: A4 must apply the persisted settings before the unlock or any playback, and test it. Not authorized: `src/ui/session.ts`, the AudioManager, SoundBank, manifest, components, gameplay, renderer, engine, shared modules, dependencies, audio assets, A4, A5.
+- **Pre-checks:** `develop` was clean and equal to `origin/develop` at `03bb7dc`. Read docs/08 (§1–§3, §6–§7, §11–§18), docs/07 §6 and §9, `src/ui/README.md`, the existing stores (`store.ts`, `notification-store.ts`, `round-store.ts`, `bet-input-store` tests) and the `AudioManager` bus API before any edit.
+- **Summary** (docs/08 §3.5):
+  - **Pure helpers:** `isValidVolume`, `clampVolume` (finite input clamped to 0..1, -0 → 0, non-finite → ignored), `parseSoundSettings` (statuses `missing` / `valid` / `salvaged` / `corrupt` / `unsupported-version`; never throws), `serializeSoundSettings`, `sameSoundSettings`.
+  - **Store:** `createSoundSettingsStore({ storage? })`, a frozen object with `get`, `subscribe`, `restore`, `setMuted`, `toggleMuted`, `setVolume(channel, value)`. Frozen snapshots; equal-value writes notify nobody. Raising a volume does not change `muted` (D7).
+  - **Persistence:** one record `{ version: 1, muted, master, music, ambience, sfx }` under `aquadive.soundSettings`, written at once on each change. Storage is resolved at call time; resolving it, `getItem` and `setItem` are each in try/catch, and a failed write keeps the in-memory change. A read never writes back. A stored volume outside 0..1 takes its default (not clamped).
+  - **Lifecycle:** construction reads nothing (SSR-safe). `restore()` runs once and reports what it found, or `skipped`. A user change before `restore()` wins, is saved even when it equals the current value, and makes `restore()` a no-op.
+  - Imports only `./store`; nothing imports the new module. Not wired.
+- **Files:** created `src/ui/store/sound-settings-store.ts`, `src/ui/store/sound-settings-store.test.ts`; modified `src/ui/README.md` (one table row), `docs/07_UI_ARCHITECTURE.md` (one row in the §9 store table), `docs/08_AUDIO_FX_ARCHITECTURE.md` (status, §1.1, §1.3 Q2 and Q3, §3.2, new §3.5, §12 row, §13.2 row, §14 risk 14, §18), `docs/04_DEVELOPMENT_ROADMAP.md`, `docs/14_TASKS.md`, `docs/15_PROGRESS.md`, `docs/16_CURRENT_TASK.md`. No other file.
+- **Tests (71 new, node env):** defaults and channels (4); volume helpers and `sameSoundSettings` (4); serialize / parse (24: round-trip, missing, 7 corrupt inputs, 5 unsupported versions, salvage of bad and missing fields, out-of-range and wrong-type volumes, non-boolean `muted`, extra fields, boundaries); construction and SSR safety (4); the global `localStorage` resolver, including a getter that throws (2); `restore()` (16: overrides, single read, no write-back, every status, a throwing resolver and `getItem`, notification, run-once, a user change first, an ignored write first); writers (10: mute and toggle, each channel, clamping, ignored input, D7, equal-value bailout, snapshot identity, unsubscribe); persistence (7: immediate full-record writes, no write for equal values, round-trip across stores, overwriting a corrupt or unsupported record on change, a throwing `setItem`, storage resolved per write, own key only).
+- **Validation (2026-11-15, PowerShell, `C:\`, on the A3 tree):**
+
+| Gate | Result |
+|---|---|
+| Vitest, full suite | **828/828 passed, 46/46 files** (71 new; the 757 existing unchanged). A first run on the same tree had one timeout: `screen.round.test.tsx`, "remount after a pick", at the 5 s default under full parallel load. It passed alone (9/9) and in the clean second full run; no test was changed |
+| Sound settings suite | 71/71 |
+| `tsc --noEmit` | Clean |
+| ESLint, full project, end-of-line neutralized | 0 errors, 6 warnings (pre-existing, shadcn `src/components/ui`) |
+| ESLint raw + Prettier, the two new files | Clean |
+| Production build | Passes |
+| SSR smoke (fresh dev server) | HTTP 200 (port 5244), canvas markup, no error strings; stderr holds only the existing `vite-tsconfig-paths` notice |
+| `git diff --check` | Clean |
+| Freeze | `src/ui/session.ts`, every other `src/ui` source and test, `src/audio`, `src/engine`, `src/shared`, `src/rendering`, `src/components`, `src/routes`, `src/game`, `src/styles.css`, `src/assets`, `src/routeTree.gen.ts`, package and lock files: no diff. No audio file in the tree |
+
+- **Environment note:** many files in this working tree are CRLF while the index is LF (`git ls-files --eol`), so raw full-project ESLint reports about 7,480 `Delete ␍` Prettier errors that are not in the repository. The gate above neutralizes end-of-line, as in A2. The files A3 touches are LF.
+- **Limitations:**
+  - Proven against an in-memory storage fake and Node's missing `localStorage`. A real browser's `localStorage`, including private-mode and quota behavior, is not exercised until the settings are wired (A4) and controllable (A5).
+  - No effect on sound yet: nothing reads the store until A4, and nothing writes it until A5.
+  - A second tab's change is not seen until reload (D6).
+  - The docs are not Prettier-formatted, as at HEAD (repository convention).
+- **Owner decisions still open:** Q2 (UI/renderer scopes beyond A3), Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q14, Q15; D7 (A5); the `session.ts` audio import exception (D8, at A4).
 
 ---
 

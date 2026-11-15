@@ -28,6 +28,7 @@ Status — Sprint 4 in progress:
 | `scene-fit.ts` | Sprint 4 QA fix D1 (uncommitted, pending owner acceptance) | Pure: the logical viewport the session passes to `renderer.resize` — a uniform zoom-out to ≥ 820 logical px on short stages so the idle ship stays visible; backing store at native resolution; renderer untouched |
 | `hooks/use-focus-rescue.ts` | Sprint 4 QA fixes D2–D3 (uncommitted, pending owner acceptance) | Keeps keyboard focus inside a slot panel or the chest picker when the focused control disables itself; reads no store |
 | responsive layout (§15) | U7 (`4440009`; gate 8 screenshot matrix pending) | `tab` / `desk` variants in `src/styles.css`; full-width tablet column; full-viewport landscape desktop grid with a right rail (V5, as corrected by the owner, §15) |
+| `store/sound-settings-store.ts` | Phase 7 A3 (UI-X1, ratified for A3; docs/08 §3.5) | Mute and the four linear 0..1 volumes (`master`, `music`, `ambience`, `sfx`); defaults on and 1.0 (D1); `setMuted` / `toggleMuted` / `setVolume`; one-time `restore()` from one version-1 `localStorage` record (valid fields salvaged, other versions rejected, D5); every storage access in try/catch; SSR-safe construction; imports only `./store`. **Not wired**: the session does not create it until A4 |
 
 Since U2, all money state and math live in the wallet store; components
 only read it via `useStore` and submit commands via `gameSession.submit`.
