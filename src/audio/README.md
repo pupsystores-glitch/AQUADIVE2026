@@ -2,15 +2,16 @@
 
 Audio system (roadmap Phase 7). Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`.
 
-**Status (2026-11-15, A2):** `audio-manager.ts` exists: the generic core
+**Status (2026-11-15, A4a):** `audio-manager.ts` exists: the generic core
 (A1), its `decode()` interface (A1.1, docs/08 §7.1) and its voice pools and
 protected loops (A1.2, docs/08 §7.2), with the fake context and tests. A2 adds
 `manifest.ts` (the typed cue list) and `sound-bank.ts` (fetch, decode through
-the manager, cache; docs/08 §7.3), with `test/fake-fetch.ts` and tests.
-Nothing outside `src/audio` imports any of them yet. **No audio asset exists:
-every manifest entry has `asset: null`, so every cue is unavailable and
-silent.** The other modules below are planned for steps A3–A6, and each one
-needs its own owner authorization.
+the manager, cache; docs/08 §7.3), with `test/fake-fetch.ts` and tests. A4a
+adds `director.ts`, the Audio Director core (docs/08 §7.4), with tests.
+Nothing outside `src/audio` imports any of them yet; the session wiring is
+A4b. **No audio asset exists: every manifest entry has `asset: null`, so every
+cue is unavailable and silent.** Each later step needs its own owner
+authorization.
 
 ## Responsibility
 
@@ -29,13 +30,16 @@ Event-driven sound on the native Web Audio API, with no audio dependency
 - a typed manifest: one-shot and loop cue ids, bus, gain, priority tier,
   essential beds, optional loop points, and an `asset` that stays `null` until
   licensed files are supplied (A6);
-- an `AudioDirector`, the only place that maps engine events and per-frame
-  state to cues, and a `MusicController` for the phase music;
+- an `AudioDirector` (A4a), the only place that maps engine events and
+  per-frame state to cues: deterministic and frame-based, with one-shots
+  merged per cue id per frame. There is no `MusicController`: music is
+  deferred (Q8), and the `music` bus waits for it;
 - depth-based ambience: a low-pass whose cutoff falls as `depthRatio` rises.
 
 Volume and mute settings live in a UI-owned store
-(`src/ui/store/sound-settings-store.ts`, planned for A3). The session pushes
-them into the `AudioManager`, which is a passive sink.
+(`src/ui/store/sound-settings-store.ts`, A3). The session will push them into
+the `AudioManager`, which is a passive sink (A4b). The director never touches
+bus gains or mute.
 
 ## Boundaries
 
@@ -43,8 +47,9 @@ them into the `AudioManager`, which is a passive sink.
   (`engine.events`): `bettingOpened`, `betPlaced`, `diveStarted`,
   `cashedOut`, `crashed`, `shipImpact`, `chestsRevealed`, `chestPicked`
   (docs/06 §12). It also reads a narrow per-frame `AudioFrame`
-  `{ phase, depthRatio, multiplier, boost, countdownSeconds }`, which the
-  session assembles from engine public state. Audio owns no game state.
+  `{ phase, depthRatio, multiplier, boost, dt }`, which the session will
+  assemble from engine public state (A4b). Countdown audio is deferred (Q9).
+  Audio owns no game state.
 - **Never reads money.** Cues may depend on multipliers and phases, never on
   balances, stakes or wins.
 - **Never acts on the game.** No commands, no store writes, no engine change.
@@ -60,7 +65,7 @@ them into the `AudioManager`, which is a passive sink.
 ## Planned contents (docs/08 §6)
 
 `audio-manager.ts` (A1), `sound-bank.ts` and `manifest.ts` (A2, done),
-`director.ts` and `music.ts` (A4), `test/fake-audio-context.ts`,
-`test/fake-fetch.ts` and `*.test.ts`. Licensed
+`director.ts` (A4a, done; `music.ts` is dropped, Q8),
+`test/fake-audio-context.ts`, `test/fake-fetch.ts` and `*.test.ts`. Licensed
 assets and `CREDITS.md` go in `src/assets/audio/` (A6), supplied by the owner;
 no asset or licence is cleared yet.

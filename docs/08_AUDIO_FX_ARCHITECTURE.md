@@ -2,7 +2,7 @@
 
 **Sprint 5 / Phase 7 / TASK 008.** This is the Phase 7 blueprint, written in step **P7-0**.
 
-**Status (2026-11-15, A3):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`), A1.2 (`0de6d73`, accepted) and A2 (`03bb7dc`) are done. **A3, the sound settings store (§3.5), is authorized and delivered in its own commit.** The owner accepted A3 (`16a6a40`) with documented limitations; **A3.1, its subscriber failure hardening (§3.5), is authorized and delivered in its own commit.** A4 and every later step need their own explicit authorization. *(Until A3 this read: "P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`) and A1.2 (`0de6d73`, accepted) are done. **A2, the sound bank and manifest (§7.3), is authorized and delivered in its own commit.** A3 and every later step need their own explicit authorization.")* *(Until A2 this read: "P7-0 (`0e7ff80`), A1 (`3761062`) and A1.1 (`ad9e959`) are done. **A1.2, voice pools and protected loops (§7.2), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization.")* *(Until A1.2 this read: "P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.**")* *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
+**Status (2026-11-15, A4a):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`), A1.2 (`0de6d73`, accepted), A2 (`03bb7dc`), A3 (`16a6a40`, accepted with documented limitations) and A3.1 (`e70fa22`) are done. The owner split A4 into A4a and A4b (§12). **A4a, the Audio Director core (§7.4), is authorized and delivered in its own commit.** A4b and every later step need their own explicit authorization. *(Until A4a this read: "P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`), A1.2 (`0de6d73`, accepted) and A2 (`03bb7dc`) are done. **A3, the sound settings store (§3.5), is authorized and delivered in its own commit.** The owner accepted A3 (`16a6a40`) with documented limitations; **A3.1, its subscriber failure hardening (§3.5), is authorized and delivered in its own commit.** A4 and every later step need their own explicit authorization.")* *(Until A3 this read: "P7-0 (`0e7ff80`), A1 (`3761062`), A1.1 (`ad9e959`) and A1.2 (`0de6d73`, accepted) are done. **A2, the sound bank and manifest (§7.3), is authorized and delivered in its own commit.** A3 and every later step need their own explicit authorization.")* *(Until A2 this read: "P7-0 (`0e7ff80`), A1 (`3761062`) and A1.1 (`ad9e959`) are done. **A1.2, voice pools and protected loops (§7.2), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization.")* *(Until A1.2 this read: "P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.**")* *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
 
 **Source of truth:** the *Sprint 5 / Phase 7: Audio & Visual Effects Architecture Proposal* (2026-11-15), audited against the repository at `0ebe7c9`. This document records it without redesign. Where the owner's authorization narrows it, the narrowing is marked **[OWNER]**.
 
@@ -53,6 +53,25 @@ This blueprint sits beside the binding contracts `docs/05_RENDERING_ARCHITECTURE
 
   Scope (A3): C `src/ui/store/sound-settings-store.ts`, C `src/ui/store/sound-settings-store.test.ts`; M `src/ui/README.md`, `docs/07_UI_ARCHITECTURE.md` (§9 table row only), and the architecture and tracking documents. **Not authorized:** `src/ui/session.ts`, the `AudioManager`, the SoundBank, the manifest, components, gameplay, renderer, engine, shared modules, dependencies, audio assets; A4, A5, the director, the music controller and any playback wiring.
 
+- **A4a, the Audio Director core** (owner authorization, 2026-11-15, after the revised A4 plan): §7.4. The owner split A4 into two stages. Each needs its own explicit authorization, one logical commit and every validation gate:
+  - **A4a:** the director core, the deterministic event-to-cue mapping, the loop lifecycle, one-shot merging and unit tests;
+  - **A4b:** session integration, the settings bridge, the browser gesture and visibility lifecycle, and integration tests. **Not authorized.**
+
+  Owner decisions, approved for A4a:
+  - **Q7:** the cashout cue plays only for the local player's own slots. Crash and jackpot are audible to spectators. Identical cashout cues within the same rendered frame merge; cues on different frames never merge.
+  - **Q8:** music playback and music cue assets are deferred. No `MusicController` and no `music.ts` are created. The `music` bus stays in the `AudioManager` for later use.
+  - **Q9:** countdown tick audio is deferred. The manifest is not changed for countdown cues, and `AudioFrame` has no `countdownSeconds`.
+  - **Q15:** the iOS silent switch is respected. No audio-session override is introduced; `navigator.audioSession` is never touched.
+
+  Conditions of the authorization:
+  - one-shot deduplication per cue id per frame, verified not to discard semantically distinct events, with every intentional merge documented (§7.4);
+  - deterministic, frame-based scheduling, with no timers, wall clock or randomness;
+  - a director independent of browser APIs, React, `localStorage` and UI stores;
+  - every mixing, ducking, filtering and tension value is a **provisional engineering default, not a sound-design decision** (§7.4), tuned in A6;
+  - MusicController, countdown audio, real assets and the browser unlock integration are deferred.
+
+  Scope (A4a): C `src/audio/director.ts`, C `src/audio/director.test.ts`; M `src/audio/README.md`, this document, `docs/04`, `docs/14`, `docs/15`, `docs/16`. **Not authorized:** A4b; every `src/ui` file (including `session.ts` and the proposed `audio-host.ts`), `docs/07` and the proposed import exception; `audio-manager.ts`, `sound-bank.ts`, `manifest.ts`, `src/audio/test/*`; engine, shared, rendering, wallet, settlement and components; dependencies and assets.
+
 ### 1.2 What the owner did not approve [OWNER]
 
 - **The renderer and UI exceptions** (§13) are accepted **in principle only**. Each one's exact file-level scope must be documented and **explicitly ratified before those files are changed**. Until then, `src/rendering` stays frozen (docs/07 §19 gate 4), and the Phase 6 UI stays as approved.
@@ -71,18 +90,18 @@ Status values: **Approved** (the owner decided), **Open** (the owner has not dec
 | Q4 | Sound control | **Open** | A single mute button in TopBar | A5 |
 | Q5 | Asset supply and allowed licences | **Open** | The owner supplies or commissions the files. Allowed: CC0, royalty-free commercial; CC-BY only with a credit entry. Not allowed: any NC licence. Every EULA checked for a gambling clause | A6 |
 | Q6 | Audio format | **Open.** Owner's planning preference (2026-11-15): AAC-LC in `.m4a`, subject to browser compatibility validation. Not a decision. *(A2: the manifest records no URL, file name or extension, so its shape does not depend on Q6; §7.3.)* | `.m4a` (AAC-LC) only | A6 |
-| Q7 | Spectator and Dual Bet audio | **Open** | Crash and jackpot play for everyone; cashout only for the player's own slots; two cashouts in the same tick play one cue | A4 |
-| Q8 | Music | **Open** | Ambience plus a minimal music bed | A4 (`music.ts`), A6 |
-| Q9 | Countdown ticks for the last 3 s | **Open** | — (no recommendation; the owner's preference) | A4 |
+| Q7 | Spectator and Dual Bet audio | **Approved for A4a (owner, 2026-11-15):** the cashout cue plays only for the local player's own slots; crash and jackpot are audible to spectators; identical cashout cues within the same rendered frame merge, never across frames (§7.4). *(Until A4a this read "Open".)* | Crash and jackpot play for everyone; cashout only for the player's own slots; two cashouts in the same tick play one cue | — |
+| Q8 | Music | **Approved for A4a (owner, 2026-11-15):** music playback and music cue assets are deferred; no `MusicController` or `music.ts` is created; the `music` bus stays available for later use. *(Until A4a this read "Open".)* | Ambience plus a minimal music bed | A later music step (with A6) |
+| Q9 | Countdown ticks for the last 3 s | **Approved for A4a (owner, 2026-11-15):** countdown tick audio is deferred; the manifest is not changed for countdown cues. *(Until A4a this read "Open".)* | — (no recommendation; the owner's preference) | A later step, if the owner asks for it |
 | Q10 | Effect list F1–F8, one by one; chain tension audio-only | **Open** | Approve F1–F8 as specified in §4.3; chain tension audio-only | V2–V6 (each effect's own step) |
 | Q11 | Camera shake on crash (≤ 6 px, ≈ 300 ms); keep the DOM `crash-shake` | **Open** | — (owner's preference; both are specified as optional in V1/V5) | V1, V5 |
 | Q12 | Reduced motion: follow the OS and offer an in-app toggle | **Open** | Follow the OS setting; an in-app "Reduce effects" toggle together with Q4 | V1, V7, A5 |
 | Q13 | Blueprint name | **Approved** — `docs/08_AUDIO_FX_ARCHITECTURE.md` | — | — |
 | Q14 | Device QA: which iOS and Android devices | **Open** | — (only the owner can answer) | A-track device gate, V-track performance gate, P7-C |
-| Q15 | iOS silent switch | **Open** | Respect it (do not set `navigator.audioSession.type = "playback"`) | A1/A4 behavior on iOS |
+| Q15 | iOS silent switch | **Approved for A4a (owner, 2026-11-15):** respect it; no audio-session override is introduced. *(Until A4a this read "Open".)* | Respect it (do not set `navigator.audioSession.type = "playback"`) | — (A4b must not add an override either) |
 | Q16 | Order: A5 after A6; V1–V7 while assets are sourced | **Approved** — the sequence in §1.1 | — | — |
 
-**Decisions the owner flagged for confirmation:** audio assets (Q5), licensing (Q5), device QA (Q14), and user-facing behavior (Q3, Q4, Q7, Q9, Q11, Q12, Q15). These stay **Open** until the owner answers them. *(Q3 was answered in A3, D1.)*
+**Decisions the owner flagged for confirmation:** audio assets (Q5), licensing (Q5), device QA (Q14), and user-facing behavior (Q3, Q4, Q7, Q9, Q11, Q12, Q15). These stay **Open** until the owner answers them. *(Q3 was answered in A3, D1. Q7, Q8, Q9 and Q15 were answered for A4a, 2026-11-15.)*
 
 ---
 
@@ -148,7 +167,7 @@ The native Web Audio API with a thin, hand-rolled `AudioManager`. No dependency.
   - Crossfades with `setTargetAtTime`.
 - **`SoundBank`:** fetch → `decodeAudioData` → a cache of `AudioBuffer`s keyed by cue. A missing or failed asset stays silent and is logged once, the same failure policy as the image AssetManager (docs/05 §15).
 - **`AudioDirector`** (game-specific): the **only** place that maps engine events and per-frame state to cues. It subscribes to `engine.events` at session scope, like the wallet and notification stores.
-- **`MusicController`:** a small state machine for phases (surface, dive, outcome stinger, reset) with crossfades.
+- **`MusicController`:** a small state machine for phases (surface, dive, outcome stinger, reset) with crossfades. *(Deferred by the owner for A4a, Q8: not built. The `music` bus stays available.)*
 - **Sound settings:** a UI-owned store (`master`, `music`, `ambience`, `sfx`, `muted`), persisted in `localStorage` inside try/catch. The session pushes it into the `AudioManager`, which is a passive sink. Built in A3 (§3.5). *(A3, D3: `ambience` added. Until A3 the list read `master`, `music`, `sfx`, `muted`.)*
 
 ### 3.3 Lifecycle [REC]
@@ -168,10 +187,10 @@ The native Web Audio API with a thin, hand-rolled `AudioManager`. No dependency.
 
 - **Audio never reads money** [REC, follows from §1.1]. Cue choice may use multipliers and phases. Never balances, stakes or wins.
 - **No engine change** [OWNER]. The goldfish pickup is detected as a rising edge of `boost` in public state. The reserved `goldfishConsumed` event is not needed and is not added.
-- **Per-frame input is a narrow `AudioFrame`** [REC]: `{ phase, depthRatio, multiplier, boost, countdownSeconds }`, assembled in the session's driver sink from data the engine already projects.
+- **Per-frame input is a narrow `AudioFrame`** [OWNER, A4a]: `{ phase, depthRatio, multiplier, boost, dt }`, assembled in the session's driver sink from data the engine already projects (A4b). *(Until A4a this read `{ phase, depthRatio, multiplier, boost, countdownSeconds }`. `countdownSeconds` is dropped because Q9 is deferred; `dt`, the engine's clamped frame delta, is added so fades advance by frame time, never by a clock.)*
 - **Mixing defaults** [REC] (tuned by ear in A6):
   - Ambience low, SFX dominant, music bed under −18 dBFS.
-  - Music and ambience duck by about 6 dB under outcome stingers.
+  - Music and ambience duck by about 6 dB under outcome stingers. *(A4a: the ambience only, because there is no music yet (Q8); values in §7.4.)*
   - Underwater ambience runs through a `BiquadFilter` low-pass whose cutoff falls as `depthRatio` rises ("darker and more muffled with depth").
 - **Memory** [REC]:
   - Decoded PCM is large: about 350 KB/s for stereo at 44.1 kHz.
@@ -246,18 +265,20 @@ Each effect is subtle and adds to the scene without replacing anything.
 
 | Trigger (engine source) | Audio | Visual |
 |---|---|---|
-| `bettingOpened` (BETTING / RESET) | Crossfade to the surface bed: waves, hull creak, calm music | F7 reset dip |
-| `countdownSeconds` crosses 3, 2, 1 (state edge) | Soft tick (only if Q9 = yes) | — |
+| `bettingOpened` (BETTING / RESET) | Crossfade to the surface bed: waves, hull creak *(A4a: driven by the phase `idle`; no music, Q8)* | F7 reset dip |
+| `countdownSeconds` crosses 3, 2, 1 (state edge) | *Deferred (Q9, A4a): none* | — |
 | `betPlaced { slot }` | Muted "clink"; slot 1 pitched differently | — |
-| `diveStarted` (DIVE) | Chain unspool, then splash. Crossfade to underwater ambience and dive music | F4 splash |
+| `diveStarted` (DIVE) | Chain unspool, then splash. Crossfade to underwater ambience *(A4a: no dive music, Q8)* | F4 splash |
 | Per frame while diving | Chain-rattle loop: rate and gain follow the multiplier. Ambience low-pass follows `depthRatio`. Tension creaks at fixed multiplier thresholds | F1, F2, F3 |
 | `boost` rising edge | Soft goldfish chime | (existing halo) |
-| `cashedOut { slot }` (own slots only, Q7) | Coin chime | (existing WinFlash) |
-| `crashed` (CRASH) | Metallic snap and muffled boom. Loops cut, music ducks | F6 |
-| `shipImpact` (RESULTS) | Sand thud, jackpot stinger, treasure shimmer | (existing FX + landing) and F5 |
+| `cashedOut { slot }` (own slots only, Q7) | Coin chime; both slots in one frame play one chime (Q7) | (existing WinFlash) |
+| `crashed` (CRASH) | Metallic snap and muffled boom, also for spectators (Q7). The rattle is cut and the ambience ducks *(A4a: no music, Q8)* | F6 |
+| `shipImpact` (RESULTS) | Sand thud and jackpot stinger, also for spectators (Q7). The rattle stops and the ambience ducks. *(A4a: the shimmer plays on `chestsRevealed` only, so it does not play twice.)* | (existing FX + landing) and F5 |
 | `chestsRevealed` | Reveal shimmer | — |
 | `chestPicked` | Lid creak and coin burst, tiered by `chestMultiplier` | F8 |
 | `commandRejected`, `engineError` | None | None |
+
+**A4a:** the implemented mapping, the loops by phase, the merging rules and the provisional values are in §7.4.
 
 ---
 
@@ -269,7 +290,7 @@ src/audio/
   audio-manager.ts        context, buses, unlock, visibility, voices
   sound-bank.ts           fetch / decode / cache, failure policy
   manifest.ts             cue → url, bus, gain, loop points, priority
-  music.ts                phase music state machine
+  (music.ts)              deferred (Q8, A4a): not created
   director.ts             events + AudioFrame → cues (imports @/engine facade types only)
   test/fake-audio-context.ts
   *.test.ts
@@ -319,13 +340,14 @@ interface SoundBank<CueId> {
   dispose(): void;
 }
 
-// src/audio/director.ts
+// src/audio/director.ts (A4a, §7.4)
 function createAudioDirector(
-  events: EventBus<EngineEventMap>,
-  audio: AudioManager,
+  events: AudioEventSource, // EventBus<EngineEventMap> satisfies it
+  audio: AudioManager<CueId>,
 ): {
-  update(frame: AudioFrame): void; // called by the session's driver sink
+  update(frame: AudioFrame): void; // once per rendered frame, from the session's driver sink (A4b)
   pause(): void; // on canvas detach
+  wake(): void; // re-sends every loop value, so a pending loop starts (bank onReady; §14 risk 13)
   dispose(): void;
 };
 
@@ -456,6 +478,89 @@ Two modules. `manifest.ts` is game-specific data. `sound-bank.ts` is generic ove
 - Two cues with the same URL would load it twice. No current cue has a URL, so this is moot until A6.
 - `maxInstances` stays deferred (§7.2).
 
+### 7.4 Audio director (A4a) [OWNER]
+
+**Scope.** `src/audio/director.ts` is the only module that maps engine events and per-frame state to cues. It is game logic with no browser code. It imports only types: from the `AudioManager`, the manifest and the `@/engine` facade (a test checks this). It never touches bus gains, mute, the context or the unlock, never reads money, never submits commands and never writes a store. Nothing imports it until A4b.
+
+**Interface.** As in §7. `AudioFrame` is `{ phase, depthRatio, multiplier, boost, dt }` (§3.4). The director declares `AudioPhase` itself and checks at compile time that it equals `EnginePublicState["phase"]`, so `src/audio` never imports `src/rendering`. None of the four methods throws.
+
+**One frame.** The event listeners only buffer. Events that arrive while the director is paused are dropped. Each `update()`:
+1. advances the bed fade-ins and the duck by `frame.dt`;
+2. collects the one-shots: first the buffered events, in arrival order, then the state edges (goldfish boost, tension thresholds);
+3. stops the loops the phase no longer wants (in a fixed order), starts the missing ones, and sends each loop's values that changed;
+4. plays the collected one-shots.
+
+**Deterministic.** No timers, no wall clock, no randomness. Fades and the duck advance by `frame.dt` only, so the same event and frame script gives the same cue log. A test runs a script twice with `Math.random`, `Date.now`, `performance.now`, `setTimeout` and `setInterval` spied; none is called.
+
+**Event mapping.**
+
+| Source | One-shots |
+|---|---|
+| `betPlaced` slot 0 / slot 1 | `bet-clink-1` / `bet-clink-2`. The amount is never read |
+| `diveStarted` | `chain-unspool`, `water-splash` |
+| `cashedOut`, slot 0 or 1 | `cashout-coins` (Q7). Any other slot plays nothing |
+| `crashed` (spectators too) | `chain-snap`, `crash-boom`; ducks the ambience |
+| `shipImpact` (spectators too) | `floor-thud`, `jackpot-stinger`; ducks the ambience |
+| `chestsRevealed` | `treasure-shimmer` |
+| `chestPicked` | `chest-lid-creak` (gain 1), `chest-coin-burst` (gain by `chestMultiplier`) |
+| `boost` rises by more than `BOOST_EDGE` | `goldfish-chime` |
+| The multiplier reaches a new tension threshold while diving | `tension-creak-1` (odd levels) or `tension-creak-2` (even levels) |
+| `bettingOpened`, `roundEnded`, `stateChanged`, `commandRejected`, `engineError` | None (not subscribed) |
+
+**Loops by phase.** Loops follow the phase, not events.
+- `idle`: `ambience-surface`, with no filter.
+- `diving`: `ambience-underwater`, its low-pass following the depth, and `chain-rattle`, its gain and rate following the multiplier.
+- `crashed`, `cashed` (the engine's `impact`) and `bonus`: `ambience-underwater`, its filter frozen at the last dive depth (after a pause, at the first frame's depth). The bed is the same handle from the dive until betting opens.
+- The director keeps at most one handle per loop cue, and stops every handle before it drops it.
+- A handle is called only when its value moves by more than `HANDLE_EPSILON`; a fade onto 0 or 1 still lands exactly. A quiet frame makes no handle call.
+
+**Merging (one-shot deduplication).** Each cue id plays at most once per `update()`. Different cue ids never merge, and the same cue on the next frame plays again. The intentional merges:
+
+| Case | Result | Reachable in the engine today |
+|---|---|---|
+| Dual Bet: both slots cash out in the same frame | One `cashout-coins` (Q7, owner-approved) | Yes |
+| Several tension thresholds reached in one frame | Only the highest threshold's creak | Yes: a fast multiplier, or a catch-up frame |
+| Two goldfish pickups between two frames | One chime: the boost edge sees one rise (§14 risk 10) | Yes, rarely |
+| The same event delivered twice in one frame | One play of each of its cues | No: each round emits `diveStarted`, `crashed`, `shipImpact`, `chestsRevealed` and `chestPicked` at most once |
+| Two `chestPicked` in one frame | One lid creak and one coin burst, at the first pick's gain | No: one pick per round |
+
+Verified **not** merged (tests): both bet clinks in one frame; the crash pair, the jackpot pair and the chest pair; a cashout, a goldfish chime and a tension creak in the same frame; two cashouts on two frames.
+
+**Provisional values.** Exported constants, pinned by tests. They are engineering defaults, **not sound-design decisions**, and are tuned by ear in the A6 listening pass.
+
+| Constant | Value |
+|---|---|
+| `RATTLE_GAIN` | clamp(0.4 + 0.2·log₂ m, 0.4, 1.0) |
+| `RATTLE_RATE` | clamp(0.85 + 0.1·log₂ m, 0.85, 1.5) |
+| `RATTLE_STOP_FADE_S` | crash 0.03 s · impact 0.15 s · other 0.15 s |
+| `DETACH_FADE_S` | 0.05 s, every loop, on `pause()` and `dispose()` |
+| `BED_CROSSFADE_S` | 1.2 s: the old bed `stop(1.2)`; the new bed's gain rises linearly with `dt` over 1.2 s |
+| `UNDERWATER_FILTER_HZ` | 6000·(1/12)^depth: 6000 Hz at the surface, 500 Hz on the floor |
+| `TENSION_THRESHOLDS` | 2, 3, 5, 10, 20, 50×; each once per round, only while diving; reset when the phase returns to `idle` |
+| `BOOST_EDGE` | a rise of more than 0.05 between frames |
+| `DUCK` | ×0.5 (−6 dB) on the ambience only; held 1.0 s; linear release over 0.8 s; a new duck restarts the hold and never goes below ×0.5 |
+| `CHEST_BURST_GAIN` | m < 3: 0.6 · 3 ≤ m < 10: 0.8 · m ≥ 10: 1.0 |
+| `HANDLE_EPSILON` | gain 0.005 · rate 0.005 · filter 1 % |
+
+Input hygiene: a multiplier below 1 or not a number counts as 1; a depth is clamped to 0..1 (NaN is 0); a non-finite boost is 0; a negative or non-finite `dt` is 0; an unknown phase wants no loop.
+
+**Lifecycle.**
+- `pause()` (canvas detach) stops every loop with a 0.05 s fade, drops buffered events and resets the edge trackers. The next `update()` resumes from that frame. Mid-dive, it rebuilds the rattle and the underwater bed. It plays no splash, no creak for a threshold already passed and no chime.
+- `wake()` re-sends every live loop's values. Each handle call refreshes the manager, so a loop waiting for its cue starts at once (§14 risk 13). A4b calls it from the bank's `onReady`. Tested on the real manager and bank.
+- `dispose()` removes all seven listeners and stops every loop. Every later call does nothing.
+
+**Exception containment.** Every manager call, every listener and every entry point is guarded. Each failure kind (`play`, `loop start`, `loop gain`, `loop rate`, `loop filter`, `loop stop`, `subscribe`, `update`, …) is logged once with `console.error`. A failing cue does not stop the cues after it. The engine bus also firewalls listeners. The render-loop guards around the director's callers belong to the A4b host.
+
+**Null assets.** With the real manifest (every `asset` `null`) and the real manager and bank, full rounds make no fetch, start no source beyond the unlock prime, and log nothing. The game stays playable and silent.
+
+**Implemented as in the revised A4 plan; open to the owner's change:** ducking in A4a (U3); the shimmer on `chestsRevealed` only (U4); the underwater bed until betting opens (U8).
+
+**Limitations.**
+- **Loop start level** (§14 risk 15). `AudioManager.loop()` starts a voice at once, at gain 1, when it fits. The director's first `setGain` follows in the same call and ramps with the 15 ms time constant. So a loop started while unlocked and loaded can begin with a burst of about 15 ms at full cue level before its fade-in. A pending loop (before the unlock, or while its cue loads) takes its gain before it starts and is unaffected. It is silent with today's null manifest. The fix, an initial gain for `loop()`, is an `AudioManager` change. It is not authorized, and is to be judged in the A6 listening pass.
+- **Cashout ownership.** `cashedOut` has no owner field. Every Phase 7 cashout is the local player's; Phase 8 must add ownership before remote cashouts reach this bus (§14 risk 16).
+- **Events between `pause()` and the next `update()` are dropped.** The driver's first frame after an attach advances zero time, so no event is lost in practice.
+- **Goldfish edge:** two pickups between frames, or a pickup at a boost near 1, give one chime or none (§14 risk 10).
+
 ---
 
 ## 8. Assets and licensing
@@ -502,7 +607,7 @@ These are targets to verify, not measurements. No measurement exists yet.
 ## 11. Testing strategy [REC]
 
 - **AudioManager** (node env, fake `AudioContext`, **no new dependency**): lazy creation, unlock, gain clamping, mute, suspend/resume on visibility, voice cap and stealing, missing-asset tolerance, dispose.
-- **Director:** deterministic full-round scripts using the existing `src/ui/test/scripted-session.ts` and `SequenceRng`. Each round path asserts a golden cue log: crash, cashout, jackpot + pick, chest-0 timeout, spectator, Dual Bet. Also the boost edge and countdown ticks.
+- **Director:** deterministic full-round scripts using the existing `src/ui/test/scripted-session.ts` and `SequenceRng`. Each round path asserts a golden cue log: crash, cashout, jackpot + pick, chest-0 timeout, spectator, Dual Bet. Also the boost edge and countdown ticks. *(A4a: the director's unit tests drive it with a recording manager and scripted events and frames, §7.4; the full-round session scripts are A4b. Countdown ticks are deferred, Q9.)*
 - **Sound settings store:** persistence round-trip, corrupt storage, a storage API that throws.
 - **Renderer FX:** pure-function tests in the style of `layers/presentation.test.ts`: particle positions for a given (state, time); FX queue trigger → expiry → removal; shake offset of 0 under reduced motion; unchanged output when no FX is active.
 - **DOM:** SoundControl's accessible name, state and toggle; F8 absent under reduced motion.
@@ -549,7 +654,8 @@ Each step is one commit, followed by verify → commit → push → wait for app
 | A2 | `feat(audio): sound bank and manifest (A2)` | C `src/audio/sound-bank.ts`, `src/audio/manifest.ts`, `src/audio/sound-bank.test.ts`, `src/audio/manifest.test.ts`, `src/audio/test/fake-fetch.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1). Q6 no longer blocks it: the manifest records no format (§7.3) |
 | A3 | `feat(ui): sound settings store (A3)` | C `src/ui/store/sound-settings-store.ts`, `src/ui/store/sound-settings-store.test.ts`; M `src/ui/README.md`, `docs/07` (§9 table row), `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16` | None (not wired) | — (authorized 2026-11-15, §1.1; UI-X1 ratified for A3; Q3 answered by D1) |
 | A3.1 | `fix(ui): isolate sound settings subscriber failures (A3.1)` | M `src/ui/store/sound-settings-store.ts`, `src/ui/store/sound-settings-store.test.ts`; M `docs/08`, `docs/14`, `docs/15`, `docs/16` | None (not wired) | — (authorized 2026-11-15, §1.1; within the A3 files of UI-X1) |
-| A4 | `feat(audio): director, music and session wiring` | C `src/audio/director.ts`, `src/audio/music.ts` + tests; M `src/ui/session.ts` | None (no assets yet) | Authorization; UI scope (`session.ts`); Q3, Q7, Q8, Q9, Q15 |
+| A4a | `feat(audio): audio director core (A4a)` | C `src/audio/director.ts`, `src/audio/director.test.ts`; M `src/audio/README.md`, `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16` | None (not wired) | — (authorized 2026-11-15, §1.1; Q7, Q8, Q9 and Q15 approved for A4a) |
+| A4b | `feat(ui): audio session integration (A4b)` | Proposed, not ratified: C `src/ui/audio-host.ts`, `src/ui/audio-host.test.ts`, `src/ui/session.audio.test.ts`; M `src/ui/session.ts`, `docs/07` §6, `src/ui/README.md`, `src/audio/README.md`, `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16` | None (no assets yet) | Authorization; UI scope (§13.2) and the import exception; settings before unlock (§14 risk 14) |
 | V1 | `feat(rendering): FX queue, camera shake, motion flag` | C `src/rendering/fx-queue.ts` + test; M `src/rendering/scene-renderer.ts`, `src/rendering/camera.ts`, `src/ui/session.ts` | None | Authorization; renderer + UI scope; Q11, Q12 |
 | V2 | `feat(rendering): marine snow and depth vignette` | C `src/rendering/draw/particles.ts` + test; M `src/rendering/layers/environment.ts`, `src/rendering/layers/background.ts`, `src/rendering/theme.ts` | F1, F2 | Authorization; renderer scope; Q10 (F1, F2) |
 | V3 | `feat(rendering): anchor wake and entry splash` | M `src/rendering/draw/particles.ts`, `src/rendering/layers/effects.ts` + tests | F3, F4 | Authorization; renderer scope; Q10 (F3, F4) |
@@ -564,6 +670,7 @@ Each step is one commit, followed by verify → commit → push → wait for app
 **Notes:**
 
 - A5 lands after A6, so the app never ships a control that controls nothing.
+- *(A4a, 2026-11-15: the owner split the A4 row, which read "`feat(audio): director, music and session wiring` · C `src/audio/director.ts`, `src/audio/music.ts` + tests; M `src/ui/session.ts`", into A4a and A4b. `music.ts` is dropped, because Q8 defers music.)*
 - V1–V7 do not depend on assets, so they can proceed while the owner sources them.
 - "+ tests" means new test files beside the module, named `*.test.ts` / `*.test.tsx`. Their exact names are part of each step's scope ratification.
 - If an Open decision removes an effect or cue (for example Q9 = no, or F4 rejected under Q10), the step shrinks; it is never silently replaced by something else.
@@ -631,8 +738,10 @@ Follows the E-X1–E-X4 precedent (docs/07 §19 gate 4). Presentation only. `src
     Strictly higher loop tiers do stop one-shots from stealing loops. They do not cover the cases above. The policy needs a decision before A2 fixes the manifest's priorities. No change is made in A1.1.
 
     **Resolved by A1.2 (2026-11-15, §7.2).** One-shots and loops have separate pools, so no one-shot can steal a loop, whatever the tiers. A loop that cannot start waits as a pending loop and starts once it fits, instead of getting an inert handle. Fading and stolen voices keep their slots until they have ended, so the real source count never exceeds 16. An essential loop is never preempted.
-13. **A pending loop waits for the next manager call** (recorded in A2, 2026-11-15, §7.3). When a cue finishes loading, the manager is not told; the loop starts at its next call. The bank's `onReady` lets A4 make that call at once. If A4 neglects it, a bed starts late, up to the next handle update or play. Mitigation: A4's per-frame handle updates, and a test in A4 that a bed starts on the frame its cue becomes ready. A public `AudioManager.refresh()` is the alternative; it needs its own approval.
-14. **Settings may be restored after the first gesture** (owner requirement, A3, 2026-11-15, §3.5). Nothing guarantees that `restore()` runs before the first user gesture. If the session unlocks audio first and applies the settings later, a muted user could hear sound briefly, or at the wrong volume. A4 must apply the persisted mute and volumes to the `AudioManager` before the unlock or any playback, and test it.
+13. **A pending loop waits for the next manager call** (recorded in A2, 2026-11-15, §7.3). When a cue finishes loading, the manager is not told; the loop starts at its next call. The bank's `onReady` lets A4 make that call at once. If A4 neglects it, a bed starts late, up to the next handle update or play. Mitigation: A4's per-frame handle updates, and a test in A4 that a bed starts on the frame its cue becomes ready. A public `AudioManager.refresh()` is the alternative; it needs its own approval. *(A4a, 2026-11-15: the director's `wake()` re-sends every loop value and starts a waiting loop at once, tested on the real manager and bank (§7.4). Wiring `onReady → wake()` is A4b's.)*
+14. **Settings may be restored after the first gesture** (owner requirement, A3, 2026-11-15, §3.5). Nothing guarantees that `restore()` runs before the first user gesture. If the session unlocks audio first and applies the settings later, a muted user could hear sound briefly, or at the wrong volume. A4 must apply the persisted mute and volumes to the `AudioManager` before the unlock or any playback, and test it. *(A4a does not touch settings; this stays an A4b requirement.)*
+15. **A loop that starts at once begins at full cue level for about 15 ms** (recorded in A4a, 2026-11-15, §7.4). `AudioManager.loop()` has no initial gain, so the director's first `setGain` follows the start and ramps. It is silent with the null manifest, and is masked at the dive start by the splash. Mitigation: judge it in the A6 listening pass. The fix is an initial gain for `loop()`, an `AudioManager` change that needs its own approval.
+16. **Remote cashouts would play the local cue** (recorded in A4a, 2026-11-15). `cashedOut` carries no owner, and in Phase 7 every cashout is local. Phase 8 must add an ownership field before remote cashouts reach the event bus.
 
 ---
 
@@ -691,3 +800,4 @@ docs/05 §6 (`shake`, `zoom` reserved), §12 (FX list), §14 item 9 (`quality` f
 - **2026-11-15 — A2.** The owner accepted A1.2 (`0de6d73`) and authorized the sound bank and manifest (§1.1). Added §7.3, the `SoundBank` interface in §7, the A2 row in §12 (with its exact file list), a note on Q6 in §1.3 (Q6 stays Open), and risk 13 in §14. `audio-manager.ts` is unchanged. No asset, URL or format is recorded. Q3–Q12, Q14 and Q15 stay Open. A3 is not authorized.
 - **2026-11-15 — A3.** The owner authorized the sound settings store after the A3 pre-implementation report (§1.1, D1–D8). Added §3.5, `ambience` in §3.2 (D3), the A3 bullet in §1.1, Q3 answered in §1.3 (D1), the UI-X1 ratification for A3 in §1.3 Q2 and §13.2 (D2), the A3 row in §12 (with its exact file list), and risk 14 in §14. D7 is deferred to A5. Not wired; no audio file changed. Q4–Q12, Q14 and Q15 stay Open. A4 is not authorized.
 - **2026-11-15 — A3.1.** The owner accepted A3 (`16a6a40`) with documented limitations and authorized the subscriber failure hardening (A3 audit finding M1 (the read-only audit of `16a6a40`; not the deferred money-integrity M1)). Added the A3.1 bullet in §1.1, the subscriber isolation bullet in §3.5, and the A3.1 row in §12. `createStore` and the other stores are unchanged. A4 is not authorized.
+- **2026-11-15 — A4a.** The owner split A4 into A4a and A4b, and authorized A4a, the Audio Director core, after the revised A4 plan (§1.1). Q7, Q8, Q9 and Q15 are recorded as owner-approved for A4a in §1.1 and §1.3. Added §7.4 (the director: mapping, loops by phase, merging table, provisional values, lifecycle, containment, limitations), the director interface in §7, the A4a and A4b rows in §12, the notes on risk 13 and 14 and the new risks 15 and 16 in §14. Updated §3.2 (MusicController deferred), §3.4 (`AudioFrame` narrowed), §5 (mapping notes), §6 (`music.ts` dropped) and §11. `audio-manager.ts`, `sound-bank.ts`, `manifest.ts` and every `src/ui` file are unchanged. A4b is not authorized.
