@@ -26,7 +26,7 @@ import { useStore } from "@/ui/hooks/use-store";
 import { isFocusParked, useFocusRescue } from "@/ui/hooks/use-focus-rescue";
 import { gameSession } from "@/ui/session";
 import { STRINGS } from "@/ui/strings";
-import { ChestIcon } from "./icons";
+import { TreasureChestArt } from "./icons";
 
 const { round } = gameSession;
 
@@ -78,23 +78,41 @@ export function ChestPicker() {
       <div className="mb-3 text-xs uppercase tracking-[0.3em] text-gold">
         {STRINGS.chests.title}
       </div>
-      <div className="flex gap-4 px-6">
-        {chests.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => pickChest(c.id)}
-            disabled={!!chosenChest}
-            aria-description={STRINGS.chests.position(c.id + 1, chests.length)}
-            className="group flex h-24 w-20 flex-col items-center justify-end rounded-lg border border-gold/40 bg-gradient-to-b from-[#3a2410] to-[#1a0e06] p-2 transition-transform active:scale-95 disabled:opacity-50"
-          >
-            <ChestIcon className="h-10 w-10 text-gold transition-transform group-hover:-translate-y-1" />
-            <div className="mt-1 text-[10px] text-gold/70">
-              {chosenChest?.id === c.id
-                ? STRINGS.chests.revealed(formatMultiplier(c.multiplier))
-                : STRINGS.chests.hidden}
-            </div>
-          </button>
-        ))}
+      <div className="flex gap-3 px-4 sm:gap-5">
+        {chests.map((c) => {
+          const isChosen = chosenChest?.id === c.id;
+          return (
+            <button
+              key={c.id}
+              onClick={() => pickChest(c.id)}
+              disabled={!!chosenChest}
+              aria-description={STRINGS.chests.position(c.id + 1, chests.length)}
+              className={`group relative w-[6.5rem] rounded-xl border bg-gradient-to-b from-[#2a1a0c]/90 to-[#0d0703]/90 p-2 pt-3 shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-all duration-200 enabled:hover:-translate-y-1 enabled:hover:border-gold/80 enabled:hover:shadow-[0_0_24px_color-mix(in_oklab,var(--gold)_35%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold active:scale-95 sm:w-32 ${
+                isChosen
+                  ? "scale-105 border-gold shadow-[0_0_32px_color-mix(in_oklab,var(--gold)_50%,transparent)]"
+                  : "border-gold/40 disabled:opacity-45 disabled:grayscale-[0.4]"
+              }`}
+            >
+              <div className="relative aspect-[6/5] w-full">
+                <TreasureChestArt
+                  id={`bonus-chest-${c.id}`}
+                  open={isChosen}
+                  className="absolute inset-0 h-full w-full drop-shadow-[0_2px_2px_rgba(0,0,0,0.6)] transition-transform duration-300 group-enabled:group-hover:scale-[1.04]"
+                />
+                {/* The multiplier sits on the chest front, centred and in gold. */}
+                <div
+                  className={`absolute inset-x-0 top-[69%] -translate-y-1/2 text-center font-black leading-none tracking-tight text-gold tabular-nums [-webkit-text-stroke:1px_#2a1306] [paint-order:stroke_fill] [text-shadow:0_2px_0_#1a0e06,0_0_12px_rgba(0,0,0,0.85)] ${
+                    isChosen ? "multiplier-glow text-2xl sm:text-3xl" : "text-xl sm:text-2xl"
+                  }`}
+                >
+                  {isChosen
+                    ? STRINGS.chests.revealed(formatMultiplier(c.multiplier))
+                    : STRINGS.chests.hidden}
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
