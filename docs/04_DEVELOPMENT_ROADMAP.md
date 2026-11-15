@@ -37,6 +37,12 @@ Sprints are the execution units of this roadmap; each sprint delivers into one o
   - *Close-out Step 2 (2026-11-14):* agent-run browser QA at all 7 matrix sizes, four `src/ui` QA fixes (uncommitted) and all automated gates are green. A draft completion report is in docs/15. **Phase 6 stays In Progress until the owner accepts** (QA fixes, §19 gates 7–8, the renderer-work decision).
   - *Close-out Step 3 (2026-11-15):* the owner accepted the visual implementation, the QA fixes D1–D4 and the renderer exception E-X4. Git reconciled: Step 2 landed in `c046b33`, the renderer visuals in `81eb985`; `develop` = `origin/develop` = `81eb985`. **Phase 6 stays In Progress:** §19 gates 7–8, the E-X3 browser QA, Git authorization and the retrospective remain. Phase 7 is not started.
   - *Official close-out (2026-11-15):* **OWNER APPROVED — 2026-11-15**: manual gameplay including Dual Bet (§19 gate 7, which also records the E-X3 browser QA) and the seven-size screenshot matrix (§19 gate 8). E-X4 formally ratified with its 19-file scope verified. Close-out commits G1 `6e28ce0` (Bonus Chest), G2 `9bded6b` (E-X4 renderer, rest), G3 `3346ed8` (`vite.config.ts`) and G4 (this documentation). Final gates: 572/572 tests across 42 files, `tsc` clean, ESLint 0 errors + 6 pre-existing warnings, build passes, SSR smoke 200. **Sprint 4 and Phase 6 are complete.** Still deferred: M1 (not closed), M2 and B-R (not started), recovery items 1–3. Retrospective in docs/15. **Phase 7 is the next planned phase. It is not started.**
+- **Sprint 5 — Phase 7 (Audio & Visual Effects) per `docs/08_AUDIO_FX_ARCHITECTURE.md` (TASK 008): 🔄 IN PROGRESS** (started 2026-11-15).
+  - *2026-11-15 — architecture approved; P7-0 authorized.* The owner approved the Phase 7 proposal as the basis for development: native Web Audio with a lightweight `AudioManager` (no dependency), the existing Canvas 2D renderer (no PixiJS), event-driven audio and FX, the approved underwater atmosphere preserved, and no change to the engine, RNG, money settlement, Dual Bet or gameplay outcomes. **Only P7-0 (the blueprint) is authorized.**
+  - Approved sequence, one atomic commit per step: **P7-0 → A1–A4 → V1–V7 → A6 → A5 → P7-C** (docs/08 §12).
+  - The renderer exception (proposed **E-X5**) and the UI exception (proposed **UI-X1**) are accepted in principle only. Their file scopes (docs/08 §13) must be ratified before those files change. `src/engine` and `src/shared` take no Phase 7 change.
+  - Open owner decisions: Q3–Q12, Q14, Q15 (docs/08 §1.3), including audio assets and licensing (Q5) and device QA (Q14). No audio asset exists, and no licence is cleared.
+  - **Next:** owner review of P7-0, then the owner's authorization of A1. A1 is not started.
 
 ---
 
@@ -155,7 +161,7 @@ Professional UI Framework.
 
 # PHASE 7 — AUDIO & VISUAL EFFECTS
 
-Status: Pending (next planned phase after Phase 6; not started. Planning begins only on the owner's instruction.)
+Status: 🔄 In Progress (Sprint 5, TASK 008, started 2026-11-15, per `docs/08_AUDIO_FX_ARCHITECTURE.md`. Architecture approved by the owner 2026-11-15; P7-0, the blueprint, is the only authorized step. A1–A6, V1–V7 and P7-C each need their own authorization. *Previous status: "Pending (next planned phase after Phase 6; not started. Planning begins only on the owner's instruction.)"*)
 
 Objectives
 

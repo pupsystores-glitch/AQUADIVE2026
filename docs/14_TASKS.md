@@ -2,7 +2,9 @@
 
 Status:
 
-**No task is active.** TASK 007 COMPLETED 2026-11-15 (see the close-out update below); Phase 7 planning awaits the owner's instruction. History: TASK 007 active — Sprint 4 (Phase 6, User Interface per `docs/07_UI_ARCHITECTURE.md`, approved and binding). U1 completed and committed (`140790f`). Commit U2 (wallet store, delta V1) committed as `ad30d7a`, pushed with its fix `39f5a9f`, and approved by the owner 2026-11-13 (remount covered by automated tests only — accepted limitation). Engine freeze exception E-X1 (bonus eligibility + deterministic 360-tick completion) committed and pushed as `897c5be`. U3 (UI test harness + DOM characterization pins) committed and pushed as `8e9b21b`; validation results accepted by the owner 2026-11-13. U4 architecture approved 2026-11-13 and re-cut into U4a (notification store) + U4b (round store), separate gates; dev rejection banner deferred to U6. U4a implemented and validated 2026-11-13; owner manual browser QA passed (5/5 checks) and U4a approved by the owner 2026-11-13; committed and pushed to `origin/develop` (`feat(ui): add session-owned notification store (U4a)`). U4b (round store): plan approved by the owner 2026-11-13; implemented and validated 2026-11-13 (249/249 tests green, 20 U3 pins unchanged); committed and pushed as `bbdc134` — owner manual browser QA pending. U5 (bet-input store + action-state derivation, V4): authorized by the owner 2026-11-13 (decisions D1–D12); implemented and validated 2026-11-13 (311/311 tests green across 29 files, 20 U3 pins unchanged); committed and pushed to `origin/develop` as `09cc5af56534766982697f7036efce72f440260d` (19 files: 5 new, 14 modified; no new lint findings; engine/rendering/shared freeze preserved) — a development checkpoint, not fully accepted: U4b and U5 manual browser QA pending. M1 (Money Integrity — the sub-cent / zero-debit betting vulnerability): **financial policy approved by the owner 2026-11-13 (decisions M1-D1 to M1-D6); not implemented — the vulnerability is still open.** Stage M1-0 (decisions + architecture plan, documentation only; docs/07 §23, docs/06 §13.1) is drafted under TASK 007, refined by a review pass on 2026-11-13 (numeric bounds, engine–wallet consistency), and awaits the owner's review of the diff — not committed. Engine freeze exception E-X2 (engine-side valid-stake enforcement) is proposed only: its implementation scope is not approved. M1-1, M1-2 and M1-3 are proposed stages, none authorized. The recommended commit plan (proposed) lands E-X2 and M1-1 together in one commit, then M1-2, then M1-3 (docs/07 §23.8). Q1 (technical stake ceiling) remains open. M2 (integer minor units) is deferred and not started. Final M1-0 reconciliation (2026-11-13, documentation only), after the read-only security boundary review:
+**TASK 008 is active** — Sprint 5, Phase 7 (Audio & Visual Effects) per `docs/08_AUDIO_FX_ARCHITECTURE.md`, started 2026-11-15. Architecture approved by the owner; **only P7-0 (the blueprint) is authorized.** See TASK 008 below. *(Until P7-0, 2026-11-15, this line read: "No task is active. TASK 007 COMPLETED 2026-11-15 (see the close-out update below); Phase 7 planning awaits the owner's instruction.")*
+
+TASK 007 history: TASK 007 active — Sprint 4 (Phase 6, User Interface per `docs/07_UI_ARCHITECTURE.md`, approved and binding). U1 completed and committed (`140790f`). Commit U2 (wallet store, delta V1) committed as `ad30d7a`, pushed with its fix `39f5a9f`, and approved by the owner 2026-11-13 (remount covered by automated tests only — accepted limitation). Engine freeze exception E-X1 (bonus eligibility + deterministic 360-tick completion) committed and pushed as `897c5be`. U3 (UI test harness + DOM characterization pins) committed and pushed as `8e9b21b`; validation results accepted by the owner 2026-11-13. U4 architecture approved 2026-11-13 and re-cut into U4a (notification store) + U4b (round store), separate gates; dev rejection banner deferred to U6. U4a implemented and validated 2026-11-13; owner manual browser QA passed (5/5 checks) and U4a approved by the owner 2026-11-13; committed and pushed to `origin/develop` (`feat(ui): add session-owned notification store (U4a)`). U4b (round store): plan approved by the owner 2026-11-13; implemented and validated 2026-11-13 (249/249 tests green, 20 U3 pins unchanged); committed and pushed as `bbdc134` — owner manual browser QA pending. U5 (bet-input store + action-state derivation, V4): authorized by the owner 2026-11-13 (decisions D1–D12); implemented and validated 2026-11-13 (311/311 tests green across 29 files, 20 U3 pins unchanged); committed and pushed to `origin/develop` as `09cc5af56534766982697f7036efce72f440260d` (19 files: 5 new, 14 modified; no new lint findings; engine/rendering/shared freeze preserved) — a development checkpoint, not fully accepted: U4b and U5 manual browser QA pending. M1 (Money Integrity — the sub-cent / zero-debit betting vulnerability): **financial policy approved by the owner 2026-11-13 (decisions M1-D1 to M1-D6); not implemented — the vulnerability is still open.** Stage M1-0 (decisions + architecture plan, documentation only; docs/07 §23, docs/06 §13.1) is drafted under TASK 007, refined by a review pass on 2026-11-13 (numeric bounds, engine–wallet consistency), and awaits the owner's review of the diff — not committed. Engine freeze exception E-X2 (engine-side valid-stake enforcement) is proposed only: its implementation scope is not approved. M1-1, M1-2 and M1-3 are proposed stages, none authorized. The recommended commit plan (proposed) lands E-X2 and M1-1 together in one commit, then M1-2, then M1-3 (docs/07 §23.8). Q1 (technical stake ceiling) remains open. M2 (integer minor units) is deferred and not started. Final M1-0 reconciliation (2026-11-13, documentation only), after the read-only security boundary review:
   - The review found **V2**, an edge from minimum-stake payout rounding. Payouts are rounded to the nearest cent, so a 0.01 stake cashed just above 1.5× is paid 0.02. It uses valid stakes only and survives the original M1 plan. It is still open.
   - The owner decided that V2 is a required fix inside M1 (M1-D7), with payouts rounded down to the cent using a numerically justified implementation (M1-D8). That supersedes the U2 bit-identical money-math rule for payouts.
   - Review sequence **C3** is adopted provisionally (M1-D9): commit 1 E-X2 + M1-1; commit 2 settlement integrity (V2 fix plus wallet non-finite debit, credit, payout and balance protection, kept in M1); commit 3 validation (docs/07 §23.14). Commit 1 alone would still contain an open financial vulnerability: V2 through the normal UI.
@@ -157,6 +159,41 @@ Status:
 *(Previous summary: U6 and U7 committed (`4440009`); Dual Bet E-X3 committed (`be10b19`); M1 deferred, not closed; visuals, D1–D4 and E-X4 accepted 2026-11-15; Phase 6 close-out pending gates 7–8)*
 
 TASK 007 COMPLETED 2026-11-15 — U1–U7, E-X1–E-X4, D1–D4 and the Bonus Chest committed; owner acceptance of gates 7–8 recorded; M1 deferred, not closed; M2 and B-R not started
+
+---
+
+TASK 008
+
+Sprint 5 — Audio & Visual Effects (Phase 7)
+
+Status:
+
+**Active since 2026-11-15.** Blueprint `docs/08_AUDIO_FX_ARCHITECTURE.md`.
+
+- **2026-11-15 — architecture approved (owner).** Native Web Audio with a lightweight `AudioManager`, no dependency; the existing Canvas 2D renderer, no PixiJS; event-driven audio and FX; the approved underwater atmosphere preserved; no change to the engine, RNG, money settlement, Dual Bet or gameplay outcomes. One atomic commit per approved step.
+- **Steps** (docs/08 §12), in the approved order:
+
+| Step | Scope | Status |
+|---|---|---|
+| P7-0 | Blueprint `docs/08` + tracking docs + `src/audio/README.md` | **Authorized 2026-11-15; delivered in this commit** — awaiting owner review |
+| A1 | `AudioManager` core + fake `AudioContext` + tests | Not authorized |
+| A2 | Sound bank + manifest | Not authorized; Q6 open |
+| A3 | Sound settings store (`src/ui`) | Not authorized; UI scope not ratified; Q3 open |
+| A4 | Director, music, session wiring | Not authorized; UI scope not ratified; Q3, Q7, Q8, Q9, Q15 open |
+| V1 | FX queue, camera shake, motion flag | Not authorized; renderer + UI scope not ratified; Q11, Q12 open |
+| V2 | F1 marine snow, F2 depth vignette | Not authorized; renderer scope not ratified; Q10 open |
+| V3 | F3 anchor wake, F4 entry splash | Not authorized; renderer scope not ratified; Q10 open |
+| V4 | F5 landing silt plume | Not authorized; renderer scope not ratified; Q10 open |
+| V5 | F6 crash effect + camera shake | Not authorized; renderer scope not ratified; Q10, Q11 open |
+| V6 | F7 round-reset dip, F8 chest burst | Not authorized; renderer + UI scope not ratified; Q10 open |
+| V7 | Reduced motion (canvas + CSS) | Not authorized; UI scope not ratified; Q11, Q12 open |
+| A6 | Licensed sound assets + mix | Not authorized; **Q5 open: no asset supplied, no licence cleared** |
+| A5 | Sound control (TopBar) | Not authorized; UI scope not ratified; Q4, Q12 open |
+| P7-C | Phase 7 close-out | Not authorized; device QA (Q14) open |
+
+- **Exceptions:** the renderer exception (proposed **E-X5**) and the UI exception (proposed **UI-X1**) are accepted in principle only. Their file scopes (docs/08 §13) must be ratified before those files change. `src/engine` and `src/shared` take no change. `src/ui/store/wallet-store.ts` is excluded (M1 deferred, not closed).
+- **Owner decisions** (docs/08 §1.3): approved — Q1, Q13, Q16 and the zero-engine-change part of Q2. Open — the renderer/UI scopes of Q2, and Q3–Q12, Q14, Q15. The recommended defaults are not in force.
+- **Next:** owner review of P7-0; then the owner's authorization of A1. Nothing after P7-0 is started.
 
 ---
 

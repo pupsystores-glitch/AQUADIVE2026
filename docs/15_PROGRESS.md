@@ -48,6 +48,27 @@ M2 (the rest of integer minor units) is still deferred.
 
 **Official close-out 2026-11-15 — supersedes the statements above.** **TASK 007 / Sprint 4 / Phase 6 COMPLETED.** OWNER APPROVED — 2026-11-15: gameplay including Dual Bet, mobile gameplay, and the seven-size screenshot matrix (docs/07 §19 gates 7–8). E-X4 and D1–D4 formally ratified. Close-out commits: G1 `6e28ce0`, G2 `9bded6b`, G3 `3346ed8`, G4 (the close-out documentation). 572/572 tests green. M1 stays deferred and not closed; M2 and B-R are not started. Phase 7 is not started. See "Sprint 4 close-out — Step 4" below.
 
+**Sprint 5 / Phase 7 started 2026-11-15 — supersedes "Phase 7 is not started" above.** **TASK 008 (Audio & Visual Effects) is active.** The owner approved the Phase 7 architecture and authorized **P7-0 only**: the blueprint `docs/08_AUDIO_FX_ARCHITECTURE.md` and the tracking updates. No runtime code, dependency or asset is added. A1 is not started. See "TASK 008" below.
+
+---
+
+## TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) (ACTIVE, started 2026-11-15)
+
+### Step P7-0 — Phase 7 architecture blueprint (documentation only) — DELIVERED 2026-11-15; AWAITING OWNER REVIEW
+
+- **Task ID:** TASK 008, step P7-0. **Date:** 2026-11-15.
+- **Authorization:** the owner approved the *Sprint 5 / Phase 7: Audio & Visual Effects Architecture Proposal* (2026-11-15) as the basis for Phase 7, and authorized P7-0 only.
+- **Summary:** the proposal is recorded as `docs/08_AUDIO_FX_ARCHITECTURE.md` without redesign. It covers the current-state audit (§2), the audio and FX architecture (§3–§4), the event mapping (§5), the module layout and interfaces (§6–§7), assets and licensing (§8), performance and browser targets (§9–§10), the test strategy and per-commit gate (§11), the full commit sequence (§12), the proposed exception scopes (§13), risks (§14), the acceptance gates and owner-review points (§15), and the documentation conflicts (§16).
+- **Files:** created `docs/08_AUDIO_FX_ARCHITECTURE.md`; modified `docs/04_DEVELOPMENT_ROADMAP.md`, `docs/14_TASKS.md`, `docs/15_PROGRESS.md`, `docs/16_CURRENT_TASK.md`, `src/audio/README.md`. No other file.
+- **Architectural decisions (owner-approved):** native Web Audio with a lightweight `AudioManager`, no audio dependency; the existing Canvas 2D renderer, no PixiJS, no stack change; event-driven audio and FX; the approved underwater atmosphere preserved; no change to the engine, RNG, money settlement, Dual Bet or gameplay outcomes, so the reserved `goldfishConsumed` / `boostExpired` events stay unbuilt; the sequence P7-0 → A1–A4 → V1–V7 → A6 → A5 → P7-C; one atomic commit per step; the blueprint file name.
+- **Accepted in principle, not ratified:** the renderer exception (proposed **E-X5**) and the UI exception (proposed **UI-X1**). Their step-by-step file scopes are documented in docs/08 §13 and must be ratified before those files change.
+- **Open owner decisions** (docs/08 §1.3): Q3 default sound state, Q4 sound control, Q5 asset supply and licences, Q6 format, Q7 spectator and Dual Bet audio, Q8 music, Q9 countdown ticks, Q10 the effect list F1–F8, Q11 camera shake and the DOM `crash-shake`, Q12 reduced motion, Q14 device QA, Q15 the iOS silent switch, and the scope part of Q2. Recommended defaults are recorded but are not in force.
+- **Corrected:** `src/audio/README.md` named non-existent events (`round:crashed`, `cashout:confirmed`) and claimed "no game state" while planning depth ambience. It now names the real engine events and the per-frame `AudioFrame` (docs/08 §16).
+- **Recorded, not changed:** the reserved docs/06 §12 events (unused), and the missing reduced-motion guard on `crashShake` / `goldPulse` (scheduled for V7).
+- **Not done (by instruction):** no runtime source change, no dependency, no audio or visual asset, no A1, no Phase 8. No audio asset exists and no licence is cleared.
+- **Validation (2026-11-15, on the P7-0 tree):** exactly the six P7-0 files changed (`git status`); `git diff --check` clean; LF line endings in every changed file; `tsc --noEmit` clean; 572/572 tests across 42 files; ESLint 0 errors + 6 pre-existing warnings with end-of-line neutralized (the raw run's 7,470 errors are all CRLF `Delete ␍` on pre-existing working-tree files, recovery item 1); production build passes; `src/engine`, `src/shared`, `src/rendering` and `src/ui` unchanged. `src/audio/README.md` is Prettier-clean. The other five documents are not Prettier-formatted, as their HEAD versions were not (repository convention: compact Markdown tables). SSR smoke not run: no runtime file changed.
+- **Risks:** none introduced by this step. Phase 7 risks are in docs/08 §14. The chief one is that Phase 7 cannot ship without step-scoped renderer and UI changes, which are not yet ratified.
+
 ---
 
 ## TASK 007 — Sprint 4: User Interface (COMPLETED 2026-11-15, started 2026-08-17)

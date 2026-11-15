@@ -1,6 +1,8 @@
 # CURRENT TASK
 
-**No task is active.** TASK 007 — Sprint 4: User Interface (Phase 6) — **COMPLETED 2026-11-15** (active since 2026-08-17). The next planned phase is Phase 7 (Audio & Visual Effects). It is not started, and its planning begins only on the owner's instruction.
+**TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) — ACTIVE since 2026-11-15.** Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`. The owner approved the architecture; **only P7-0 (the blueprint) is authorized.** See "Current: Sprint 5 / TASK 008 / Phase 7" below.
+
+*(Until P7-0, 2026-11-15, this line read: "**No task is active.** TASK 007 — Sprint 4: User Interface (Phase 6) — **COMPLETED 2026-11-15** (active since 2026-08-17). The next planned phase is Phase 7 (Audio & Visual Effects). It is not started, and its planning begins only on the owner's instruction." The Sprint 4 paragraphs that follow are kept as the record of TASK 007. Their freeze rules still apply in Phase 7: `src/engine` and `src/shared` take no change, and `src/rendering` stays frozen until the proposed E-X5 scope is ratified for a step, docs/08 §13.)*
 
 Blueprint: `docs/07_UI_ARCHITECTURE.md` — **approved 2026-08-17 and binding** (the §17 U0 step; approval ratified the five §7 sanctioned deltas V1–V5). Extraction commits follow its §17 order, one per approval.
 
@@ -32,7 +34,20 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 | E-X3 — Dual Bet (engine freeze exception + M1 per-slot amendment + dual panel) | **Owner-approved 2026-11-14; committed in `be10b19`, on `origin/develop`.** This implements the layout decision above: BET 1 and BET 2 side by side on phones and `tab`, stacked in the `desk` rail, both real engine slots. Engine (docs/06 §13.2): `slot` on `placeBet`/`cashOut`/`betPlaced`/`cashedOut`, `invalid-slot`, per-slot impact auto-cash, one chest pick for all eligible slots, `participants`, snapshot v3. Wallet (docs/07 §23.17): every rule per slot, per-slot fault isolation, W2/W3 per slot. Session (docs/07 §8): `betInputs`, in-flight stake reservation. UI (docs/07 §13.3): `BetSlotPanel` ×2, `slot` props, quick bets hidden below `tab`. **Validation not recorded** (the commit message has none). **Pending:** owner browser QA, including 375×667 and 390×844 (no overflow, no unnecessary scroll, canvas unclipped) |
 | Sprint 4 close-out (Steps 1–4) | **Completed 2026-11-15.** Owner approved gates 7–8 (gameplay incl. Dual Bet, mobile, seven-size matrix); E-X4 and D1–D4 ratified; G1 `6e28ce0`, G2 `9bded6b`, G3 `3346ed8`, G4 docs; 572/572 tests. **TASK 007 / Phase 6 closed.** M1 deferred, not closed |
 
-## Current: Sprint 4 / TASK 007 / Phase 6 — OFFICIALLY CLOSED (2026-11-15)
+## Current: Sprint 5 / TASK 008 / Phase 7 — P7-0 DELIVERED (2026-11-15); AWAITING OWNER REVIEW
+
+Blueprint and full record: `docs/08_AUDIO_FX_ARCHITECTURE.md`; progress entry in `docs/15_PROGRESS.md`, "TASK 008".
+
+- **Owner approval (2026-11-15):** the Phase 7 architecture, as proposed. Native Web Audio with a lightweight `AudioManager` and no dependency; the existing Canvas 2D renderer, no PixiJS; event-driven audio and FX; the approved underwater atmosphere preserved; **no change** to the engine, RNG, money settlement, Dual Bet or gameplay outcomes; one atomic commit per approved step.
+- **Approved sequence:** P7-0 → A1 → A2 → A3 → A4 → V1 → V2 → V3 → V4 → V5 → V6 → V7 → A6 → A5 → P7-C (docs/08 §12).
+- **Authorized:** P7-0 only — `docs/08` created; `docs/04`, `docs/14`, `docs/15`, `docs/16` and `src/audio/README.md` updated.
+- **Accepted in principle, not ratified:** the renderer exception (proposed **E-X5**) and the UI exception (proposed **UI-X1**). Their per-step file scopes are in docs/08 §13. No file in `src/rendering`, `src/ui` or `src/styles.css` changes until its step's scope is ratified.
+- **Open owner decisions** (docs/08 §1.3): Q2 (scopes), Q3, Q4, Q5 (assets and licences), Q6, Q7, Q8, Q9, Q10 (effects F1–F8), Q11, Q12, Q14 (device QA), Q15. The recommended defaults in docs/08 are not in force.
+- **Facts to keep in view:** no audio code and no audio asset exist; no licence is cleared; M1 is deferred and not closed, so `src/ui/store/wallet-store.ts` is outside Phase 7.
+- **Stop condition:** do not start A1, install dependencies, change runtime source, generate audio or visual assets, or begin Phase 8.
+- **Next:** the owner reviews P7-0, then authorizes A1 (or amends the plan). Recommended first answers: Q6 (needed for A2's manifest) and Q3, Q7, Q8, Q9, Q15 (needed for A3–A4).
+
+## Previous: Sprint 4 / TASK 007 / Phase 6 — OFFICIALLY CLOSED (2026-11-15)
 
 Full record: `docs/15_PROGRESS.md`, "Sprint 4 close-out — Step 4", with the final completion report and the Sprint 4 retrospective.
 
