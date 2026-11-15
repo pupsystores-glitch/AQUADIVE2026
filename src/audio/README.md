@@ -2,12 +2,15 @@
 
 Audio system (roadmap Phase 7). Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`.
 
-**Status (2026-11-15, A4a):** `audio-manager.ts` exists: the generic core
+**Status (2026-11-15, A4a.1):** `audio-manager.ts` exists: the generic core
 (A1), its `decode()` interface (A1.1, docs/08 §7.1) and its voice pools and
 protected loops (A1.2, docs/08 §7.2), with the fake context and tests. A2 adds
 `manifest.ts` (the typed cue list) and `sound-bank.ts` (fetch, decode through
 the manager, cache; docs/08 §7.3), with `test/fake-fetch.ts` and tests. A4a
-adds `director.ts`, the Audio Director core (docs/08 §7.4), with tests.
+adds `director.ts`, the Audio Director core (docs/08 §7.4), with tests. A4a.1
+corrects loop startup: `loop(cue, options)` takes the initial gain, rate and
+filter, and the director fades a bed in only while its `LoopHandle.isAudible()`
+is true (docs/08 §7.2, §7.4).
 Nothing outside `src/audio` imports any of them yet; the session wiring is
 A4b. **No audio asset exists: every manifest entry has `asset: null`, so every
 cue is unavailable and silent.** Each later step needs its own owner

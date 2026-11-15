@@ -11,7 +11,9 @@ import {
   type AudioBus,
   type AudioManager,
   type LoopHandle,
+  type LoopOptions,
   type PlayOptions,
+  type ResolvedCue,
 } from "./audio-manager";
 import {
   BED_CROSSFADE_S,
@@ -34,7 +36,12 @@ import {
 import directorSource from "./director.ts?raw";
 import { SOUND_MANIFEST, type CueDefinition, type CueId, type SoundManifest } from "./manifest";
 import { createSoundBank, type SoundBank } from "./sound-bank";
-import { FakeAudioContext, fakeBuffer } from "./test/fake-audio-context";
+import {
+  FakeAudioContext,
+  fakeBuffer,
+  type FakeAudioContextOptions,
+  type FakeGainNode,
+} from "./test/fake-audio-context";
 import { FakeFetch, flush } from "./test/fake-fetch";
 
 // ----- fakes -----
@@ -70,14 +77,31 @@ const fmt = (value: number) => value.toFixed(3);
 interface RecordedLoop {
   readonly id: number;
   readonly cue: CueId;
+  readonly options: LoopOptions | undefined;
   stopped: boolean;
+  /** What its `isAudible()` answers (A4a.1); a test may switch it. */
+  audible: boolean;
 }
+
+/** The initial values of a `loop()` call, as they appear on its log line (A4a.1). */
+const fmtOptions = (options: LoopOptions | undefined) => {
+  if (!options) return "";
+  const parts: string[] = [];
+  if (options.gain !== undefined) parts.push(`gain=${fmt(options.gain)}`);
+  if (options.rate !== undefined) parts.push(`rate=${fmt(options.rate)}`);
+  if (options.filterHz !== undefined) parts.push(`filter=${Math.round(options.filterHz)}`);
+  return parts.length > 0 ? ` ${parts.join(" ")}` : "";
+};
 
 /** An AudioManager that records every call the director makes, as readable lines. */
 class RecordingAudio implements AudioManager<CueId> {
   readonly log: string[] = [];
   readonly loops: RecordedLoop[] = [];
   readonly busCalls: string[] = [];
+  /** What a new loop's `isAudible()` answers (A4a.1): true, as a loop that starts at once. */
+  audibleByDefault = true;
+  /** `isAudible()` calls; they are queries, so they are not in `log`. */
+  audibleQueries = 0;
 
   unlock(): Promise<void> {
     this.log.push("unlock");
@@ -92,11 +116,17 @@ class RecordingAudio implements AudioManager<CueId> {
   play(cue: CueId, opts?: PlayOptions): void {
     this.log.push(opts?.gain !== undefined ? `play ${cue} gain=${fmt(opts.gain)}` : `play ${cue}`);
   }
-  loop(cue: CueId): LoopHandle {
-    const loop: RecordedLoop = { id: this.loops.length + 1, cue, stopped: false };
+  loop(cue: CueId, options?: LoopOptions): LoopHandle {
+    const loop: RecordedLoop = {
+      id: this.loops.length + 1,
+      cue,
+      options,
+      stopped: false,
+      audible: this.audibleByDefault,
+    };
     this.loops.push(loop);
     const tag = `#${loop.id} ${cue}`;
-    this.log.push(`loop ${cue}#${loop.id}`);
+    this.log.push(`loop ${cue}#${loop.id}${fmtOptions(options)}`);
     return {
       setGain: (gain) => this.log.push(`${tag} gain ${fmt(gain)}`),
       setRate: (rate) => this.log.push(`${tag} rate ${fmt(rate)}`),
@@ -104,6 +134,10 @@ class RecordingAudio implements AudioManager<CueId> {
       stop: (fadeS) => {
         loop.stopped = true;
         this.log.push(`${tag} stop ${fmt(fadeS)}`);
+      },
+      isAudible: () => {
+        this.audibleQueries++;
+        return loop.audible && !loop.stopped;
       },
     };
   }
@@ -122,6 +156,10 @@ class RecordingAudio implements AudioManager<CueId> {
 
   plays(): string[] {
     return this.log.filter((line) => line.startsWith("play "));
+  }
+  /** The latest loop of a cue. */
+  latest(cue: CueId): RecordedLoop | undefined {
+    return this.loops.filter((loop) => loop.cue === cue).at(-1);
   }
   live(): RecordedLoop[] {
     return this.loops.filter((loop) => !loop.stopped);
@@ -196,21 +234,16 @@ function crashRound(env: { events: FakeEvents; director: AudioDirector }, amount
 }
 
 const CRASH_ROUND_LOG = [
-  // Baseline frame: the surface bed starts silent and fades in.
-  "loop ambience-surface#1",
-  "#1 ambience-surface gain 0.000",
+  // Baseline frame: the surface bed starts silent (its initial gain, A4a.1) and fades in.
+  "loop ambience-surface#1 gain=0.000",
   // Both bets in one frame: two different cues, both play.
   "#1 ambience-surface gain 0.500",
   "play bet-clink-1",
   "play bet-clink-2",
-  // Dive: crossfade to the underwater bed, the rattle starts.
+  // Dive: crossfade to the underwater bed, the rattle starts, each with its initial values (A4a.1).
   "#1 ambience-surface stop 1.200",
-  "loop ambience-underwater#2",
-  "loop chain-rattle#3",
-  "#2 ambience-underwater gain 0.000",
-  "#2 ambience-underwater filter 6000",
-  "#3 chain-rattle gain 0.400",
-  "#3 chain-rattle rate 0.850",
+  "loop ambience-underwater#2 gain=0.000 filter=6000",
+  "loop chain-rattle#3 gain=0.400 rate=0.850",
   "play chain-unspool",
   "play water-splash",
   // Deeper, faster, past the first tension threshold.
@@ -227,8 +260,7 @@ const CRASH_ROUND_LOG = [
   "#2 ambience-underwater gain 0.625",
   // Next round's betting: crossfade back to the surface.
   "#2 ambience-underwater stop 1.200",
-  "loop ambience-surface#4",
-  "#4 ambience-surface gain 0.000",
+  "loop ambience-surface#4 gain=0.000",
 ];
 
 // ----- tests -----
@@ -615,7 +647,7 @@ describe("underwater filter", () => {
     director.update(frame({ phase: "crashed", depthRatio: 0.9 }));
     director.update(frame({ phase: "crashed", depthRatio: 1 }));
     expect(audio.log.filter((line) => line.includes("filter"))).toEqual([
-      "#1 ambience-underwater filter 6000",
+      "loop ambience-underwater#1 gain=0.000 filter=6000",
       "#1 ambience-underwater filter 1732",
     ]);
   });
@@ -704,7 +736,7 @@ describe("crossfade", () => {
     director.update(frame({ phase: "idle", dt: 0.998 * BED_CROSSFADE_S }));
     director.update(frame({ phase: "idle", dt: 1 }));
     expect(audio.log.filter((line) => line.includes("gain"))).toEqual([
-      "#1 ambience-surface gain 0.000",
+      "loop ambience-surface#1 gain=0.000",
       "#1 ambience-surface gain 0.998",
       "#1 ambience-surface gain 1.000",
     ]);
@@ -816,12 +848,8 @@ describe("pause()", () => {
     audio.take();
     director.update(frame({ phase: "diving", multiplier: 3.5, depthRatio: 0.5 }));
     expect(audio.take()).toEqual([
-      "loop ambience-underwater#3",
-      "loop chain-rattle#4",
-      "#3 ambience-underwater gain 0.000",
-      "#3 ambience-underwater filter 1732",
-      "#4 chain-rattle gain 0.761",
-      "#4 chain-rattle rate 1.031",
+      "loop ambience-underwater#3 gain=0.000 filter=1732",
+      "loop chain-rattle#4 gain=0.761 rate=1.031",
     ]);
   });
 
@@ -831,7 +859,7 @@ describe("pause()", () => {
     director.pause();
     audio.take();
     director.update(frame({ phase: "crashed", depthRatio: 1 }));
-    expect(audio.log).toContain("#2 ambience-underwater filter 500");
+    expect(audio.log).toContain("loop ambience-underwater#2 gain=0.000 filter=500");
   });
 
   it("is idempotent", () => {
@@ -882,7 +910,7 @@ describe("exception containment", () => {
   const throwingHandles = (): AudioManager<CueId> => ({
     ...throwingManager(),
     play: () => {},
-    loop: () => ({ setGain: boom, setRate: boom, setFilter: boom, stop: boom }),
+    loop: () => ({ setGain: boom, setRate: boom, setFilter: boom, stop: boom, isAudible: boom }),
   });
 
   const fullScript = (director: AudioDirector, events: FakeEvents) => {
@@ -916,6 +944,7 @@ describe("exception containment", () => {
     expect(() => fullScript(director, events)).not.toThrow();
     const kinds = errorSpy.mock.calls.map((call) => String(call[0]));
     expect(kinds.sort()).toEqual([
+      "[audio] director: loop audible failed; audio continues.", // A4a.1
       "[audio] director: loop filter failed; audio continues.",
       "[audio] director: loop gain failed; audio continues.",
       "[audio] director: loop rate failed; audio continues.",
@@ -1017,7 +1046,9 @@ describe("pending-loop readiness (docs/08 §14 risk 13)", () => {
     const stack = realStack(withTestAssets());
     if (wakeOnReady) stack.bank.onReady(() => stack.director.wake());
     await stack.audio.unlock();
-    // Several frames: the bed's fade-in is complete, so frames make no more handle calls.
+    // Several frames while the bed waits for its cue. Until A4a.1 its fade-in
+    // completed here and it later started at full level (docs/08 §14 risk
+    // 15b); now its level holds at 0 until its voice plays.
     stack.director.update(frame({ phase: "idle", dt: 0 }));
     for (let i = 0; i < 3; i++)
       stack.director.update(frame({ phase: "idle", dt: BED_CROSSFADE_S }));
@@ -1039,6 +1070,22 @@ describe("pending-loop readiness (docs/08 §14 risk 13)", () => {
     const { loopSources } = await bedWaitingForItsCue(true);
     expect(loopSources().length).toBe(1);
     expect(loopSources()[0].isPlaying()).toBe(true);
+  });
+
+  it("D4: that bed starts at gain 0, not at the level its pending frames would have reached, then fades in over 1.2 s (risk 15b)", async () => {
+    const { stack, loopSources } = await bedWaitingForItsCue(true);
+    const [source] = loopSources();
+    const gain = source.connections[0] as FakeGainNode;
+    expect(gain.gain.value).toBe(0);
+    stack.director.wake();
+    stack.director.wake();
+    expect(loopSources()).toHaveLength(1); // repeated wake(): one voice
+    const levels: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      stack.director.update(frame({ phase: "idle", dt: 0.3 }));
+      levels.push(Number(gain.gain.value.toFixed(3)));
+    }
+    expect(levels).toEqual([0.25, 0.5, 0.75, 1]);
   });
 
   it("without the wake, a quiet frame does not start it (why A4b must wire onReady → wake)", async () => {
@@ -1081,5 +1128,318 @@ describe("null-asset manifest (A6 not done)", () => {
     expect(errorSpy).not.toHaveBeenCalled();
     stack.bank.dispose();
     stack.audio.dispose();
+  });
+});
+
+// ----- loop startup (A4a.1, docs/08 §7.4, §14 risks 15 and 15b) -----
+
+describe("loop startup values (A4a.1)", () => {
+  it("D1: a new loop carries its values on loop(); its first frame sends no setter call", () => {
+    const { director, audio } = setup();
+    director.update(frame({ phase: "diving", multiplier: 3, depthRatio: 0.3 }));
+    expect(audio.log).toEqual([
+      `loop ambience-underwater#1 gain=0.000 filter=${Math.round(underwaterFilterHz(0.3))}`,
+      `loop chain-rattle#2 gain=${fmt(rattleGain(3))} rate=${fmt(rattleRate(3))}`,
+    ]);
+  });
+
+  it("D2: beds start at gain 0, the underwater bed with the current depth's filter, the rattle with the multiplier's gain and rate", () => {
+    const { director, audio } = setup();
+    director.update(frame({ phase: "idle", depthRatio: 0.7 }));
+    expect(audio.latest("ambience-surface")?.options).toEqual({ gain: 0 });
+    director.update(frame({ phase: "diving", depthRatio: 0.5, multiplier: 4 }));
+    expect(audio.latest("ambience-underwater")?.options).toEqual({
+      gain: 0,
+      filterHz: underwaterFilterHz(0.5),
+    });
+    expect(audio.latest("chain-rattle")?.options).toEqual({
+      gain: rattleGain(4),
+      rate: rattleRate(4),
+    });
+    // A bed started while the duck is active still starts silent.
+    director.pause();
+    director.update(frame({ phase: "crashed", depthRatio: 1 }));
+    expect(audio.latest("ambience-underwater")?.options).toEqual({ gain: 0, filterHz: 500 });
+  });
+
+  it("D3: a bed's fade-in advances only on frames where it is audible, in linear dt / 1.2 steps", () => {
+    const { director, audio } = setup();
+    audio.audibleByDefault = false;
+    const step = () => director.update(frame({ phase: "idle", dt: 0.3 }));
+    for (let i = 0; i < 6; i++) step();
+    expect(audio.take()).toEqual(["loop ambience-surface#1 gain=0.000"]); // no fade progress
+    const bed = audio.latest("ambience-surface") as RecordedLoop;
+    bed.audible = true;
+    step();
+    step();
+    bed.audible = false; // muted, suspended, interrupted or resuming mid-fade: held
+    for (let i = 0; i < 3; i++) step();
+    bed.audible = true;
+    step();
+    step();
+    expect(audio.take()).toEqual([
+      "#1 ambience-surface gain 0.250",
+      "#1 ambience-surface gain 0.500",
+      "#1 ambience-surface gain 0.750",
+      "#1 ambience-surface gain 1.000",
+    ]);
+    // A complete fade is final: no more queries, nothing changes.
+    const queries = audio.audibleQueries;
+    bed.audible = false;
+    for (let i = 0; i < 5; i++) step();
+    expect(audio.audibleQueries).toBe(queries);
+    expect(audio.take()).toEqual([]);
+  });
+
+  it("D3: the rattle is not gated: it follows the multiplier whether or not it is audible", () => {
+    const { director, audio } = setup();
+    audio.audibleByDefault = false;
+    director.update(frame({ phase: "diving", multiplier: 1 }));
+    audio.take();
+    director.update(frame({ phase: "diving", multiplier: 8 }));
+    expect(audio.take().filter((line) => line.includes("chain-rattle"))).toEqual([
+      "#2 chain-rattle gain 1.000",
+      "#2 chain-rattle rate 1.150",
+    ]);
+  });
+
+  it("D9: a pause mid-fade, then update(): a fresh handle starting at 0, fading from 0", () => {
+    const { director, audio } = setup();
+    const step = () => director.update(frame({ phase: "idle", dt: 0.6 }));
+    step();
+    step();
+    director.pause();
+    step();
+    step();
+    expect(audio.log).toEqual([
+      "loop ambience-surface#1 gain=0.000",
+      "#1 ambience-surface gain 0.500",
+      `#1 ambience-surface stop ${fmt(DETACH_FADE_S)}`,
+      "loop ambience-surface#2 gain=0.000",
+      "#2 ambience-surface gain 0.500",
+    ]);
+  });
+
+  it("D11: an isAudible() that throws is contained, logged once, and the bed stays quiet", () => {
+    const audio = new RecordingAudio();
+    const loop = audio.loop.bind(audio);
+    audio.loop = (cue, options) => ({
+      ...loop(cue, options),
+      isAudible: () => {
+        throw new Error("audible exploded");
+      },
+    });
+    const events = new FakeEvents();
+    const director = createAudioDirector(events, audio);
+    for (let i = 0; i < 10; i++) director.update(frame({ phase: "idle", dt: 0.3 }));
+    events.emit("diveStarted", ev.dive());
+    director.update(frame({ phase: "diving" }));
+    director.update(frame({ phase: "diving" }));
+    expect(audio.log.filter((line) => line.includes("gain "))).toEqual([]); // no bed fade, ever
+    expect(audio.plays()).toEqual(["play chain-unspool", "play water-splash"]);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(String(errorSpy.mock.calls[0][0])).toBe(
+      "[audio] director: loop audible failed; audio continues.",
+    );
+  });
+});
+
+// ----- the real AudioManager over the fake context, with cues resolved at once -----
+
+/** One buffer per loop cue, so a test can tell the voices apart. */
+const LOOP_BUFFERS = new Map<CueId, ReturnType<typeof fakeBuffer>>([
+  ["ambience-surface", fakeBuffer(20)],
+  ["ambience-underwater", fakeBuffer(21)],
+  ["chain-rattle", fakeBuffer(5)],
+]);
+
+/** The real manager, with every loop cue resolvable at once (no bank); one-shots are missing. */
+function directStack(options: FakeAudioContextOptions = {}) {
+  const context = new FakeAudioContext(options);
+  const audio = createAudioManager<CueId>({
+    resolveCue: (cue): ResolvedCue | null => {
+      const buffer = LOOP_BUFFERS.get(cue);
+      if (!buffer) return null;
+      return {
+        buffer,
+        bus: cue === "chain-rattle" ? "sfx" : "ambience",
+        gain: 1,
+        priority: 2,
+        essential: cue !== "chain-rattle",
+      };
+    },
+    createContext: () => context,
+  });
+  const events = new FakeEvents();
+  const director = createAudioDirector(events, audio);
+  const sourcesOf = (cue: CueId) =>
+    context.sources.filter((source) => source.buffer === LOOP_BUFFERS.get(cue));
+  /** The cue's live voice gain value, rounded; undefined without a live voice. */
+  const gainOf = (cue: CueId) => {
+    const source = sourcesOf(cue).find((s) => s.onended !== null);
+    const node = source?.connections[0] as FakeGainNode | undefined;
+    return node ? Number(node.gain.value.toFixed(3)) : undefined;
+  };
+  /** Runs frames of `phase`, returning the cue's gain after each. */
+  const run = (cue: CueId, frames: number, dt: number, phase: AudioFrame["phase"] = "idle") =>
+    Array.from({ length: frames }, () => {
+      director.update(frame({ phase, dt }));
+      return gainOf(cue);
+    });
+  return { context, audio, events, director, sourcesOf, gainOf, run };
+}
+
+describe("bed fade-in follows actual playback (A4a.1, real manager)", () => {
+  it("D5: frames before unlock make no progress; after unlock the voice starts at 0 and fades from the next frame", async () => {
+    const s = directStack();
+    s.director.update(frame({ phase: "idle", dt: 0 }));
+    for (let i = 0; i < 3; i++) s.director.update(frame({ phase: "idle", dt: BED_CROSSFADE_S }));
+    expect(s.sourcesOf("ambience-surface")).toEqual([]);
+    await s.audio.unlock();
+    const [bed] = s.sourcesOf("ambience-surface");
+    expect(bed.isPlaying()).toBe(true);
+    expect(s.gainOf("ambience-surface")).toBe(0);
+    expect((bed.connections[0] as FakeGainNode).gain.automation).toEqual([]); // started at 0, no ramp from 1
+    expect(s.run("ambience-surface", 4, 0.3)).toEqual([0.25, 0.5, 0.75, 1]);
+  });
+
+  it("D5: the underwater bed and the rattle start with their filter, gain and rate on the nodes", async () => {
+    const s = directStack();
+    await s.audio.unlock();
+    s.director.update(frame({ phase: "diving", depthRatio: 0.5, multiplier: 4 }));
+    const [bed] = s.sourcesOf("ambience-underwater");
+    const [rattle] = s.sourcesOf("chain-rattle");
+    const bedGain = bed.connections[0] as FakeGainNode;
+    const bedFilter = bedGain.connections[0] as unknown as { frequency: { value: number } };
+    expect(bedGain.gain.value).toBe(0);
+    expect(bedFilter.frequency.value).toBeCloseTo(underwaterFilterHz(0.5), 6);
+    expect((rattle.connections[0] as FakeGainNode).gain.value).toBeCloseTo(rattleGain(4), 12);
+    expect(rattle.playbackRate.value).toBeCloseTo(rattleRate(4), 12);
+    expect(rattle.playbackRate.automation).toEqual([]);
+  });
+
+  it("D6: while a resume is in progress the voice holds at 0; the fade starts once the context runs", async () => {
+    const s = directStack({ resumeMode: "manual" });
+    const unlocking = s.audio.unlock();
+    expect(s.run("ambience-surface", 5, 0.3)).toEqual([0, 0, 0, 0, 0]); // the voice exists, the context does not run
+    expect(s.context.pendingResumeCount).toBe(1);
+    s.context.completeResume();
+    await unlocking;
+    expect(s.run("ambience-surface", 4, 0.3)).toEqual([0.25, 0.5, 0.75, 1]);
+  });
+
+  it("D6: mute, host suspension and an interruption hold the fade mid-way; it continues when playback resumes", async () => {
+    const s = directStack();
+    await s.audio.unlock();
+    const fade = (frames: number) => s.run("ambience-surface", frames, 0.12);
+    const fading = fade(3); // the baseline frame, then two steps
+    s.audio.setMuted(true);
+    const muted = fade(3);
+    s.audio.setMuted(false);
+    const unmuted = fade(1);
+    s.audio.suspend();
+    const hostSuspended = fade(3);
+    s.audio.resume();
+    const hostResumed = fade(1);
+    s.context.interrupt();
+    const interrupted = fade(3);
+    s.context.systemResume();
+    const systemResumed = fade(1);
+    s.context.interrupt();
+    const interruptedAgain = fade(2);
+    await s.audio.unlock(); // a new gesture
+    const unlockedAgain = fade(1);
+    expect({
+      fading,
+      muted,
+      unmuted,
+      hostSuspended,
+      hostResumed,
+      interrupted,
+      systemResumed,
+      interruptedAgain,
+      unlockedAgain,
+    }).toEqual({
+      fading: [0, 0.1, 0.2],
+      muted: [0.2, 0.2, 0.2], // held
+      unmuted: [0.3],
+      hostSuspended: [0.3, 0.3, 0.3], // held
+      hostResumed: [0.4],
+      interrupted: [0.4, 0.4, 0.4], // held
+      systemResumed: [0.5],
+      interruptedAgain: [0.5, 0.5], // held
+      unlockedAgain: [0.6],
+    });
+    expect(s.sourcesOf("ambience-surface")).toHaveLength(1);
+  });
+
+  it("D7: a refused resume, then a later unlock: the bed fades in from 0 and never jumps", async () => {
+    const s = directStack({ rejectResume: true });
+    s.director.update(frame({ phase: "idle", dt: 0 })); // the bed waits for unlock
+    await s.audio.unlock(); // starts its voice, then the resume is refused
+    expect(s.sourcesOf("ambience-surface")).toHaveLength(1);
+    expect(s.run("ambience-surface", 6, 0.3)).toEqual([0, 0, 0, 0, 0, 0]);
+    s.context.rejectResume = false;
+    await s.audio.unlock();
+    expect(s.run("ambience-surface", 4, 0.3)).toEqual([0.25, 0.5, 0.75, 1]);
+    expect(s.sourcesOf("ambience-surface")).toHaveLength(1);
+  });
+
+  it("D8: repeated wake() never duplicates a voice nor moves the fade", async () => {
+    const s = directStack();
+    s.director.update(frame({ phase: "idle", dt: 0 }));
+    for (let i = 0; i < 3; i++) s.director.wake();
+    expect(s.sourcesOf("ambience-surface")).toEqual([]);
+    await s.audio.unlock();
+    for (let i = 0; i < 3; i++) s.director.wake();
+    expect(s.sourcesOf("ambience-surface")).toHaveLength(1);
+    expect(s.gainOf("ambience-surface")).toBe(0);
+    expect(s.run("ambience-surface", 1, 0.3)).toEqual([0.25]);
+    for (let i = 0; i < 3; i++) s.director.wake();
+    expect(s.gainOf("ambience-surface")).toBe(0.25);
+    expect(s.run("ambience-surface", 1, 0.3)).toEqual([0.5]);
+    expect(s.sourcesOf("ambience-surface")).toHaveLength(1);
+  });
+
+  it("D10: a bed dropped by a phase change while pending never starts", async () => {
+    const s = directStack();
+    s.director.update(frame({ phase: "idle" }));
+    s.director.update(frame({ phase: "diving" })); // the waiting surface bed is stopped
+    await s.audio.unlock();
+    expect(s.sourcesOf("ambience-surface")).toEqual([]);
+    expect(s.sourcesOf("ambience-underwater")).toHaveLength(1);
+    expect(s.sourcesOf("chain-rattle")).toHaveLength(1);
+  });
+
+  it("D10: dispose() while pending: the loop never starts; pause() while pending: only the new handle starts", async () => {
+    const disposed = directStack();
+    disposed.director.update(frame({ phase: "idle" }));
+    disposed.director.dispose();
+    await disposed.audio.unlock();
+    expect(disposed.context.sources.filter((source) => source.loop)).toEqual([]);
+
+    const paused = directStack();
+    paused.director.update(frame({ phase: "idle" }));
+    paused.director.pause();
+    paused.director.update(frame({ phase: "idle" }));
+    await paused.audio.unlock();
+    expect(paused.sourcesOf("ambience-surface")).toHaveLength(1);
+    expect(paused.gainOf("ambience-surface")).toBe(0);
+  });
+
+  it("D10: a director disposed while its bed waits for decoding never starts it when the cue becomes ready", async () => {
+    const stack = realStack(withTestAssets());
+    stack.bank.onReady(() => stack.director.wake());
+    await stack.audio.unlock();
+    stack.director.update(frame({ phase: "idle" }));
+    stack.director.dispose();
+    void stack.bank.load("ambience-surface");
+    await settle();
+    stack.fetch.for("test://ambience-surface")[0].ok();
+    await settle();
+    stack.context.decodes[0].succeed(fakeBuffer(20));
+    await settle();
+    expect(stack.bank.status("ambience-surface")).toBe("ready");
+    expect(stack.context.sources.filter((source) => source.loop)).toEqual([]);
   });
 });

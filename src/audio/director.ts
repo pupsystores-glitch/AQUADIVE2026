@@ -28,6 +28,14 @@
 //   rebuilds the rattle and the underwater bed without replaying the splash.
 //   The director keeps at most one handle per loop cue, and stops every
 //   handle before dropping it (docs/08 §7.2 caller obligation).
+// - **A loop starts with its values (A4a.1).** `loop(cue, options)` gets the
+//   initial gain, rate and filter, so a voice never starts loud, unfiltered
+//   or at the wrong rate (docs/08 §14 risk 15). A bed starts at gain 0.
+// - **A bed's fade-in advances only while it is audible (A4a.1).** Its level
+//   rises by `dt` only on frames where `handle.isAudible()` is true, so a bed
+//   waiting for unlock, decoding or a slot, or held by mute, host suspension,
+//   an interruption or a pending or refused resume, makes no fade progress
+//   and starts from silence (docs/08 §14 risk 15b).
 // - **A loop handle is called only when its value moves past a threshold**
 //   (each handle call reschedules automation in the manager). `wake()`
 //   re-applies every value: the A4b host calls it on the sound bank's
@@ -53,7 +61,7 @@
 // facade (docs/08 §6 import rule).
 
 import type { EngineEventMap, EnginePublicState } from "@/engine";
-import type { AudioManager, LoopHandle, PlayOptions } from "./audio-manager";
+import type { AudioManager, LoopHandle, LoopOptions, PlayOptions } from "./audio-manager";
 import type { CueId, LoopCueId, OneShotCueId } from "./manifest";
 
 // ----- inputs -----
@@ -284,7 +292,7 @@ function cuesFor(event: BufferedEvent): readonly OneShot[] {
 interface LiveLoop {
   readonly cue: LoopCueId;
   readonly handle: LoopHandle;
-  /** Bed fade-in, 0..1; the rattle is always 1. */
+  /** Bed fade-in, 0..1, advanced only while the handle is audible (A4a.1); the rattle is always 1. */
   level: number;
   /** The values last sent to the handle; undefined until sent. */
   gain?: number;
@@ -386,6 +394,37 @@ export function createAudioDirector(
     if (guard("loop filter", () => live.handle.setFilter(hz))) live.filter = hz;
   };
 
+  /** A4a.1: the handle's playback predicate; a throw counts as not audible, so the bed stays quiet. */
+  const audible = (live: LiveLoop): boolean => {
+    let result = false;
+    guard("loop audible", () => {
+      result = live.handle.isAudible() === true;
+    });
+    return result;
+  };
+
+  /**
+   * Starts one loop with its initial values (A4a.1) and records them as sent,
+   * so the same frame makes no redundant handle call.
+   */
+  const startLoop = (cue: LoopCueId, multiplier: number, depth: number) => {
+    const options: LoopOptions =
+      cue === "chain-rattle"
+        ? { gain: rattleGain(multiplier), rate: rattleRate(multiplier) }
+        : cue === "ambience-underwater"
+          ? { gain: 0, filterHz: underwaterFilterHz(depth) }
+          : { gain: 0 };
+    const handle = audio.loop(cue, options);
+    loops.set(cue, {
+      cue,
+      handle,
+      level: isBed(cue) ? 0 : 1,
+      gain: options.gain,
+      rate: options.rate,
+      filter: options.filterHz,
+    });
+  };
+
   const runFrame = (frame: AudioFrame) => {
     const dt = Number.isFinite(frame.dt) && frame.dt > 0 ? frame.dt : 0;
     const phase = frame.phase;
@@ -393,10 +432,12 @@ export function createAudioDirector(
     const boost = Number.isFinite(frame.boost) ? frame.boost : 0;
     const wanted = LOOPS_BY_PHASE[phase] ?? [];
 
-    // 1. Time: the duck and the bed fade-ins advance by dt.
+    // 1. Time: the duck and the bed fade-ins advance by dt; a bed only while audible (A4a.1).
     duckElapsed += dt;
     for (const live of loops.values()) {
-      if (isBed(live.cue)) live.level = Math.min(1, live.level + dt / BED_CROSSFADE_S);
+      if (isBed(live.cue) && live.level < 1 && audible(live)) {
+        live.level = Math.min(1, live.level + dt / BED_CROSSFADE_S);
+      }
     }
 
     // 2. One-shots, merged per cue id: buffered events, then state edges.
@@ -435,15 +476,15 @@ export function createAudioDirector(
       const live = loops.get(cue);
       if (live && !wanted.includes(cue)) stopLoop(live, fadeFor(cue, phase));
     }
+    // The filter depth and the duck come first: a new loop starts with them (A4a.1).
+    if (phase === "diving" || filterDepth === null) filterDepth = safeDepth(frame.depthRatio);
+    const depth = filterDepth;
+    const duck = duckFactor(duckElapsed);
     for (const cue of wanted) {
       if (loops.has(cue)) continue;
-      guard("loop start", () => {
-        loops.set(cue, { cue, handle: audio.loop(cue), level: isBed(cue) ? 0 : 1 });
-      });
+      guard("loop start", () => startLoop(cue, multiplier, depth));
     }
 
-    if (phase === "diving" || filterDepth === null) filterDepth = safeDepth(frame.depthRatio);
-    const duck = duckFactor(duckElapsed);
     for (const cue of wanted) {
       const live = loops.get(cue);
       if (!live) continue;

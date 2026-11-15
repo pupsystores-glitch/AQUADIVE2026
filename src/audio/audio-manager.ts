@@ -23,7 +23,10 @@
 //   `stop()` is never taken as proof. One-shots never take a loop slot. A
 //   loop that cannot start yet (before unlock, cue not loaded, pool full)
 //   waits as a pending loop and starts once it fits; an essential loop is
-//   never preempted.
+//   never preempted. A loop may be given its initial gain, rate and filter
+//   (`LoopOptions`, A4a.1): they are on the nodes before its source starts,
+//   at once or after waiting. `LoopHandle.isAudible()` (A4a.1) is a pure
+//   query: does this loop's voice play on a running context right now.
 // - The run state. The context runs only while it is unlocked, not muted
 //   and not suspended by the host (§3.3 steps 3–4: visibility / pagehide
 //   suspend, visible-again resume "if unlocked and not muted").
@@ -223,6 +226,22 @@ export interface PlayOptions {
 }
 
 /**
+ * Initial values of a loop voice (A4a.1, docs/08 §7.2). Each is checked
+ * exactly like its `LoopHandle` setter; a missing or invalid value keeps the
+ * default. They are on the voice's nodes before its source starts, whether
+ * the loop starts at once or after waiting (unlock, decoding, a loop slot).
+ * A setter called while the loop waits replaces the value.
+ */
+export interface LoopOptions {
+  /** 0..1, default 1. Multiplied with the cue's gain. A non-finite gain keeps the default. */
+  readonly gain?: number;
+  /** MIN_PLAYBACK_RATE..MAX_PLAYBACK_RATE, default 1. A non-finite or non-positive rate keeps the default. */
+  readonly rate?: number;
+  /** Low-pass cutoff in Hz, clamped to MIN_FILTER_HZ..Nyquist when applied; default Nyquist (transparent). */
+  readonly filterHz?: number;
+}
+
+/**
  * Control of one looping voice (A1.2, docs/08 §7.2). While the loop waits to
  * start (pending) the handle keeps its gain, rate and filter and applies them
  * when the voice starts. Every method is a no-op once the loop has stopped.
@@ -236,6 +255,23 @@ export interface LoopHandle {
   setFilter(frequencyHz: number): void;
   /** Fade out over `fadeS` seconds (0: at once), then stop. A pending loop is cancelled and never starts. */
   stop(fadeS: number): void;
+  /**
+   * A4a.1: true while this loop has a started voice and the context is
+   * unlocked, not muted, not host-suspended and in state "running". False
+   * while the loop is pending (before unlock, cue not loaded, pool full),
+   * after a preemption until it restarts, after `stop()`, once disposed, while
+   * interrupted, while a resume is in progress or after it was refused, and on
+   * the inert handle.
+   *
+   * An operational predicate for playback and fade progression (the director
+   * advances a bed's fade-in only while it is true). It is not a measurement
+   * of physical sound output: bus gains, the loop's own gain and the
+   * limiter are not considered, and `context.state` may lag the hardware.
+   *
+   * A pure status query: it never starts a pending loop, reclaims a voice,
+   * creates a node or schedules automation.
+   */
+  isAudible(): boolean;
 }
 
 export interface AudioManager<CueKey extends string = string> {
@@ -251,9 +287,11 @@ export interface AudioManager<CueKey extends string = string> {
    * while the cue is not loaded, or while the loop pool is full) it waits as
    * a pending loop and starts once it fits, until its handle is stopped or the
    * manager is disposed. The caller stops every handle it no longer wants.
-   * Inert once disposed or when Web Audio is unavailable.
+   * Inert once disposed or when Web Audio is unavailable. `options` (A4a.1)
+   * are the voice's initial gain, rate and filter; without them it starts at
+   * gain 1, rate 1 and a transparent filter, as before.
    */
-  loop(cue: CueKey): LoopHandle;
+  loop(cue: CueKey, options?: LoopOptions): LoopHandle;
   /**
    * Decodes compressed audio (for example a fetched `.m4a`) with the
    * manager's single context. Never rejects; resolves `null` on a decoding
@@ -374,6 +412,7 @@ const INERT_HANDLE: LoopHandle = Object.freeze({
   setRate: () => {},
   setFilter: () => {},
   stop: () => {},
+  isAudible: () => false,
 });
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -515,16 +554,20 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     this.startVoice(resolved, "oneShot", null, opts);
   }
 
-  loop(cue: CueKey): LoopHandle {
+  loop(cue: CueKey, options?: LoopOptions): LoopHandle {
     if (this.disposed || this.unsupported) return INERT_HANDLE;
+    // A4a.1: the initial values, checked like their setters, are stored on the
+    // request before it can start, so they are on the nodes before start().
+    const initial = typeof options === "object" && options !== null ? options : undefined;
+    const filterHz = initial?.filterHz;
     const request: LoopRequest<CueKey> = {
       cue,
       order: this.nextOrder++,
       status: "pending",
       voice: null,
-      gain: 1,
-      rate: 1,
-      filterHz: null,
+      gain: unitGain(initial?.gain, 1),
+      rate: playbackRate(initial?.rate),
+      filterHz: typeof filterHz === "number" && Number.isFinite(filterHz) ? filterHz : null,
     };
     this.pending.push(request);
     this.refresh(); // starts it at once when it fits
@@ -1099,6 +1142,15 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
         if (voice) this.stopVoice(voice, fadeS);
         this.refresh();
       },
+      // A4a.1: reads state only; no refresh(), so a pending loop is never promoted here.
+      isAudible: () =>
+        !this.disposed &&
+        request.status === "playing" &&
+        request.voice !== null &&
+        request.voice.state === "playing" &&
+        this.audible() &&
+        this.context !== null &&
+        this.context.state === "running",
     };
   }
 

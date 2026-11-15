@@ -1352,6 +1352,343 @@ describe("dispose", () => {
   });
 });
 
+// ----- loop startup (A4a.1, docs/08 §7.2, §14 risks 15 and 15b) -----
+
+/** Records each loop source's gain, rate and filter at the moment its `start()` is called. */
+const recordStarts = (context: FakeAudioContext) => {
+  const starts: { gain: number; rate: number; filter: number; automations: number }[] = [];
+  const create = context.createBufferSource.bind(context);
+  context.createBufferSource = () => {
+    const source = create();
+    const start = source.start.bind(source);
+    source.start = (when?: number) => {
+      if (!context.buffers.includes(source.buffer as never)) {
+        const gain = voiceGainOf(source);
+        const filter = context.filters.at(-1);
+        starts.push({
+          gain: gain.gain.value,
+          rate: source.playbackRate.value,
+          filter: filter?.frequency.value ?? Number.NaN,
+          automations:
+            gain.gain.automation.length +
+            source.playbackRate.automation.length +
+            (filter?.frequency.automation.length ?? 0),
+        });
+      }
+      start(when);
+    };
+    return source;
+  };
+  return starts;
+};
+
+/** The newest loop voice's gain, rate and filter values. */
+const loopValues = (context: FakeAudioContext) => {
+  const source = voiceSources(context)
+    .filter((s) => s.loop)
+    .at(-1) as FakeAudioBufferSourceNode;
+  const gain = voiceGainOf(source);
+  const filter = context.filters.find((f) => gain.connections[0] === f);
+  return {
+    gain: gain.gain.value,
+    rate: source.playbackRate.value,
+    filter: filter?.frequency.value,
+  };
+};
+
+describe("loop options (A4a.1)", () => {
+  const NYQUIST = 24_000;
+
+  it("M1: loop(cue) without options keeps cue gain × 1, rate 1 and a transparent filter, with no automation", async () => {
+    for (const options of [[], [undefined]] as const) {
+      const { audio, context } = setup();
+      await audio.unlock();
+      const starts = recordStarts(context);
+      audio.loop("rattle", ...options);
+      expect(starts).toEqual([{ gain: 0.5, rate: 1, filter: NYQUIST, automations: 0 }]);
+      expect(loopValues(context)).toEqual({ gain: 0.5, rate: 1, filter: NYQUIST });
+    }
+  });
+
+  it("M2: an immediate start has its initial values on the nodes before start(), with no automation before the first setter", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const starts = recordStarts(context);
+    const handle = audio.loop("rattle", { gain: 0, rate: 1.5, filterHz: 900 });
+    expect(starts).toEqual([{ gain: 0, rate: 1.5, filter: 900, automations: 0 }]);
+    const [source] = voiceSources(context);
+    expect(voiceGainOf(source).gain.automation).toEqual([]);
+    expect(source.playbackRate.automation).toEqual([]);
+    expect(context.filters[0].frequency.automation).toEqual([]);
+    handle.setGain(0.5);
+    expect(voiceGainOf(source).gain.lastTarget()?.value).toBe(0.25);
+  });
+
+  it.each([
+    ["gain 2", { gain: 2 }, { gain: 0.5, rate: 1, filter: NYQUIST }],
+    ["gain -1", { gain: -1 }, { gain: 0, rate: 1, filter: NYQUIST }],
+    ["gain NaN", { gain: Number.NaN }, { gain: 0.5, rate: 1, filter: NYQUIST }],
+    ["gain Infinity", { gain: Number.POSITIVE_INFINITY }, { gain: 0.5, rate: 1, filter: NYQUIST }],
+    ["rate 0", { rate: 0 }, { gain: 0.5, rate: 1, filter: NYQUIST }],
+    ["rate -2", { rate: -2 }, { gain: 0.5, rate: 1, filter: NYQUIST }],
+    ["rate NaN", { rate: Number.NaN }, { gain: 0.5, rate: 1, filter: NYQUIST }],
+    ["rate 10", { rate: 10 }, { gain: 0.5, rate: MAX_PLAYBACK_RATE, filter: NYQUIST }],
+    ["rate 0.1", { rate: 0.1 }, { gain: 0.5, rate: MIN_PLAYBACK_RATE, filter: NYQUIST }],
+    ["filterHz 5", { filterHz: 5 }, { gain: 0.5, rate: 1, filter: MIN_FILTER_HZ }],
+    ["filterHz 1e6", { filterHz: 1e6 }, { gain: 0.5, rate: 1, filter: NYQUIST }],
+    ["filterHz NaN", { filterHz: Number.NaN }, { gain: 0.5, rate: 1, filter: NYQUIST }],
+    [
+      "filterHz -Infinity",
+      { filterHz: Number.NEGATIVE_INFINITY },
+      { gain: 0.5, rate: 1, filter: NYQUIST },
+    ],
+    [
+      "non-numbers",
+      { gain: "0", rate: "2", filterHz: "900" },
+      { gain: 0.5, rate: 1, filter: NYQUIST },
+    ],
+    ["null options", null, { gain: 0.5, rate: 1, filter: NYQUIST }],
+  ])("M3: %s is checked like its setter", async (_label, options, expected) => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    audio.loop("rattle", options as never);
+    expect(loopValues(context)).toEqual(expected);
+  });
+
+  it("M4: a loop requested before unlock starts at unlock with its initial values on the nodes before start()", async () => {
+    const { audio, context, createContext } = setup();
+    audio.loop("rattle", { gain: 0, rate: 0.85, filterHz: 6000 });
+    expect(createContext).not.toHaveBeenCalled();
+    const starts = recordStarts(context);
+    await audio.unlock();
+    expect(starts).toEqual([{ gain: 0, rate: 0.85, filter: 6000, automations: 0 }]);
+  });
+
+  it("M5: a loop waiting for its cue starts with its initial values when the cue resolves", async () => {
+    let bed: ResolvedCue | null = null;
+    const context = new FakeAudioContext();
+    const audio = createAudioManager<"bed">({
+      resolveCue: () => bed,
+      createContext: () => context,
+    });
+    await audio.unlock();
+    const starts = recordStarts(context);
+    const handle = audio.loop("bed", { gain: 0, filterHz: 1200 });
+    expect(starts).toEqual([]);
+    bed = CUES.bed ?? null; // the sound bank finished decoding
+    handle.setGain(0); // the next manager call starts it (the director's wake())
+    expect(starts).toEqual([{ gain: 0, rate: 1, filter: 1200, automations: 0 }]);
+  });
+
+  it("M6: a loop waiting for a slot starts with its initial values when the full loop pool frees one", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const drones = Array.from({ length: LOOP_VOICES }, () => audio.loop("drone"));
+    const starts = recordStarts(context);
+    audio.loop("rattle", { gain: 0.2, rate: 2, filterHz: 700 });
+    expect(starts).toEqual([]);
+    drones[0].stop(0);
+    voiceSources(context)[0].end(); // the slot frees
+    expect(starts).toEqual([{ gain: 0.1, rate: 2, filter: 700, automations: 0 }]); // 0.5 × 0.2
+    expectStrictCap(context);
+  });
+
+  it("M7: a setter called while the loop waits replaces its initial value", async () => {
+    const { audio, context } = setup();
+    const handle = audio.loop("rattle", { gain: 0.2, rate: 2, filterHz: 500 });
+    handle.setGain(0.8);
+    handle.setFilter(3000);
+    await audio.unlock();
+    expect(loopValues(context)).toEqual({ gain: 0.4, rate: 2, filter: 3000 });
+  });
+});
+
+describe("LoopHandle.isAudible() (A4a.1)", () => {
+  it("M8: false while pending (unlock, cue, slot); true while playing; false after stop and dispose and on the inert handle", async () => {
+    let late: ResolvedCue | null = null;
+    const context = new FakeAudioContext();
+    const audio = createAudioManager<Cue>({
+      resolveCue: (cue) => (cue === "missing" ? late : (CUES[cue] ?? null)),
+      createContext: () => context,
+    });
+    const beforeUnlock = audio.loop("rattle");
+    expect(beforeUnlock.isAudible()).toBe(false);
+    await audio.unlock();
+    expect(beforeUnlock.isAudible()).toBe(true);
+
+    const waitingForCue = audio.loop("missing");
+    expect(waitingForCue.isAudible()).toBe(false);
+    late = CUES.drone ?? null;
+    expect(waitingForCue.isAudible()).toBe(false); // a query does not start it
+    waitingForCue.setGain(1);
+    expect(waitingForCue.isAudible()).toBe(true);
+
+    const fill = Array.from({ length: LOOP_VOICES - 2 }, () => audio.loop("drone"));
+    expect(fill.every((handle) => handle.isAudible())).toBe(true);
+    const waitingForSlot = audio.loop("drone");
+    expect(waitingForSlot.isAudible()).toBe(false);
+
+    beforeUnlock.stop(0);
+    expect(beforeUnlock.isAudible()).toBe(false); // stopped, even while its source has not ended
+    voiceSources(context)[0].end();
+    expect(waitingForSlot.isAudible()).toBe(true);
+
+    audio.dispose();
+    for (const handle of [waitingForCue, waitingForSlot, ...fill]) {
+      expect(handle.isAudible()).toBe(false);
+    }
+
+    silenceConsole();
+    const inert = createAudioManager<Cue>({ resolveCue: () => null, createContext: () => null });
+    await inert.unlock();
+    expect(inert.loop("rattle").isAudible()).toBe(false);
+    const disposed = setup();
+    disposed.audio.dispose();
+    expect(disposed.audio.loop("rattle").isAudible()).toBe(false);
+  });
+
+  it("M8: false after a preemption, true again once the preempted loop restarts", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    for (const prime of primesOf(context)) prime.end();
+    const drones = Array.from({ length: LOOP_VOICES }, () => audio.loop("drone"));
+    expect(drones[0].isAudible()).toBe(true);
+    const bed = audio.loop("bed");
+    expect(bed.isAudible()).toBe(true);
+    expect(drones[0].isAudible()).toBe(false); // preempted: pending, its old voice fading in the tail
+    const old = voiceSources(context)[0];
+    drones[1].stop(0);
+    voiceSources(context)[1].end(); // a slot frees while the old voice still fades
+    expect(drones[0].isAudible()).toBe(false);
+    old.end();
+    expect(drones[0].isAudible()).toBe(true); // restarted
+    expectStrictCap(context);
+  });
+
+  it("M9: false while muted, host-suspended or interrupted; true again after unmute, resume, a system resume or a new gesture", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const handle = audio.loop("bed");
+    expect(handle.isAudible()).toBe(true);
+    audio.setMuted(true);
+    expect(handle.isAudible()).toBe(false);
+    audio.setMuted(false);
+    expect(handle.isAudible()).toBe(true);
+    audio.suspend();
+    expect(handle.isAudible()).toBe(false);
+    audio.resume();
+    expect(handle.isAudible()).toBe(true);
+    context.interrupt();
+    expect(handle.isAudible()).toBe(false);
+    context.systemResume();
+    expect(handle.isAudible()).toBe(true);
+    context.interrupt();
+    expect(handle.isAudible()).toBe(false);
+    await audio.unlock();
+    expect(handle.isAudible()).toBe(true);
+  });
+
+  it("M9: the run flags count at once, before the context state catches up (a real suspend() settles later)", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const handle = audio.loop("bed");
+    context.suspend = () => Promise.resolve(); // the state stays "running" for now
+    audio.setMuted(true);
+    expect(context.state).toBe("running");
+    expect(handle.isAudible()).toBe(false);
+    audio.setMuted(false);
+    audio.suspend();
+    expect(context.state).toBe("running");
+    expect(handle.isAudible()).toBe(false);
+    audio.resume();
+    expect(handle.isAudible()).toBe(true);
+  });
+
+  it("M10: false while a resume is in progress and after it is refused; true once a resume completes", async () => {
+    const { warn } = silenceConsole();
+    const pending = setup({ context: { resumeMode: "manual" } });
+    const unlocking = pending.audio.unlock();
+    const handle = pending.audio.loop("bed");
+    expect(voiceSources(pending.context)).toHaveLength(1); // the voice has started
+    expect(pending.context.pendingResumeCount).toBe(1);
+    expect(handle.isAudible()).toBe(false);
+    pending.context.completeResume();
+    expect(handle.isAudible()).toBe(true);
+    await unlocking;
+    expect(handle.isAudible()).toBe(true);
+
+    const refused = setup({ context: { resumeMode: "manual" } });
+    const failing = refused.audio.unlock();
+    const bed = refused.audio.loop("bed");
+    refused.context.failResume();
+    await failing;
+    expect(bed.isAudible()).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    const rejected = setup({ context: { rejectResume: true } });
+    await rejected.audio.unlock();
+    const other = rejected.audio.loop("bed");
+    expect(other.isAudible()).toBe(false);
+    rejected.context.rejectResume = false;
+    await rejected.audio.unlock();
+    expect(other.isAudible()).toBe(true);
+    expect(voiceSources(rejected.context)).toHaveLength(1); // no duplicate voice
+  });
+
+  it("M10: a voice started under a resume that is later refused stays not audible until a resume succeeds", async () => {
+    silenceConsole();
+    const { audio, context } = setup({ context: { resumeMode: "manual" } });
+    const handle = audio.loop("bed"); // waits for unlock
+    const first = audio.unlock(); // starts the voice, then the resume is refused
+    expect(voiceSources(context)).toHaveLength(1);
+    context.failResume();
+    await first;
+    expect(handle.isAudible()).toBe(false);
+    const second = audio.unlock();
+    expect(handle.isAudible()).toBe(false); // in progress
+    context.completeResume();
+    await second;
+    expect(handle.isAudible()).toBe(true);
+    expect(voiceSources(context)).toHaveLength(1);
+  });
+
+  it("M11: a pure query: no context, resolve, node, automation, run-state change, promotion or reclaim", async () => {
+    const { audio, context, createContext, resolveCue } = setup();
+    const early = audio.loop("rattle", { gain: 0.3 });
+    for (let i = 0; i < 10; i++) early.isAudible();
+    expect(createContext).not.toHaveBeenCalled();
+    expect(resolveCue).not.toHaveBeenCalled();
+
+    await audio.unlock();
+    for (const prime of primesOf(context)) prime.end();
+    const handles = Array.from({ length: LOOP_VOICES - 1 }, () => audio.loop("drone"));
+    const waiting = audio.loop("drone");
+    expect(waiting.isAudible()).toBe(false);
+    handles[0].stop(0.5); // a stopping loop, reclaimable by the clock after its fade
+    context.advance(1);
+    const snapshot = () => ({
+      nodes: [context.gains.length, context.filters.length, context.sources.length],
+      automations: context.sources.map(
+        (s) =>
+          s.playbackRate.automation.length +
+          ((s.connections[0] as FakeGainNode | undefined)?.gain?.automation.length ?? 0),
+      ),
+      held: heldSources(context).length,
+      resolves: resolveCue.mock.calls.length,
+      runState: [context.resumeCalls, context.suspendCalls, context.state],
+    });
+    const before = snapshot();
+    for (let i = 0; i < 10; i++) {
+      for (const handle of [early, waiting, ...handles]) handle.isAudible();
+    }
+    expect(snapshot()).toEqual(before);
+    // The clock would free a slot, but a query never reclaims or promotes.
+    expect(waiting.isAudible()).toBe(false);
+    waiting.setGain(1); // any manager call does
+    expect(waiting.isAudible()).toBe(true);
+  });
+});
+
 // ----- decode (A1.1, docs/08 §7) -----
 
 /** Lets every pending promise callback and timer of the current turn run. */

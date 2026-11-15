@@ -26,6 +26,12 @@
 // `decodeStyle` picks the API form: "both" (current browsers: callbacks and
 // a promise), "promise" (callbacks ignored) or "callback" (older WebKit: no
 // promise is returned).
+//
+// Resume (A4a.1): `resumeMode` "immediate" (the default, the behavior above)
+// or "manual". In "manual", `resume()` returns a promise that stays pending
+// and leaves the state unchanged until the test calls `completeResume()`
+// (state "running", then every pending resume resolves) or `failResume()`
+// (every pending resume rejects; the state is unchanged).
 
 import type {
   AudioBufferLike,
@@ -257,12 +263,17 @@ export class FakeDecodeRequest {
   }
 }
 
+/** How `resume()` settles: see the file header (A4a.1). */
+export type FakeResumeMode = "immediate" | "manual";
+
 export interface FakeAudioContextOptions {
   /** Initial state; a real context created outside a gesture starts "suspended". */
   readonly state?: string;
   readonly sampleRate?: number;
   /** When true, `resume()` rejects and the state does not change. */
   readonly rejectResume?: boolean;
+  /** How `resume()` settles (A4a.1); "immediate" by default. See the file header. */
+  readonly resumeMode?: FakeResumeMode;
   /** The `decodeAudioData` API form; "both" by default. */
   readonly decodeStyle?: FakeDecodeStyle;
   /** When true, `decodeAudioData` throws synchronously. */
@@ -276,6 +287,7 @@ export class FakeAudioContext implements AudioContextLike {
   readonly destination = new FakeAudioNode("destination");
 
   rejectResume: boolean;
+  resumeMode: FakeResumeMode;
   decodeStyle: FakeDecodeStyle;
   throwOnDecode: boolean;
   readonly decodes: FakeDecodeRequest[] = [];
@@ -290,11 +302,14 @@ export class FakeAudioContext implements AudioContextLike {
   readonly buffers: FakeAudioBuffer[] = [];
 
   private readonly stateListeners = new Set<() => void>();
+  /** "manual" resume mode: the settlers of every resume still in progress. */
+  private readonly pendingResumes: { resolve: () => void; reject: (error: unknown) => void }[] = [];
 
   constructor(options: FakeAudioContextOptions = {}) {
     this.state = options.state ?? "suspended";
     this.sampleRate = options.sampleRate ?? 48_000;
     this.rejectResume = options.rejectResume ?? false;
+    this.resumeMode = options.resumeMode ?? "immediate";
     this.decodeStyle = options.decodeStyle ?? "both";
     this.throwOnDecode = options.throwOnDecode ?? false;
   }
@@ -349,8 +364,27 @@ export class FakeAudioContext implements AudioContextLike {
     this.resumeCalls++;
     if (this.state === "closed") return Promise.reject(new Error("InvalidStateError: closed"));
     if (this.rejectResume) return Promise.reject(new Error("NotAllowedError: no user gesture"));
+    if (this.resumeMode === "manual") {
+      return new Promise<void>((resolve, reject) => this.pendingResumes.push({ resolve, reject }));
+    }
     this.setState("running");
     return Promise.resolve();
+  }
+
+  /** "manual" resume mode: resume() calls not settled yet. */
+  get pendingResumeCount(): number {
+    return this.pendingResumes.length;
+  }
+
+  /** "manual" resume mode: the context starts running, then every pending resume resolves. */
+  completeResume(): void {
+    if (this.state !== "closed") this.setState("running");
+    for (const pending of this.pendingResumes.splice(0)) pending.resolve();
+  }
+
+  /** "manual" resume mode: every pending resume rejects; the state does not change. */
+  failResume(error: unknown = new Error("NotAllowedError: resume refused")): void {
+    for (const pending of this.pendingResumes.splice(0)) pending.reject(error);
   }
 
   suspend(): Promise<void> {
