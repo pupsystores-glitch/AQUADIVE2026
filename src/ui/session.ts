@@ -43,6 +43,19 @@
 // refuse the second under W3, splitting engine and wallet — I8). A slot's
 // own repeated submissions are not reserved against each other: the engine
 // rejects all but one, so single-slot behavior is unchanged.
+//
+// Since A4b (Phase 7, docs/08 §3.3, §7) the session also owns the sound
+// settings store and one audio host (src/ui/audio-host.ts, the only UI
+// module that imports src/audio). The host is constructed here, last — its
+// director subscribes to the engine bus after every settlement listener and
+// is paused at once — and touches no global until a canvas attaches.
+// attachCanvas attaches it (settings restore + apply, one bank load,
+// gesture and visibility listeners) before the driver starts, and the
+// driver's sync hands it the frame's projections after the round-store
+// write: the public state already passed to sync, plus the render state and
+// time the frame callback received, so no extra engine read is made. The
+// host never throws, so audio cannot stop the rAF loop or settlement.
+// dispose() ends the audio subsystem only.
 
 import {
   BET_SLOTS,
@@ -55,7 +68,8 @@ import {
   type RoundAuthority,
 } from "@/engine";
 import { DEFAULT_BET } from "@/game/constants";
-import { SceneRenderer } from "@/rendering/scene-renderer";
+import { SceneRenderer, type RenderState, type RenderTime } from "@/rendering/scene-renderer";
+import { createAudioHost, type AudioHost, type AudioHostOptions } from "@/ui/audio-host";
 import { fitScene, type SceneViewport } from "@/ui/scene-fit";
 import { createBetInputStore, type BetInputStore } from "@/ui/store/bet-input-store";
 import {
@@ -65,6 +79,11 @@ import {
   type RejectionLogger,
 } from "@/ui/store/notification-store";
 import { createRoundStore, type RoundStore } from "@/ui/store/round-store";
+import {
+  createSoundSettingsStore,
+  type SoundSettingsStorageResolver,
+  type SoundSettingsStore,
+} from "@/ui/store/sound-settings-store";
 import {
   createWalletStore,
   isPlaceableStake,
@@ -89,6 +108,10 @@ export interface GameSessionDeps {
   diagnosticsLog?: RejectionLogger;
   /** Wallet-refusal diagnostics sink (M1, W9). Default console.warn. Effective only with `diagnostics` in DEV builds. */
   walletDiagnosticsLog?: (message: string, refusal: WalletRefusal) => void;
+  /** A4b test seam: audio host options (context factory, fetch, manifest, environment, component factories). Default: the browser's, resolved lazily. */
+  audio?: Omit<AudioHostOptions, "events" | "settings">;
+  /** A4b test seam: sound settings storage. Default: the global `localStorage`, resolved at call time. */
+  soundSettingsStorage?: SoundSettingsStorageResolver;
 }
 
 export interface GameSession {
@@ -104,6 +127,18 @@ export interface GameSession {
   readonly betInputs: readonly [BetInputStore, BetInputStore];
   /** The rAF/wall-clock owner. Exposed for tests; production code attaches only via attachCanvas. */
   readonly driver: EngineDriver;
+  /** A4b: mute and volumes (docs/08 §3.5): session-scoped; restored on the first attach; the audio host applies every change. */
+  readonly soundSettings: SoundSettingsStore;
+  /** A4b: the audio subsystem (src/ui/audio-host.ts). Exposed for tests; attached only via attachCanvas. */
+  readonly audio: AudioHost;
+  /**
+   * A4b: disposes the AUDIO SUBSYSTEM ONLY (tests, HMR): the director's
+   * subscriptions, the browser listeners, the sound bank and the
+   * AudioManager (its context is closed). Idempotent. The engine, driver,
+   * wallet, notifications, round and bet-input stores, submit() and
+   * attachCanvas() keep working; a later attachCanvas renders silently.
+   */
+  dispose(): void;
   /**
    * Construct the renderer for this canvas, write the round store once from
    * the engine's current public state, and start the driver with
@@ -184,6 +219,11 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   const driver = new EngineDriver(engine);
   const createRenderer =
     deps.createRenderer ?? ((canvas: HTMLCanvasElement) => new SceneRenderer(canvas));
+  // A4b: sound settings (no storage read until restore) and the audio host,
+  // last: its director's listeners follow every settlement listener. Pure
+  // construction — no context, DOM, storage or fetch (SSR-safe).
+  const soundSettings = createSoundSettingsStore({ storage: deps.soundSettingsStorage });
+  const audio = createAudioHost({ ...deps.audio, events: engine.events, settings: soundSettings });
 
   return {
     engine,
@@ -192,6 +232,9 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     round: round.store,
     betInputs,
     driver,
+    soundSettings,
+    audio,
+    dispose: () => audio.dispose(),
     submit: (command) => {
       if (command.type === "placeBet") {
         if (!BET_SLOTS.includes(command.slot)) return;
@@ -217,8 +260,16 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
       // size costs one comparison per frame.
       let fitKey = "";
       let fit: SceneViewport = { width: 0, height: 0, dpr: 1 };
+      // A4b: audio attaches before the first frame (settings restored and
+      // applied before any gesture can unlock). It never throws.
+      const detachAudio = audio.attach();
+      // The frame's render projections, handed to audio in sync (no extra engine read).
+      let audioRender: RenderState | null = null;
+      let audioTime: RenderTime | null = null;
       driver.attach({
         frame: (state, time) => {
+          audioRender = state;
+          audioTime = time;
           const w = canvas.clientWidth;
           const h = canvas.clientHeight;
           const ratio = window.devicePixelRatio || 1;
@@ -230,11 +281,22 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
           renderer.resize(fit.width, fit.height, fit.dpr);
           renderer.frame(state, time);
         },
-        sync: round.write,
+        sync: (state) => {
+          round.write(state);
+          // After the round store: audio cannot delay or break the HUD write.
+          if (audioRender && audioTime) {
+            try {
+              audio.update({ render: audioRender, time: audioTime, state });
+            } catch {
+              // The host never throws; this keeps rAF safe even if it did.
+            }
+          }
+        },
       });
       return () => {
         driver.detach();
         renderer.dispose();
+        detachAudio();
       };
     },
   };

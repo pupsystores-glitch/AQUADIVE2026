@@ -110,6 +110,7 @@ Import rules (enforceable in review, grep-level), extending docs/05 §18 and doc
 - **No user-facing string literals in components** after U6 (§14); dev-only console output is exempt.
 - Wall-clock use in `src/ui`: notification timing only, inside the notification store (§12) — presentation timing is UI-owned per docs/06 §8. No UI code reads engine internals, clocks, or RNG for anything else.
 - The affordability check (docs/06 §3 — the one bet validation that is a wallet question) lives in the wallet store, invoked by the session's `submit` path — not in a component.
+- **Audio import exception (Phase 7, A4b, owner-ratified 2026-11-15; docs/08 §7.5):** `src/ui/audio-host.ts` is the only production `src/ui` module that imports `src/audio` (the AudioManager, SoundBank, director and manifest). `session.ts` imports the host, never `src/audio` directly; components import neither. Tests may import the audio test fakes.
 
 ## 7. Sanctioned Behavior Deltas
 
@@ -134,6 +135,7 @@ The only intended behavior changes of the entire sprint. Approval of this docume
 - `attachCanvas(canvas: HTMLCanvasElement): () => void` — constructs the `SceneRenderer`, calls `driver.attach` with `frame` = resize + render (verbatim from today's sink) and `sync` = round-store write; returns the detach that disposes the renderer and pauses the driver. The renderer remains per-canvas-mount (it holds the 2D context); everything else survives detach, exactly as the driver already guarantees (docs/06 §13).
 - `submit(command: EngineCommand)` — the single command edge for components; routes `placeBet` through the wallet store's affordability check (§6) and everything else straight through. The engine remains the validator of all round-state questions (D4). *(E-X3, `be10b19`: a `placeBet` or `cashOut` without slot 0 or 1 is dropped. Every forwarded `placeBet` stays in flight until the engine answers it with `betPlaced` or `commandRejected`. A bet is forwarded only if it is a placeable stake against the balance minus the other slot's largest stake in flight. So two bets submitted before the next tick can never together exceed the balance, which keeps the engine and the wallet consistent (I8, §23.12). A slot's own repeated submissions are not reserved against each other, because the engine rejects all but one of them.)*
 - *E-X3:* the session owns one bet-input store per slot, `betInputs: [slot 0, slot 1]`, replacing the single `betInput`.
+- *Phase 7, A4b (2026-11-15; docs/08 §7.5):* the session also owns the sound settings store (`soundSettings`) and one audio host (`audio`), constructed last and SSR-safe (no context, DOM, storage or fetch at construction; its director subscribes to the engine bus here, after every settlement listener, and is paused). `attachCanvas` attaches the host before the driver starts (settings restored once and applied, one bank load, gesture and visibility listeners) and detaches it in the returned detach. The driver's `sync` writes the round store, then hands the host the frame's render state and time (kept by `frame`) and the public state it was given — no extra engine read — inside a try/catch; the host itself never throws. `dispose()` disposes the **audio subsystem only**: the engine, driver, wallet, notifications, round and bet-input stores, `submit` and `attachCanvas` keep working. Test seams: `deps.audio`, `deps.soundSettingsStorage`.
 - Test seam: the module-scope singleton is assembled by an exported `createGameSession(deps)` factory (engine deps injectable — scripted authority, deterministic Rngs, manual tick driver). Production uses the module singleton; tests construct their own session. This is what makes §21's UI tests deterministic, and it costs nothing at runtime.
 
 ## 9. Store Model
@@ -153,7 +155,7 @@ The four stores and their single writers:
 | `round-store` | The session's round-store write only, by two paths: the driver's per-frame `sync` and the immediate write when `attachCanvas` attaches (§11) | Mirror of `EnginePublicState`: `phase`, `countdownSeconds`, `multiplier`, `boost`, `chests`, `chosenChestId`, `participant` (whose `bonusEligible` gates the picker since E-X1) |
 | `notification-store` | The wallet's flash trigger (`onFlash`), the round-transition events `bettingOpened`/`diveStarted`, its own timer; dev only: `commandRejected` (§12) | The active flash (kind + start + expiry; the amount is the wallet's `lastWin`), dev-only bounded rejection history |
 | `bet-input-store` | Betting-panel handlers only (−, +, the field, quick bets); no event or store subscription | The bet input value, always finite and ≥ 0 (session-owned since U5, starts at `DEFAULT_BET`, survives remount like everything else; halve/double/quick-set logic lives here, verbatim; `double` takes the balance as an argument at click time) |
-| `sound-settings-store` | User sound controls (`setMuted`, `toggleMuted`, `setVolume`) and its own one-time `restore()` from `localStorage`; no event or store subscription. *(Phase 7, A3, UI-X1; docs/08 §3.5. Not wired until A4.)* | `muted` and the linear 0..1 volumes `master`, `music`, `ambience`, `sfx` (defaults: on, all 1.0); persisted as one version-1 record, every storage access inside try/catch |
+| `sound-settings-store` | User sound controls (`setMuted`, `toggleMuted`, `setVolume`) and its own one-time `restore()` from `localStorage`; no event or store subscription. *(Phase 7, A3, UI-X1; docs/08 §3.5. Wired in A4b: session-owned, restored on the first canvas attach, applied to the AudioManager by the audio host before the first unlock and on every change.)* | `muted` and the linear 0..1 volumes `master`, `music`, `ambience`, `sfx` (defaults: on, all 1.0); persisted as one version-1 record, every storage access inside try/catch |
 
 *E-X3 (2026-11-14, `be10b19`):* the wallet's per-round fields (`roundBet`, `participating`, `hasCashed`, the settlement record, the slot's own `win`) move into `slots: [slot 0, slot 1]`. `balance`, `history`, `lastWin` (now the most recent event's combined credit) and the claims list stay shared. The round store mirrors `participants` (two entries) in place of `participant`. There are two bet-input stores, one per slot (`session.betInputs`). The single-writer rules are unchanged.
 
@@ -275,6 +277,8 @@ src/ui/
     round-store.ts              # EnginePublicState mirror (§11)
     notification-store.ts       # flashes + dev rejection surface (§12)
     bet-input-store.ts          # bet amount + stepper/quick-set logic (§9)
+    sound-settings-store.ts     # mute + volumes (Phase 7, A3)
+  audio-host.ts                 # Phase 7, A4b: the only src/ui module importing src/audio (§6)
   components/
     GameScreen.tsx              # screen composition + responsive layout (§13, §15)
     CanvasStage.tsx

@@ -2,7 +2,7 @@
 
 Audio system (roadmap Phase 7). Blueprint: `docs/08_AUDIO_FX_ARCHITECTURE.md`.
 
-**Status (2026-11-15, A4a.1):** `audio-manager.ts` exists: the generic core
+**Status (2026-11-15, A4b):** `audio-manager.ts` exists: the generic core
 (A1), its `decode()` interface (A1.1, docs/08 §7.1) and its voice pools and
 protected loops (A1.2, docs/08 §7.2), with the fake context and tests. A2 adds
 `manifest.ts` (the typed cue list) and `sound-bank.ts` (fetch, decode through
@@ -11,8 +11,9 @@ adds `director.ts`, the Audio Director core (docs/08 §7.4), with tests. A4a.1
 corrects loop startup: `loop(cue, options)` takes the initial gain, rate and
 filter, and the director fades a bed in only while its `LoopHandle.isAudible()`
 is true (docs/08 §7.2, §7.4).
-Nothing outside `src/audio` imports any of them yet; the session wiring is
-A4b. **No audio asset exists: every manifest entry has `asset: null`, so every
+A4b (2026-11-15) wires them: `src/ui/audio-host.ts`, the only production UI
+module that imports `src/audio`, constructs the manager, bank and director
+for each game session (docs/08 §7.5); no module here changed in A4b. **No audio asset exists: every manifest entry has `asset: null`, so every
 cue is unavailable and silent.** Each later step needs its own owner
 authorization.
 
@@ -40,8 +41,9 @@ Event-driven sound on the native Web Audio API, with no audio dependency
 - depth-based ambience: a low-pass whose cutoff falls as `depthRatio` rises.
 
 Volume and mute settings live in a UI-owned store
-(`src/ui/store/sound-settings-store.ts`, A3). The session will push them into
-the `AudioManager`, which is a passive sink (A4b). The director never touches
+(`src/ui/store/sound-settings-store.ts`, A3). The audio host pushes them into
+the `AudioManager`, a passive sink, before the first unlock and on every
+change (A4b). The director never touches
 bus gains or mute.
 
 ## Boundaries
@@ -50,8 +52,8 @@ bus gains or mute.
   (`engine.events`): `bettingOpened`, `betPlaced`, `diveStarted`,
   `cashedOut`, `crashed`, `shipImpact`, `chestsRevealed`, `chestPicked`
   (docs/06 §12). It also reads a narrow per-frame `AudioFrame`
-  `{ phase, depthRatio, multiplier, boost, dt }`, which the session will
-  assemble from engine public state (A4b). Countdown audio is deferred (Q9).
+  `{ phase, depthRatio, multiplier, boost, dt }`, which the audio host
+  assembles in the session's driver sink from the frame's projections (A4b). Countdown audio is deferred (Q9).
   Audio owns no game state.
 - **Never reads money.** Cues may depend on multipliers and phases, never on
   balances, stakes or wins.
@@ -60,7 +62,7 @@ bus gains or mute.
   goldfish pickup is detected as a rising edge of `boost`.
 - **Imports:** only its own modules, the type-only `@/engine` facade and
   `src/shared`. Never `src/ui`, `src/rendering` or React. Only
-  `src/ui/session.ts` constructs it.
+  `src/ui/audio-host.ts` constructs it, for the session (A4b).
 - **SSR-safe:** no `window`, `AudioContext` or `matchMedia` at module scope.
   No sound before a user gesture; silent but playable when Web Audio is
   unavailable or assets are missing.

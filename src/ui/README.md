@@ -8,7 +8,10 @@ Import rules (docs/07 §6): this layer imports only its own modules, the
 engine facade (`@/engine`), `SceneRenderer` + contract types from
 `src/rendering/scene-renderer`, `src/game`, `src/shared`, and the shadcn
 primitives. Nothing outside `src/ui` ever imports from it except the route
-and (mid-migration) the component shell.
+and (mid-migration) the component shell. **Audio import exception (Phase 7,
+A4b, owner-ratified):** `audio-host.ts` is the only production module here
+that imports `src/audio`; `session.ts` imports the host, and components
+import neither (docs/07 §6, docs/08 §7.5).
 
 Status — Sprint 4 in progress:
 
@@ -28,7 +31,8 @@ Status — Sprint 4 in progress:
 | `scene-fit.ts` | Sprint 4 QA fix D1 (uncommitted, pending owner acceptance) | Pure: the logical viewport the session passes to `renderer.resize` — a uniform zoom-out to ≥ 820 logical px on short stages so the idle ship stays visible; backing store at native resolution; renderer untouched |
 | `hooks/use-focus-rescue.ts` | Sprint 4 QA fixes D2–D3 (uncommitted, pending owner acceptance) | Keeps keyboard focus inside a slot panel or the chest picker when the focused control disables itself; reads no store |
 | responsive layout (§15) | U7 (`4440009`; gate 8 screenshot matrix pending) | `tab` / `desk` variants in `src/styles.css`; full-width tablet column; full-viewport landscape desktop grid with a right rail (V5, as corrected by the owner, §15) |
-| `store/sound-settings-store.ts` | Phase 7 A3 (UI-X1, ratified for A3; docs/08 §3.5) | Mute and the four linear 0..1 volumes (`master`, `music`, `ambience`, `sfx`); defaults on and 1.0 (D1); `setMuted` / `toggleMuted` / `setVolume`; one-time `restore()` from one version-1 `localStorage` record (valid fields salvaged, other versions rejected, D5); every storage access in try/catch; SSR-safe construction; imports only `./store`. **Not wired**: the session does not create it until A4 |
+| `store/sound-settings-store.ts` | Phase 7 A3 (UI-X1, ratified for A3; docs/08 §3.5); wired in A4b | Mute and the four linear 0..1 volumes (`master`, `music`, `ambience`, `sfx`); defaults on and 1.0 (D1); `setMuted` / `toggleMuted` / `setVolume`; one-time `restore()` from one version-1 `localStorage` record (valid fields salvaged, other versions rejected, D5); every storage access in try/catch; SSR-safe construction; imports only `./store`. Since A4b the session owns it (`soundSettings`): restored on the first canvas attach and applied to the AudioManager by the audio host before the first unlock and on every change *(until A4b: "**Not wired**: the session does not create it until A4")* |
+| `audio-host.ts` | Phase 7 A4b (UI-X1, ratified for A4b; docs/08 §7.5) | One `AudioHost` per session, the only UI module importing `src/audio`: owns the AudioManager, SoundBank and director (subscribed at construction, paused); settings bridge (`AUDIO_MIX[bus]` × volume, neutral 1.0); `attach()` restores and applies the settings once, loads the bank once and installs attach-scoped gesture and visibility listeners (all or none); a gesture unlocks only after the settings are restored and applied; `update()` per frame from the driver sink; `dispose()` ends audio. SSR-safe construction; no method throws; a failed step is rolled back and retried |
 
 Since U2, all money state and math live in the wallet store; components
 only read it via `useStore` and submit commands via `gameSession.submit`.
@@ -46,6 +50,11 @@ dev banner's dismissal. Since E-X3 (Dual Bet, `be10b19`), the player holds
 two bet slots. The session owns `betInputs` (one per slot) and reserves the
 other slot's in-flight stake on `submit`. The wallet keeps per-slot state in
 `slots`, and the round store mirrors `participants` (docs/07 §8, §9, §23.17).
+Since A4b (Phase 7), the session also owns the sound settings store and one
+audio host: `attachCanvas` attaches it before the driver starts, the driver's
+`sync` hands it each frame's projections after the round-store write (no
+extra engine read), and `GameSession.dispose()` disposes the audio subsystem
+only. The game stays silent until licensed assets exist (A6).
 
 Running the tests on Windows: start Vitest from PowerShell with an
 uppercase `C:\` working directory. From Git Bash (lowercase `c:\`) Vitest
