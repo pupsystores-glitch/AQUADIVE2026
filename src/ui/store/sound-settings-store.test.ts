@@ -639,3 +639,173 @@ describe("sound settings store — persistence", () => {
     expect(storage.data.get("other")).toBe("keep");
   });
 });
+
+// ----- subscriber failures (A3.1) -----
+
+describe("sound settings store — a throwing subscriber (A3.1)", () => {
+  const boom = () => {
+    throw new Error("subscriber failed");
+  };
+
+  // Each test installs its own console.error spy; the log is the reported failure.
+  const silenceErrors = () => vi.spyOn(console, "error").mockImplementation(() => {});
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("setMuted: does not throw, saves the change and notifies the later subscribers", () => {
+    const errors = silenceErrors();
+    const storage = fakeStorage();
+    const store = storeOn(storage);
+    store.restore();
+    const after = vi.fn();
+    store.subscribe(boom);
+    store.subscribe(after);
+    expect(() => store.setMuted(true)).not.toThrow();
+    expect(store.get().muted).toBe(true);
+    expect(saved(storage)).toEqual(v1({ muted: true }));
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(errors.mock.calls[0][1]).toBeInstanceOf(Error);
+  });
+
+  it("setVolume: does not throw, saves the change and notifies the later subscribers", () => {
+    const errors = silenceErrors();
+    const storage = fakeStorage();
+    const store = storeOn(storage);
+    store.restore();
+    const after = vi.fn();
+    store.subscribe(boom);
+    store.subscribe(after);
+    expect(() => store.setVolume("music", 0.3)).not.toThrow();
+    expect(store.get().music).toBe(0.3);
+    expect(saved(storage)).toEqual(v1({ music: 0.3 }));
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggleMuted: does not throw, saves the change and notifies the later subscribers", () => {
+    const errors = silenceErrors();
+    const storage = fakeStorage();
+    const store = storeOn(storage);
+    store.restore();
+    const after = vi.fn();
+    store.subscribe(boom);
+    store.subscribe(after);
+    expect(() => store.toggleMuted()).not.toThrow();
+    expect(store.get().muted).toBe(true);
+    expect(saved(storage)).toEqual(v1({ muted: true }));
+    expect(() => store.toggleMuted()).not.toThrow();
+    expect(saved(storage)).toEqual(v1({ muted: false }));
+    expect(after).toHaveBeenCalledTimes(2);
+    expect(errors).toHaveBeenCalledTimes(2);
+  });
+
+  it("a first change before restore() is still saved, and restore() is still skipped", () => {
+    silenceErrors();
+    const storage = withRecord(v1({ master: 0.2 }));
+    const store = storeOn(storage);
+    store.subscribe(boom);
+    expect(() => store.setVolume("sfx", 0.4)).not.toThrow();
+    expect(saved(storage)).toEqual(v1({ sfx: 0.4 }));
+    expect(store.restore()).toBe("skipped");
+    expect(store.get()).toEqual({ ...DEFAULT_SOUND_SETTINGS, sfx: 0.4 });
+  });
+
+  it("restore(): does not throw, applies the record once and notifies the later subscribers", () => {
+    const errors = silenceErrors();
+    const storage = withRecord(v1({ muted: true, ambience: 0.5 }));
+    const store = storeOn(storage);
+    const after = vi.fn();
+    store.subscribe(boom);
+    store.subscribe(after);
+    let result: unknown;
+    expect(() => {
+      result = store.restore();
+    }).not.toThrow();
+    expect(result).toBe("valid");
+    expect(store.get()).toEqual({ ...DEFAULT_SOUND_SETTINGS, muted: true, ambience: 0.5 });
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(store.restore()).toBe("skipped");
+    expect(storage.getItem).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("never leaves the saved record stale: a new store restores the latest values", () => {
+    silenceErrors();
+    const storage = fakeStorage();
+    const first = storeOn(storage);
+    first.restore();
+    first.subscribe(boom);
+    first.setMuted(true);
+    first.setVolume("master", 0.7);
+    first.setVolume("music", 0.25);
+    first.toggleMuted();
+    first.setVolume("sfx", 0);
+    expect(saved(storage)).toEqual(v1({ muted: false, master: 0.7, music: 0.25, sfx: 0 }));
+
+    const second = storeOn(storage);
+    expect(second.restore()).toBe("valid");
+    expect(second.get()).toEqual(first.get());
+  });
+
+  it("re-entrant updates still settle on the latest value, saved and seen by everyone", () => {
+    silenceErrors();
+    const storage = fakeStorage();
+    const store = storeOn(storage);
+    store.restore();
+    store.subscribe(boom);
+    // Muting forces the master volume to 0, from inside the notification.
+    store.subscribe(() => {
+      if (store.get().muted && store.get().master !== 0) store.setVolume("master", 0);
+    });
+    const seen: SoundSettings[] = [];
+    store.subscribe(() => seen.push(store.get()));
+    store.setMuted(true);
+    expect(store.get()).toEqual({ ...DEFAULT_SOUND_SETTINGS, muted: true, master: 0 });
+    expect(saved(storage)).toEqual(v1({ muted: true, master: 0 }));
+    expect(seen.at(-1)).toBe(store.get());
+  });
+
+  it("valid subscribers are unchanged: synchronous, in order, with the new frozen snapshot", () => {
+    const store = storeOn(fakeStorage());
+    store.restore();
+    const order: string[] = [];
+    store.subscribe(() => order.push(`a:${store.get().sfx}`));
+    store.subscribe(() => order.push(`b:${store.get().sfx}`));
+    store.setVolume("sfx", 0.6);
+    expect(order).toEqual(["a:0.6", "b:0.6"]);
+    expect(Object.isFrozen(store.get())).toBe(true);
+  });
+
+  it("keeps createStore's subscription identity: one entry per function, any unsubscribe removes it", () => {
+    const store = storeOn(fakeStorage());
+    store.restore();
+    const listener = vi.fn();
+    const offA = store.subscribe(listener);
+    const offB = store.subscribe(listener);
+    store.setMuted(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+    offA();
+    store.setMuted(false);
+    expect(listener).toHaveBeenCalledTimes(1);
+    offB();
+    const offC = store.subscribe(listener);
+    offA(); // a stale unsubscribe still removes the function, as Set.delete would
+    store.setMuted(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+    offC();
+  });
+
+  it("an unsubscribed throwing subscriber is no longer called or logged", () => {
+    const errors = silenceErrors();
+    const store = storeOn(fakeStorage());
+    store.restore();
+    const off = store.subscribe(boom);
+    off();
+    store.setMuted(true);
+    expect(errors).not.toHaveBeenCalled();
+  });
+});

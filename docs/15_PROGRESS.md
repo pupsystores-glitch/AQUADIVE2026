@@ -60,6 +60,8 @@ M2 (the rest of integer minor units) is still deferred.
 
 **A3 delivered 2026-11-15.** A2 is in `03bb7dc`. The owner authorized A3, the sound settings store, with decisions D1–D8 (docs/08 §1.1). It is committed and pushed and awaits the owner's review. It is not wired. **A4 is not authorized.** See "Step A3" below.
 
+**A3.1 delivered 2026-11-15.** The owner accepted A3 (`16a6a40`) with documented limitations and authorized A3.1, the subscriber failure hardening of the sound settings store. It is committed and pushed and awaits the owner's review. It is not wired. **A4 is not authorized.** See "Step A3.1" below.
+
 ---
 
 ## TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) (ACTIVE, started 2026-11-15)
@@ -225,6 +227,36 @@ M2 (the rest of integer minor units) is still deferred.
   - Gains, tiers and loop points are placeholders for the A6 listening pass; no cue is playable until A6.
   - The docs are not Prettier-formatted, as at HEAD (repository convention).
 - **Owner decisions still open:** Q2 (UI/renderer scopes), Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q14, Q15. A2 decided none of them.
+
+### Step A3.1 — Sound settings subscriber failure hardening — DELIVERED 2026-11-15; AWAITING OWNER REVIEW
+
+- **Task ID:** TASK 008, step A3.1. **Date:** 2026-11-15.
+- **Authorization:** the owner accepted A3 (`16a6a40`) with documented limitations and authorized A3.1 as a separate, narrowly scoped correction of A3 audit finding M1 (the read-only audit of `16a6a40`; not the deferred money-integrity M1). Allowed: `src/ui/store/sound-settings-store.ts`, its test, and the relevant architecture and progress documents. Not authorized: `src/ui/store/store.ts` unless approved after a STOP, other stores, `session.ts`, the `AudioManager`, SoundBank, manifest, engine, shared, rendering, components, dependencies, assets, A4.
+- **Defect:** `change()` called `store.set()`, which runs the listeners synchronously, before `write()`. A listener that threw aborted the change after the snapshot moved but before it was saved, so the saved record went stale, the later listeners were not notified, and the error reached the caller. `restore()` called `store.set()` unguarded, so it threw despite its documented never-throws contract.
+- **Assessment (requirement 7):** a safe, narrow fix is possible without changing `store.ts`, so no STOP was needed. The fix belongs to the sound settings store's own `subscribe`, which the store already exposes in place of the primitive's.
+- **Fix:** `subscribe` wraps each listener in its own try/catch and logs a failure with `console.error("[ui] a sound settings subscriber failed:", error)`, the pattern of the engine event bus (`src/engine/events.ts`) and the SoundBank's `onReady`. A map from the caller's function to its subscription keeps `createStore`'s Set semantics: a duplicate subscribe is one subscription, and any of its unsubscribes (even a stale one) removes it. `store.set()` can no longer throw for this store, so every writer reaches `write()` and `restore()` cannot throw. Unchanged: synchronous, ordered notification; frozen snapshots; equal-value bailout; one-time `restore()`; the first-change-before-`restore()` write; the write order; D1–D8.
+- **Rejected alternatives:** (a) persisting before notifying and wrapping `restore()` in try/catch: it saves the record, but a throwing listener still starves every listener after it (in A4 that could be the `AudioManager` sink, leaving a muted user audible), and the writers would still throw; (b) per-listener isolation in `createStore`: it would change notification for every store, which A3.1 does not authorize. It remains a possible later proposal, which would also remove the duplicated isolation pattern; not proposed for approval here.
+- **Files:** modified `src/ui/store/sound-settings-store.ts`, `src/ui/store/sound-settings-store.test.ts`, `docs/08_AUDIO_FX_ARCHITECTURE.md` (status, §1.1, §3.5, §12, §18), `docs/14_TASKS.md`, `docs/15_PROGRESS.md`, `docs/16_CURRENT_TASK.md`. No other file.
+- **Tests (10 new, node env):** a throwing subscriber during `setMuted`, `setVolume`, `toggleMuted` and `restore()` (no throw, snapshot applied, record saved, later subscriber notified, the failure logged once); a first change before `restore()` still saved and `restore()` still skipped; the saved record never stale (a new store restores the latest values after five changes past a throwing subscriber); re-entrant updates settle on the latest value, saved and seen by all; valid subscribers still synchronous, ordered, with the frozen snapshot; subscription identity as in `createStore`; an unsubscribed throwing subscriber is neither called nor logged. Against the A3 implementation, the 7 failure-path tests fail and the 3 preservation tests pass.
+- **Validation (2026-11-15, PowerShell, `C:\`):**
+
+| Gate | Result |
+|---|---|
+| Vitest, full suite (`--maxWorkers=2`) | **838/838 passed, 46/46 files** (10 new; the 828 existing unchanged) |
+| Sound settings suite | 81/81 |
+| `tsc --noEmit` | Clean |
+| ESLint, full project, end-of-line neutralized | 0 errors, 6 warnings (pre-existing, shadcn `src/components/ui`): the baseline |
+| ESLint raw + Prettier, the two changed files | Clean |
+| Production build | Passes |
+| SSR smoke (fresh dev server) | HTTP 200, canvas markup, no error strings |
+| `git diff --check` | Clean |
+| Freeze | `src/ui/store/store.ts`, every other `src/ui` file, `src/audio`, `src/engine`, `src/shared`, `src/rendering`, `src/components`, package and lock files: no diff |
+
+- **Limitations:**
+  - A failing subscriber is logged, not rethrown: the caller of a writer or `restore()` no longer sees the error. Visibility is the console only, as for the engine and SoundBank listeners.
+  - The isolation covers the sound settings store only. Every other store built on `createStore` still lets a throwing subscriber abort its `set()` and starve the later subscribers.
+  - The per-listener isolation pattern now exists in three places (engine event bus, SoundBank, this store). Consolidating it would need a `createStore` change and its own approval.
+  - The A3 limitations stand (in-memory storage fake only; not wired; no cross-tab sync).
 
 ### Step A3 — Sound settings store — DELIVERED 2026-11-15; AWAITING OWNER REVIEW
 

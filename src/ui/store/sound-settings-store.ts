@@ -25,6 +25,16 @@
 // inside try/catch. A failure keeps the in-memory settings working and is
 // never thrown to the caller.
 //
+// Subscriber isolation (A3.1): `subscribe` wraps each listener in its own
+// try/catch, as the engine event bus and the SoundBank do. A listener that
+// throws is logged with console.error and the rest are still notified, in
+// order and synchronously. A failing subscriber therefore never aborts a
+// change before it is saved, never leaves later subscribers stale, and never
+// makes `restore()` throw. Subscribing the same function twice keeps one
+// subscription and any of its unsubscribes removes it, as in `createStore`.
+// The shared primitive in `./store` is unchanged; other stores keep its
+// behavior.
+//
 // Lifecycle: construction reads nothing and touches no global, so the
 // session can build this store at module scope during SSR. `restore()` reads
 // the saved record once, on the client. If the user changes a setting before
@@ -206,7 +216,7 @@ export type SoundSettingsRestoreResult = SoundSettingsReadStatus | "skipped";
 export interface SoundSettingsStore extends ReadableStore<SoundSettings> {
   /**
    * Read the saved record and apply it, once. Call on the client. Notifies
-   * only if the settings change. Never throws.
+   * only if the settings change. Never throws, even when a subscriber does.
    */
   restore(): SoundSettingsRestoreResult;
   setMuted(muted: boolean): void;
@@ -240,6 +250,30 @@ export function createSoundSettingsStore(options: SoundSettingsOptions = {}): So
     }
   };
 
+  // One guarded wrapper per subscribed function, with the unsubscribe of its
+  // underlying subscription. Keyed by the caller's function so duplicate
+  // subscribes and unsubscribes behave as `createStore`'s Set does.
+  const subscriptions = new Map<() => void, () => void>();
+
+  const subscribe = (listener: () => void): (() => void) => {
+    if (!subscriptions.has(listener)) {
+      const guarded = () => {
+        try {
+          listener();
+        } catch (error) {
+          console.error("[ui] a sound settings subscriber failed:", error);
+        }
+      };
+      subscriptions.set(listener, store.subscribe(guarded));
+    }
+    return () => {
+      const unsubscribe = subscriptions.get(listener);
+      if (!unsubscribe) return;
+      subscriptions.delete(listener);
+      unsubscribe();
+    };
+  };
+
   const write = (settings: SoundSettings) => {
     try {
       resolveStorage()?.setItem(SOUND_SETTINGS_STORAGE_KEY, serializeSoundSettings(settings));
@@ -267,7 +301,7 @@ export function createSoundSettingsStore(options: SoundSettingsOptions = {}): So
 
   return Object.freeze({
     get: store.get,
-    subscribe: store.subscribe,
+    subscribe,
     restore: (): SoundSettingsRestoreResult => {
       if (settled) return "skipped";
       settled = true;
