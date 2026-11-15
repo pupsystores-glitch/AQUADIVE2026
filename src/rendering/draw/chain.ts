@@ -14,6 +14,10 @@
 // edge-on link visibly threads the end loops of its two neighbours. All links
 // of one kind are batched into a single path per shading pass, which keeps
 // the per-frame cost at a fixed, small number of strokes with no gradients.
+//
+// A slack chain (the anchor lying on the sea floor) follows a caller-supplied
+// polyline instead of the swaying line: layoutChainPath / drawChainPath place
+// and paint the links the same way along any path.
 
 import { CHAIN_THEME } from "../theme";
 
@@ -73,6 +77,20 @@ export interface ChainLayout {
 const layout: ChainLayout = { count: 0, first: 0, data: new Float64Array(CHAIN_LINK_STRIDE * 128) };
 const clipRect: ChainClip = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
 
+// Path being marched. Either the swaying line (pathXs === null) or a polyline
+// whose point 0 is the anchor end.
+let pathXs: ArrayLike<number> | null = null;
+let pathYs: ArrayLike<number> | null = null;
+let lineX1 = 0;
+let lineY1 = 0;
+let lineDx = 0;
+let lineDy = 0;
+let lineNx = 0;
+let lineNy = 0;
+let lineSag = 0;
+let linePhase = 0;
+let lineSteps = 1;
+
 /**
  * Computes link placement along the chain path. Pure and deterministic for
  * the same inputs. When `clip` is given, only the contiguous run of links
@@ -96,11 +114,41 @@ export function layoutChain(
   const len = Math.hypot(dx, dy);
   if (!Number.isFinite(len) || len < 1e-6) return layout;
 
-  const nx = -dy / len;
-  const ny = dx / len;
-  const sag = SAG * Math.sign(dx || 1);
-  const phase = t * WAVE_SPEED;
-  const steps = Math.max(1, Math.ceil(len / SAMPLE_STEP));
+  pathXs = null;
+  pathYs = null;
+  lineX1 = x1;
+  lineY1 = y1;
+  lineDx = dx;
+  lineDy = dy;
+  lineNx = -dy / len;
+  lineNy = dx / len;
+  lineSag = SAG * Math.sign(dx || 1);
+  linePhase = t * WAVE_SPEED;
+  lineSteps = Math.max(1, Math.ceil(len / SAMPLE_STEP));
+  return marchLinks(x2, y2, lineSteps, clip);
+}
+
+/**
+ * Link placement along a polyline of `n` points; point 0 is the anchor end.
+ * Same joint spacing and link data as layoutChain. The returned object and its
+ * buffer are reused by the next call.
+ */
+export function layoutChainPath(
+  xs: ArrayLike<number>,
+  ys: ArrayLike<number>,
+  n: number,
+  clip?: ChainClip,
+): ChainLayout {
+  layout.count = 0;
+  layout.first = 0;
+  if (n < 2) return layout;
+  pathXs = xs;
+  pathYs = ys;
+  return marchLinks(xs[0], ys[0], n - 1, clip);
+}
+
+/** Walks the current path up from the anchor end (x2, y2), storing one link per joint pair. */
+function marchLinks(x2: number, y2: number, steps: number, clip?: ChainClip): ChainLayout {
   const margin = CHAIN_LINK_LENGTH;
 
   // Monotonic cursor over path samples, walking up from the anchor (u = 1).
@@ -125,11 +173,16 @@ export function layoutChain(
       ay = by;
       accA = accB;
       si++;
-      const u = 1 - si / steps;
-      const env = Math.sin(u * Math.PI);
-      const off = env * (sag + Math.sin(u * Math.PI * 2 - phase) * WAVE);
-      bx = x1 + dx * u + nx * off;
-      by = y1 + dy * u + ny * off;
+      if (pathXs !== null && pathYs !== null) {
+        bx = pathXs[si];
+        by = pathYs[si];
+      } else {
+        const u = 1 - si / steps;
+        const env = Math.sin(u * Math.PI);
+        const off = env * (lineSag + Math.sin(u * Math.PI * 2 - linePhase) * WAVE);
+        bx = lineX1 + lineDx * u + lineNx * off;
+        by = lineY1 + lineDy * u + lineNy * off;
+      }
       segLen = Math.hypot(bx - ax, by - ay);
       accB = accA + segLen;
     }
@@ -290,7 +343,20 @@ export function drawChain(
   y2: number,
   t: number,
 ) {
-  const l = layoutChain(x1, y1, x2, y2, t, visibleRect(ctx));
+  paintChain(ctx, layoutChain(x1, y1, x2, y2, t, visibleRect(ctx)));
+}
+
+/** Draws the chain along a polyline of `n` points; point 0 is the anchor end. */
+export function drawChainPath(
+  ctx: CanvasRenderingContext2D,
+  xs: ArrayLike<number>,
+  ys: ArrayLike<number>,
+  n: number,
+) {
+  paintChain(ctx, layoutChainPath(xs, ys, n, visibleRect(ctx)));
+}
+
+function paintChain(ctx: Ctx, l: ChainLayout) {
   if (l.count === 0) return;
 
   ctx.save();

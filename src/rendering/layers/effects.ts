@@ -3,14 +3,14 @@
 // layer receives `shipImpact: { elapsed } | null` in RenderState and draws
 // while `elapsed < SHIP_IMPACT_FX_SECONDS`; the performance.now()
 // bookkeeping lives with the caller — this layer is clock-free. The FX
-// position tracks the swaying anchor via the Actor layer's pure helpers
+// position tracks the anchor as it lands, via the Actor layer's pure pose
 // (§18 correction, R3). Per §12 this layer is exempt from the no-RNG rule
 // (jitter inside drawShipImpact).
 
-import { ANCHOR_DRAW_H, SHIP_IMPACT_FX_SECONDS } from "../constants";
+import { SHIP_IMPACT_FX_SECONDS } from "../constants";
 import { drawShipImpact } from "../draw/impact-fx";
 import type { RenderLayer } from "../render-state";
-import { anchorPinY, anchorSwayX } from "./actor";
+import { anchorPose, landingSeconds } from "./actor";
 
 export const effectsLayer: RenderLayer = {
   name: "effects",
@@ -21,7 +21,7 @@ export const effectsLayer: RenderLayer = {
     if (elapsed >= SHIP_IMPACT_FX_SECONDS) return;
     const life = Math.min(1, elapsed / SHIP_IMPACT_FX_SECONDS);
     const { w, h } = camera.viewport;
-    const anchorX = anchorSwayX(time.animTime, w);
-    drawShipImpact(ctx, anchorX, anchorPinY(h) + ANCHOR_DRAW_H * 0.3, w, h, elapsed, life);
+    const p = anchorPose(state.worldY, camera, time.animTime, landingSeconds(state));
+    drawShipImpact(ctx, p.x, p.y, w, h, elapsed, life);
   },
 };

@@ -46,7 +46,7 @@ export const worldLayer: RenderLayer = {
     const floorArt = assets.get("seaFloor");
     const drewArt =
       floorArt.ready &&
-      camera.isVisibleY(floorWorldY, Infinity, seaFloorArtTopExtent(w) + 20) &&
+      camera.isVisibleY(floorWorldY, Infinity, seaFloorArtTopExtent(w, h) + 20) &&
       drawSeaFloorArt(ctx, w, h, floorScreenY, floorArt);
     if (!drewArt && !floorArt.ready && camera.isVisibleY(floorWorldY, Infinity, 100)) {
       drawSeaFloor(ctx, w, h, floorScreenY);
