@@ -2,7 +2,7 @@
 
 **Sprint 5 / Phase 7 / TASK 008.** This is the Phase 7 blueprint, written in step **P7-0**.
 
-**Status (2026-11-15):** the owner approved the architecture as the basis for Phase 7, and authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.
+**Status (2026-11-15, A1.1):** the owner approved the architecture as the basis for Phase 7. P7-0 (`0e7ff80`) and A1 (`3761062`) are done and accepted. **A1.1, the decode interface (§7.1), is authorized and delivered in its own commit.** A2 and every later step need their own explicit authorization. *(Until A1.1 this read: "the owner … authorized **P7-0 only** (this document and the tracking updates). **No implementation step is authorized.** A1 and every later step need their own explicit authorization.")*
 
 **Source of truth:** the *Sprint 5 / Phase 7: Audio & Visual Effects Architecture Proposal* (2026-11-15), audited against the repository at `0ebe7c9`. This document records it without redesign. Where the owner's authorization narrows it, the narrowing is marked **[OWNER]**.
 
@@ -27,6 +27,7 @@ This blueprint sits beside the binding contracts `docs/05_RENDERING_ARCHITECTURE
 - **Sequence:** P7-0 → A1–A4 → V1–V7 → A6 → A5 → P7-C (§12).
 - **Git:** one atomic commit per approved implementation step.
 - **Blueprint file name:** `docs/08_AUDIO_FX_ARCHITECTURE.md`.
+- **A1.1, the `AudioManager` decode interface** (owner authorization, 2026-11-15): a separate atomic step between A1 and A2. It adds `decode()` to the `AudioManager` (§7.1) so the A2 sound bank decodes with the manager's single context. Scope: `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`, and the architecture and tracking documents. Not in scope: the sound bank, the manifest, audio files, licences, and every engine, RNG, settlement, rendering, gameplay or UI file. It does not authorize A2.
 
 ### 1.2 What the owner did not approve [OWNER]
 
@@ -45,7 +46,7 @@ Status values: **Approved** (the owner decided), **Open** (the owner has not dec
 | Q3 | Default sound state | **Open** | On after the first user gesture | A4 wiring defaults, A5 |
 | Q4 | Sound control | **Open** | A single mute button in TopBar | A5 |
 | Q5 | Asset supply and allowed licences | **Open** | The owner supplies or commissions the files. Allowed: CC0, royalty-free commercial; CC-BY only with a credit entry. Not allowed: any NC licence. Every EULA checked for a gambling clause | A6 |
-| Q6 | Audio format | **Open** | `.m4a` (AAC-LC) only | A2 manifest shape, A6 |
+| Q6 | Audio format | **Open.** Owner's planning preference (2026-11-15): AAC-LC in `.m4a`, subject to browser compatibility validation. Not a decision | `.m4a` (AAC-LC) only | A2 manifest shape, A6 |
 | Q7 | Spectator and Dual Bet audio | **Open** | Crash and jackpot play for everyone; cashout only for the player's own slots; two cashouts in the same tick play one cue | A4 |
 | Q8 | Music | **Open** | Ambience plus a minimal music bed | A4 (`music.ts`), A6 |
 | Q9 | Countdown ticks for the last 3 s | **Open** | — (no recommendation; the owner's preference) | A4 |
@@ -262,6 +263,7 @@ interface AudioManager {
   setMuted(muted: boolean): void;
   play(cue: CueKey, opts?: { rate?: number; gain?: number }): void; // no-op until unlocked / loaded
   loop(cue: CueKey): LoopHandle; // { setGain, setRate, setFilter, stop(fadeS) }
+  decode(data: ArrayBuffer): Promise<AudioBufferLike | null>; // A1.1, §7.1; never rejects
   suspend(): void;
   resume(): void;
   dispose(): void;
@@ -287,6 +289,22 @@ setMotion(opts: { reduced: boolean }): void;
 - Audio and FX never submit commands and never mutate stores.
 - Listener exceptions are already firewalled by the bus.
 - `RenderState`, `EnginePublicState` and the engine API stay **unchanged**.
+
+### 7.1 Decode interface (A1.1) [OWNER]
+
+`AudioManager.decode(data: ArrayBuffer): Promise<AudioBufferLike | null>` turns compressed bytes into a playable buffer with the manager's **single** `AudioContext`. The A2 sound bank fetches the bytes, calls `decode()`, and caches the result. It never creates or reaches a context of its own.
+
+- **One context.** `decode()` never creates the context, never exposes it, and adds no second one.
+- **Before the first unlock** the request waits. It starts inside `unlock()`, right after the iOS prime and `resume()`, so the gesture-critical work runs first. If no gesture ever comes, the request stays pending until `dispose()`.
+- **Never rejects.** It resolves the buffer, or `null`:
+  - on a decoding error, a synchronous throw from `decodeAudioData`, or a result that is not a buffer with a finite, non-negative duration;
+  - when Web Audio is unavailable: the factory returns `null` or throws, or the context has no `decodeAudioData`. Waiting requests settle at that moment; later calls resolve `null` at once;
+  - on `dispose()`: every waiting and in-flight request settles with `null` at once; later calls resolve `null`.
+- **Exactly once.** The manager passes callbacks **and** follows a returned promise, so the callback-only form (older WebKit), the promise-only form and the both-forms behavior of current browsers all work. The first report wins; a later report, including one after `dispose()`, is ignored.
+- **No playback side effect.** Decoding creates no voice and changes no gain or run state. It works while muted, host-suspended or interrupted.
+- **Failure policy:** the manager does not log decode failures, because it does not know which asset failed. The sound bank logs each failed asset once (§3.2).
+- **The caller's bytes:** browsers may detach the `ArrayBuffer`, so the caller passes a buffer it does not reuse.
+- **Abstraction:** `AudioContextLike` gains `decodeAudioData(data, success?, error?)`, which returns a promise-like or nothing. The test fake records each call as a request that the test settles by hand.
 
 ---
 
@@ -376,6 +394,7 @@ Each step is one commit, followed by verify → commit → push → wait for app
 |---|---|---|---|---|
 | **P7-0** | `docs: Phase 7 audio & FX blueprint` | C `docs/08_AUDIO_FX_ARCHITECTURE.md`; M `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None | — (authorized 2026-11-15) |
 | A1 | `feat(audio): AudioManager core` | C `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts` | None (not wired) | Authorization; import rule (§6) |
+| A1.1 | `feat(audio): AudioManager decode interface (A1.1)` | M `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`; M `docs/08`, `docs/04`, `docs/14`, `docs/15`, `docs/16`, `src/audio/README.md` | None (not wired) | — (authorized 2026-11-15, §1.1; inserted before A2) |
 | A2 | `feat(audio): sound bank and manifest` | C `src/audio/sound-bank.ts`, `src/audio/manifest.ts` + tests | None | Authorization; Q6 (format shapes the manifest) |
 | A3 | `feat(ui): sound settings store` | C `src/ui/store/sound-settings-store.ts` + test | None | Authorization; UI scope ratification (new file in `src/ui`); Q3 (default) |
 | A4 | `feat(audio): director, music and session wiring` | C `src/audio/director.ts`, `src/audio/music.ts` + tests; M `src/ui/session.ts` | None (no assets yet) | Authorization; UI scope (`session.ts`); Q3, Q7, Q8, Q9, Q15 |
@@ -451,6 +470,13 @@ Follows the E-X1–E-X4 precedent (docs/07 §19 gate 4). Presentation only. `src
 9. **Scope creep into Phase 8.** None is proposed: no networking, server, auth or multiplayer.
 10. **Trade-off — goldfish detection from the `boost` edge** instead of an engine event: two pickups in quick succession while boost is already rising sound as one. Accepted to keep the engine unchanged [OWNER: no engine change].
 11. **Assets may arrive late.** V1–V7 proceed without them (§12). If they do not arrive, A6 and A5 wait, and the app ships silent but complete.
+12. **The voice cap can silence loops** (analysis recorded in A1.1, 2026-11-15; to analyze and test before A2, at the owner's instruction). Fixed priority tiers alone do not keep ambience and music loops safe under the A1 policy:
+    - A newcomer **equal** to the lowest playing priority steals the **oldest** voice at that priority. Loops are usually the oldest, so a same-tier newcomer steals a loop.
+    - A loop started at a full cap, below every playing voice, is dropped and gets an inert handle. Nothing retries it, so it stays silent until the caller starts it again.
+    - Any one-shot tier set above the loop tier (for example, stingers) steals loops during a burst.
+    - Fading ("stopping") voices do not count toward the cap, so the real node count can briefly go above 16.
+
+    Strictly higher loop tiers do stop one-shots from stealing loops. They do not cover the cases above. The policy needs a decision before A2 fixes the manifest's priorities. No change is made in A1.1.
 
 ---
 
@@ -504,3 +530,4 @@ docs/05 §6 (`shake`, `zoom` reserved), §12 (FX list), §14 item 9 (`quality` f
 ## 18. Change log
 
 - **2026-11-15 — P7-0.** Blueprint created from the owner-approved proposal. Records the approved direction (§1.1), the boundaries (§1.2), the decision register (§1.3), the commit plan (§12), the proposed exception scopes (§13) and the acceptance gates (§15). No implementation.
+- **2026-11-15 — A1.1.** The owner authorized the decode interface as a separate step before A2 (§1.1). Added §7.1 and the `decode()` line in §7, the A1.1 row in §12, the owner's Q6 planning preference in §1.3 (Q6 stays Open), and risk 12, the voice-cap analysis, in §14. A2 is not authorized.

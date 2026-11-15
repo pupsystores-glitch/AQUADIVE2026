@@ -865,3 +865,497 @@ describe("dispose", () => {
     expect(createContext).not.toHaveBeenCalled();
   });
 });
+
+// ----- decode (A1.1, docs/08 §7) -----
+
+/** Lets every pending promise callback and timer of the current turn run. */
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/** Watches a decode promise without awaiting it. A rejection leaves it unsettled, which fails the test. */
+const track = <T>(promise: Promise<T>) => {
+  const state: { settled: boolean; value: T | undefined; calls: number } = {
+    settled: false,
+    value: undefined,
+    calls: 0,
+  };
+  promise.then(
+    (value) => {
+      state.settled = true;
+      state.value = value;
+      state.calls++;
+    },
+    () => {},
+  );
+  return state;
+};
+
+const bytes = (size = 16) => new ArrayBuffer(size);
+
+describe("decode: before the first unlock", () => {
+  it("waits for the context and never creates one", async () => {
+    const { audio, context, createContext } = setup();
+    const result = track(audio.decode(bytes()));
+    await flush();
+    expect(result.settled).toBe(false);
+    expect(createContext).not.toHaveBeenCalled();
+    expect(context.decodes).toHaveLength(0);
+  });
+
+  it("starts inside unlock, after the resume, with the caller's bytes", async () => {
+    const { audio, context } = setup();
+    const data = bytes();
+    const result = track(audio.decode(data));
+    let resumesAtDecode = -1;
+    const decodeAudioData = context.decodeAudioData.bind(context);
+    vi.spyOn(context, "decodeAudioData").mockImplementation((...args) => {
+      resumesAtDecode = context.resumeCalls;
+      return decodeAudioData(...args);
+    });
+    const unlocked = audio.unlock();
+    expect(context.decodes).toHaveLength(1);
+    expect(context.decodes[0].data).toBe(data);
+    expect(resumesAtDecode).toBe(1);
+    await unlocked;
+
+    const buffer = fakeBuffer(2);
+    context.decodes[0].succeed(buffer);
+    await flush();
+    expect(result.value).toBe(buffer);
+  });
+
+  it("starts every waiting request in request order; each settles with its own buffer", async () => {
+    const { audio, context } = setup();
+    const first = bytes(8);
+    const second = bytes(32);
+    const a = track(audio.decode(first));
+    const b = track(audio.decode(second));
+    await audio.unlock();
+    expect(context.decodes.map((request) => request.data)).toEqual([first, second]);
+    expect(context.decodes[0].data).toBe(first);
+    expect(context.decodes[1].data).toBe(second);
+
+    const bufferB = fakeBuffer(3);
+    const bufferA = fakeBuffer(1);
+    context.decodes[1].succeed(bufferB);
+    await flush();
+    expect(b.value).toBe(bufferB);
+    expect(a.settled).toBe(false);
+    context.decodes[0].succeed(bufferA);
+    await flush();
+    expect(a.value).toBe(bufferA);
+  });
+
+  it("decodes even when the unlock's resume is refused (the context exists)", async () => {
+    const { warn } = silenceConsole();
+    const { audio, context } = setup({ context: { rejectResume: true } });
+    const result = track(audio.decode(bytes()));
+    await audio.unlock();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(context.decodes).toHaveLength(1);
+    const buffer = fakeBuffer(1);
+    context.decodes[0].succeed(buffer);
+    await flush();
+    expect(result.value).toBe(buffer);
+  });
+
+  it("hands a request to the decoder once, even across a re-unlock", async () => {
+    const { audio, context } = setup();
+    void audio.decode(bytes());
+    await audio.unlock();
+    context.interrupt();
+    await audio.unlock();
+    expect(context.decodes).toHaveLength(1);
+  });
+
+  it("touches no browser API before unlock (SSR)", async () => {
+    const keys = ["window", "document", "AudioContext", "webkitAudioContext"] as const;
+    const saved = keys.map(
+      (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+    );
+    const touched: string[] = [];
+    for (const key of keys) {
+      Object.defineProperty(globalThis, key, {
+        configurable: true,
+        get() {
+          touched.push(key);
+          return undefined;
+        },
+      });
+    }
+    try {
+      const audio = createAudioManager<string>({ resolveCue: () => null });
+      const result = track(audio.decode(bytes()));
+      await flush();
+      expect(touched).toEqual([]);
+      expect(result.settled).toBe(false);
+      audio.dispose();
+      await flush();
+      expect(result.settled).toBe(true);
+      expect(result.value).toBeNull();
+    } finally {
+      for (const [key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+    }
+  });
+});
+
+describe("decode: after unlock", () => {
+  it("starts at once with the single context and resolves the buffer", async () => {
+    const { audio, context, createContext } = setup();
+    await audio.unlock();
+    const result = track(audio.decode(bytes()));
+    expect(context.decodes).toHaveLength(1);
+    const buffer = fakeBuffer(4);
+    context.decodes[0].succeed(buffer);
+    await flush();
+    expect(result.value).toBe(buffer);
+    expect(result.calls).toBe(1);
+    expect(createContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("decodes while muted, host-suspended or interrupted", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    audio.setMuted(true);
+    audio.suspend();
+    context.interrupt();
+    const result = track(audio.decode(bytes()));
+    const buffer = fakeBuffer(1);
+    context.decodes[0].succeed(buffer);
+    await flush();
+    expect(result.value).toBe(buffer);
+  });
+
+  it("a decoded buffer plays through the cue resolver", async () => {
+    const context = new FakeAudioContext();
+    let decoded: ResolvedCue | null = null;
+    const audio = createAudioManager<"splash">({
+      resolveCue: () => decoded,
+      createContext: () => context,
+    });
+    await audio.unlock();
+    const pending = audio.decode(bytes());
+    const buffer = fakeBuffer(0.4);
+    context.decodes[0].succeed(buffer);
+    const result = await pending;
+    expect(result).toBe(buffer);
+    if (!result) throw new Error("expected a decoded buffer");
+    decoded = { buffer: result, bus: "sfx", gain: 1, priority: 1 };
+    audio.play("splash");
+    const voices = voiceSources(context);
+    expect(voices).toHaveLength(1);
+    expect(voices[0].buffer).toBe(buffer);
+    expect(routeOf(voices[0]).at(-1)).toBe(context.destination);
+  });
+
+  it("does not change playback state: no voice, no resume, no gain change", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const sources = context.sources.length;
+    const automations = context.gains.map((node) => node.gain.automation.length);
+    void audio.decode(bytes());
+    context.decodes[0].succeed();
+    await flush();
+    expect(context.sources).toHaveLength(sources);
+    expect(context.gains.map((node) => node.gain.automation.length)).toEqual(automations);
+    expect(context.resumeCalls).toBe(1);
+    expect(context.suspendCalls).toBe(0);
+  });
+});
+
+describe("decode: unsupported environments", () => {
+  it("settles waiting requests with null when the factory finds no Web Audio", async () => {
+    const { warn } = silenceConsole();
+    const createContext = vi.fn(() => null);
+    const audio = createAudioManager<Cue>({ resolveCue: () => null, createContext });
+    const a = track(audio.decode(bytes()));
+    const b = track(audio.decode(bytes()));
+    await audio.unlock();
+    await flush();
+    expect(a.settled && b.settled).toBe(true);
+    expect(a.value).toBeNull();
+    expect(b.value).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    await expect(audio.decode(bytes())).resolves.toBeNull();
+    expect(createContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles waiting requests with null when constructing the context throws", async () => {
+    silenceConsole();
+    const audio = createAudioManager<Cue>({
+      resolveCue: () => null,
+      createContext: () => {
+        throw new Error("NotSupportedError: too many contexts");
+      },
+    });
+    const result = track(audio.decode(bytes()));
+    await audio.unlock();
+    await flush();
+    expect(result.settled).toBe(true);
+    expect(result.value).toBeNull();
+    await expect(audio.decode(bytes())).resolves.toBeNull();
+  });
+
+  it("with the default factory and no Web Audio (Node), resolves null at unlock", async () => {
+    silenceConsole();
+    const audio = createAudioManager<Cue>({ resolveCue: () => null });
+    const result = track(audio.decode(bytes()));
+    await audio.unlock();
+    await flush();
+    expect(result.settled).toBe(true);
+    expect(result.value).toBeNull();
+  });
+
+  it("resolves null when the context has no decodeAudioData", async () => {
+    const { audio, context } = setup();
+    Object.defineProperty(context, "decodeAudioData", { value: undefined });
+    const waiting = track(audio.decode(bytes()));
+    await audio.unlock();
+    await flush();
+    expect(waiting.settled).toBe(true);
+    expect(waiting.value).toBeNull();
+    await expect(audio.decode(bytes())).resolves.toBeNull();
+  });
+});
+
+describe("decode: dispose", () => {
+  it("settles a request still waiting for unlock with null, and never creates a context", async () => {
+    const { audio, context, createContext } = setup();
+    const result = track(audio.decode(bytes()));
+    audio.dispose();
+    await flush();
+    expect(result.settled).toBe(true);
+    expect(result.value).toBeNull();
+    await audio.unlock();
+    expect(createContext).not.toHaveBeenCalled();
+    expect(context.decodes).toHaveLength(0);
+  });
+
+  it("settles an in-flight request with null at once, and ignores the late result", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const ok = track(audio.decode(bytes()));
+    const bad = track(audio.decode(bytes()));
+    audio.dispose();
+    await flush();
+    expect(ok.settled && bad.settled).toBe(true);
+    expect(ok.value).toBeNull();
+    expect(bad.value).toBeNull();
+
+    expect(() => {
+      context.decodes[0].succeed(fakeBuffer(1));
+      context.decodes[1].fail();
+    }).not.toThrow();
+    await flush();
+    expect(ok.value).toBeNull();
+    expect(ok.calls).toBe(1);
+    expect(bad.value).toBeNull();
+    expect(bad.calls).toBe(1);
+  });
+
+  it("resolves null after dispose without calling the decoder", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    audio.dispose();
+    await expect(audio.decode(bytes())).resolves.toBeNull();
+    expect(context.decodes).toHaveLength(0);
+  });
+
+  it("a request settled before dispose keeps its buffer", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const pending = audio.decode(bytes());
+    const buffer = fakeBuffer(1);
+    context.decodes[0].succeed(buffer);
+    await expect(pending).resolves.toBe(buffer);
+    audio.dispose();
+    await expect(pending).resolves.toBe(buffer);
+  });
+});
+
+describe("decode: errors", () => {
+  it("resolves null on a decoding error, and logs nothing (the caller owns its failure policy)", async () => {
+    const { warn, error } = silenceConsole();
+    const { audio, context } = setup();
+    await audio.unlock();
+    const result = track(audio.decode(bytes()));
+    context.decodes[0].fail();
+    await flush();
+    expect(result.settled).toBe(true);
+    expect(result.value).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("resolves null when decodeAudioData throws synchronously", async () => {
+    const { audio } = setup({ context: { throwOnDecode: true } });
+    await audio.unlock();
+    await expect(audio.decode(bytes())).resolves.toBeNull();
+  });
+
+  it("a waiting request whose decoder throws at unlock resolves null; unlock still succeeds", async () => {
+    const { audio, context } = setup({ context: { throwOnDecode: true } });
+    const result = track(audio.decode(bytes()));
+    await expect(audio.unlock()).resolves.toBeUndefined();
+    await flush();
+    expect(result.settled).toBe(true);
+    expect(result.value).toBeNull();
+    expect(context.state).toBe("running");
+  });
+
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["a non-object", 42],
+    ["an object without a duration", {}],
+    ["a NaN duration", { duration: Number.NaN }],
+    ["an infinite duration", { duration: Number.POSITIVE_INFINITY }],
+    ["a negative duration", { duration: -1 }],
+  ])("resolves null when the decoder reports %s", async (_label, value) => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    const pending = audio.decode(bytes());
+    context.decodes[0].callSuccess(value);
+    context.decodes[0].resolve(value);
+    await expect(pending).resolves.toBeNull();
+  });
+});
+
+describe("decode: decodeAudioData API forms", () => {
+  it("callback-only (older WebKit): no promise is returned; the success callback settles", async () => {
+    const { audio, context } = setup({ context: { decodeStyle: "callback" } });
+    await audio.unlock();
+    const pending = audio.decode(bytes());
+    expect(context.decodes[0].promise).toBeUndefined();
+    const buffer = fakeBuffer(1);
+    context.decodes[0].succeed(buffer);
+    await expect(pending).resolves.toBe(buffer);
+  });
+
+  it("callback-only: the error callback settles with null", async () => {
+    const { audio, context } = setup({ context: { decodeStyle: "callback" } });
+    await audio.unlock();
+    const pending = audio.decode(bytes());
+    context.decodes[0].fail();
+    await expect(pending).resolves.toBeNull();
+  });
+
+  it("promise-based, callbacks ignored: the resolved promise settles", async () => {
+    const { audio, context } = setup({ context: { decodeStyle: "promise" } });
+    await audio.unlock();
+    const pending = audio.decode(bytes());
+    const buffer = fakeBuffer(1);
+    context.decodes[0].succeed(buffer);
+    await expect(pending).resolves.toBe(buffer);
+  });
+
+  it("promise-based: a rejected promise settles with null", async () => {
+    const { audio, context } = setup({ context: { decodeStyle: "promise" } });
+    await audio.unlock();
+    const pending = audio.decode(bytes());
+    context.decodes[0].fail();
+    await expect(pending).resolves.toBeNull();
+  });
+
+  it("both forms (current browsers): callbacks and promise report the same buffer, settled once", async () => {
+    const { audio, context } = setup({ context: { decodeStyle: "both" } });
+    await audio.unlock();
+    const result = track(audio.decode(bytes()));
+    const buffer = fakeBuffer(1);
+    context.decodes[0].succeed(buffer);
+    await flush();
+    expect(result.value).toBe(buffer);
+    expect(result.calls).toBe(1);
+  });
+});
+
+describe("decode: exactly-once settlement", () => {
+  const started = async () => {
+    const harness = setup({ context: { decodeStyle: "both" } });
+    await harness.audio.unlock();
+    const result = track(harness.audio.decode(bytes()));
+    return { ...harness, result, request: harness.context.decodes[0] };
+  };
+
+  it("the success callback wins over a later, different promise result", async () => {
+    const { result, request } = await started();
+    const first = fakeBuffer(1);
+    request.callSuccess(first);
+    request.resolve(fakeBuffer(2));
+    await flush();
+    expect(result.value).toBe(first);
+    expect(result.calls).toBe(1);
+  });
+
+  it("an error callback wins over a later promise success", async () => {
+    const { result, request } = await started();
+    request.callError(new Error("EncodingError"));
+    request.resolve(fakeBuffer(2));
+    await flush();
+    expect(result.settled).toBe(true);
+    expect(result.value).toBeNull();
+    expect(result.calls).toBe(1);
+  });
+
+  it("a resolved promise wins over a later error callback", async () => {
+    const { result, request } = await started();
+    const buffer = fakeBuffer(1);
+    request.resolve(buffer);
+    await flush();
+    request.callError(new Error("late"));
+    await flush();
+    expect(result.value).toBe(buffer);
+    expect(result.calls).toBe(1);
+  });
+
+  it("a success callback wins over a later promise rejection", async () => {
+    const { result, request } = await started();
+    const buffer = fakeBuffer(1);
+    request.callSuccess(buffer);
+    request.reject(new Error("late"));
+    await flush();
+    expect(result.value).toBe(buffer);
+    expect(result.calls).toBe(1);
+  });
+
+  it("a callback fired twice keeps the first buffer", async () => {
+    const { result, request } = await started();
+    const first = fakeBuffer(1);
+    request.callSuccess(first);
+    request.callSuccess(fakeBuffer(2));
+    await flush();
+    expect(result.value).toBe(first);
+    expect(result.calls).toBe(1);
+  });
+
+  it("a settled request is released: dispose afterwards does not touch it", async () => {
+    const { audio, result, request } = await started();
+    const buffer = fakeBuffer(1);
+    request.succeed(buffer);
+    await flush();
+    audio.dispose();
+    await flush();
+    expect(result.value).toBe(buffer);
+    expect(result.calls).toBe(1);
+  });
+
+  it("never rejects, whatever the decoder does", async () => {
+    const outcomes = await Promise.allSettled(
+      (["both", "promise", "callback"] as const).flatMap((decodeStyle) => {
+        const { audio, context } = setup({ context: { decodeStyle } });
+        void audio.unlock();
+        const pending = [audio.decode(bytes()), audio.decode(bytes())];
+        context.decodes[0].fail(new Error("EncodingError"));
+        context.decodes[1].fail("not even an Error");
+        return pending;
+      }),
+    );
+    expect(outcomes.every((outcome) => outcome.status === "fulfilled")).toBe(true);
+    expect(outcomes.map((outcome) => (outcome.status === "fulfilled" ? outcome.value : 0))).toEqual(
+      [null, null, null, null, null, null],
+    );
+  });
+});

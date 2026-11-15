@@ -1,49 +1,57 @@
-// AudioManager — the native Web Audio core (Sprint 5 / Phase 7, step A1;
-// docs/08_AUDIO_FX_ARCHITECTURE.md §3.1–§3.4, §7, §10).
+// AudioManager â€” the native Web Audio core (Sprint 5 / Phase 7, step A1;
+// docs/08_AUDIO_FX_ARCHITECTURE.md Â§3.1â€“Â§3.4, Â§7, Â§10).
 //
 // Generic: it knows no game, no engine event and no cue list. It owns, for
 // the lifetime of one game session:
 //
-// - The AudioContext, created lazily inside the first `unlock()` — never at
-//   module scope, never at construction (§3.2, §10 SSR rule). The factory
+// - The AudioContext, created lazily inside the first `unlock()` â€” never at
+//   module scope, never at construction (Â§3.2, Â§10 SSR rule). The factory
 //   resolves `AudioContext` / `webkitAudioContext` at call time. With
 //   neither, or when construction throws, the manager stays silent for
-//   good, logs once, and every call is a safe no-op (§10 "Safety").
-// - The bus graph: `music`, `ambience` and `sfx` gain nodes → `master`
-//   gain → limiter (`DynamicsCompressor`) → output (§3.2). Bus gains are
+//   good, logs once, and every call is a safe no-op (Â§10 "Safety").
+// - The bus graph: `music`, `ambience` and `sfx` gain nodes â†’ `master`
+//   gain â†’ limiter (`DynamicsCompressor`) â†’ output (Â§3.2). Bus gains are
 //   clamped to 0..1, stored before the context exists, and applied with
 //   `setTargetAtTime` once it does.
 // - Voices: one-shots (`play`) and loops (`loop`), at most `MAX_VOICES`
-//   at once. At the cap the lowest-priority voice is dropped — the oldest
+//   at once. At the cap the lowest-priority voice is dropped â€” the oldest
 //   one on a tie; a newcomer below every playing voice is the one dropped.
 // - The run state. The context runs only while it is unlocked, not muted
-//   and not suspended by the host (§3.3 steps 3–4: visibility / pagehide
+//   and not suspended by the host (Â§3.3 steps 3â€“4: visibility / pagehide
 //   suspend, visible-again resume "if unlocked and not muted").
-// - Unlock (§3.3 step 2, §10): `unlock()` must be called inside a user
+// - Unlock (Â§3.3 step 2, Â§10): `unlock()` must be called inside a user
 //   gesture. It creates or resumes the context and plays a 1-sample silent
 //   buffer (the iOS prime) synchronously, inside that gesture.
-// - Interruption (§3.3 step 5): an iOS `interrupted` state, or a suspend
+// - Interruption (Â§3.3 step 5): an iOS `interrupted` state, or a suspend
 //   the manager did not ask for, re-locks the manager and calls
 //   `onUnlockRequired`, so the host can re-arm its gesture listeners. If the
 //   system later resumes the context on its own, the manager accepts it.
 //
-// Not here (later steps, docs/08 §12): fetching and decoding buffers and the
-// cue manifest (A2 — injected through `resolveCue`), the gesture and
+// - Decoding (A1.1, docs/08 Â§7): `decode()` turns compressed bytes into a
+//   buffer with the same single context, so the A2 sound bank never needs
+//   a context of its own. It never creates the context: a request made
+//   before the first unlock waits, and starts inside `unlock()`, after the
+//   resume. Every request settles exactly once: with the buffer, or `null`
+//   on a decoding error, an unsupported environment or `dispose()`. A
+//   decoder result that arrives after that is ignored.
+//
+// Not here (later steps, docs/08 Â§12): fetching and caching buffers and the
+// cue manifest (A2 â€” injected through `resolveCue`), the gesture and
 // visibility listeners and every default sound setting (A4, the session),
 // the settings store (A3). The manager is a passive sink for settings.
 // It never touches `navigator.audioSession` (Q15 is open; the browser
 // default applies).
 //
 // Clock: only `context.currentTime`. No wall clock, no timers.
-// Imports: none (docs/08 §6 import rule).
+// Imports: none (docs/08 Â§6 import rule).
 
-/** The four gain buses (docs/08 §3.2). `master` sums the other three. */
+/** The four gain buses (docs/08 Â§3.2). `master` sums the other three. */
 export type AudioBus = "master" | "music" | "ambience" | "sfx";
 
 /** The buses a voice can play on. */
 export type VoiceBus = Exclude<AudioBus, "master">;
 
-/** Voice cap (docs/08 §3.2, §9). Loops count toward it. */
+/** Voice cap (docs/08 Â§3.2, Â§9). Loops count toward it. */
 export const MAX_VOICES = 16;
 
 /** Time constant of every gain, rate and filter change (`setTargetAtTime`), in seconds. */
@@ -62,7 +70,7 @@ export const MAX_PLAYBACK_RATE = 4;
 /** Lowest low-pass cutoff `LoopHandle.setFilter` accepts, in Hz. The highest is the context's Nyquist frequency. */
 export const MIN_FILTER_HZ = 20;
 
-/** Limiter settings for the `DynamicsCompressor` after `master` (docs/08 §3.2). */
+/** Limiter settings for the `DynamicsCompressor` after `master` (docs/08 Â§3.2). */
 export const LIMITER_SETTINGS = {
   thresholdDb: -1,
   kneeDb: 0,
@@ -135,6 +143,16 @@ export interface AudioContextLike {
   createDynamicsCompressor(): DynamicsCompressorNodeLike;
   createBufferSource(): AudioBufferSourceNodeLike;
   createBuffer(numberOfChannels: number, length: number, sampleRate: number): AudioBufferLike;
+  /**
+   * Both forms of the Web Audio API: current browsers return a promise and
+   * also call the callbacks; older WebKit only calls the callbacks and
+   * returns nothing.
+   */
+  decodeAudioData(
+    audioData: ArrayBuffer,
+    successCallback?: (decodedData: AudioBufferLike) => void,
+    errorCallback?: (error: unknown) => void,
+  ): PromiseLike<AudioBufferLike> | void;
   resume(): Promise<void>;
   suspend(): Promise<void>;
   close(): Promise<void>;
@@ -142,7 +160,7 @@ export interface AudioContextLike {
   removeEventListener(type: "statechange", listener: () => void): void;
 }
 
-// ----- public contract (docs/08 §7) -----
+// ----- public contract (docs/08 Â§7) -----
 
 /** A cue as the manager plays it. Supplied by the cue resolver (the A2 sound bank). */
 export interface ResolvedCue {
@@ -152,7 +170,7 @@ export interface ResolvedCue {
   readonly gain: number;
   /** Higher survives the voice cap. */
   readonly priority: number;
-  /** Loop points in seconds (loops only), to neutralize encoder padding (docs/08 §3.4). */
+  /** Loop points in seconds (loops only), to neutralize encoder padding (docs/08 Â§3.4). */
   readonly loopStart?: number;
   readonly loopEnd?: number;
 }
@@ -189,11 +207,20 @@ export interface AudioManager<CueKey extends string = string> {
   play(cue: CueKey, opts?: PlayOptions): void;
   /** Looping voice. Before unlock, or while the cue is not loaded, the returned handle is inert. */
   loop(cue: CueKey): LoopHandle;
+  /**
+   * Decodes compressed audio (for example a fetched `.m4a`) with the
+   * manager's single context. Never rejects; resolves `null` on a decoding
+   * error, when Web Audio is unavailable, or once disposed. Before the first
+   * unlock the request waits for the context; it never creates one. The
+   * browser may detach `data`, so pass a buffer that is not reused.
+   * Failures are not logged here: the caller owns its failure policy.
+   */
+  decode(data: ArrayBuffer): Promise<AudioBufferLike | null>;
   /** Host lifecycle: the tab is hidden or the page is hidden. */
   suspend(): void;
   /** Host lifecycle: the page is visible again. Resumes only if unlocked and not muted. */
   resume(): void;
-  /** Stops every voice and closes the context. Every later call is a no-op. */
+  /** Stops every voice, settles every pending decode with `null` and closes the context. Every later call is a no-op. */
   dispose(): void;
 }
 
@@ -201,7 +228,7 @@ export interface AudioManagerOptions<CueKey extends string> {
   resolveCue: CueResolver<CueKey>;
   /** Context factory, called at most once, inside the first `unlock()`. `null` means Web Audio is unavailable. */
   createContext?: () => AudioContextLike | null;
-  /** Called when the context is interrupted or suspended by the system, so the host can re-arm its gesture unlock (docs/08 §3.3 step 5). */
+  /** Called when the context is interrupted or suspended by the system, so the host can re-arm its gesture unlock (docs/08 Â§3.3 step 5). */
   onUnlockRequired?: () => void;
 }
 
@@ -245,6 +272,15 @@ interface Graph {
   readonly buses: Readonly<Record<AudioBus, GainNodeLike>>;
 }
 
+/** One `decode()` call, from the request until it settles. */
+interface DecodeRequest {
+  readonly data: ArrayBuffer;
+  /** Handed to the context's decoder; false while waiting for the first unlock. */
+  started: boolean;
+  /** Settles the caller's promise. Only the first call counts. */
+  readonly settle: (buffer: AudioBufferLike | null) => void;
+}
+
 const INERT_HANDLE: LoopHandle = Object.freeze({
   setGain: () => {},
   setRate: () => {},
@@ -261,6 +297,13 @@ const isVoiceBus = (bus: unknown): bus is VoiceBus => VOICE_BUSES.includes(bus a
 /** A gain from a caller: clamped to 0..1, or `fallback` when missing or non-finite. */
 const unitGain = (gain: number | undefined, fallback: number) =>
   typeof gain === "number" && Number.isFinite(gain) ? clamp(gain, 0, 1) : fallback;
+
+/** A decoder result the manager can play: an object with a finite, non-negative duration. */
+const isDecodedBuffer = (value: unknown): value is AudioBufferLike => {
+  if (typeof value !== "object" || value === null) return false;
+  const duration = (value as { duration?: unknown }).duration;
+  return typeof duration === "number" && Number.isFinite(duration) && duration >= 0;
+};
 
 const playbackRate = (rate: number | undefined) =>
   typeof rate === "number" && Number.isFinite(rate) && rate > 0
@@ -296,6 +339,9 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
   private readonly voices = new Set<Voice>();
   private nextOrder = 0;
 
+  /** Every unsettled `decode()` request, waiting or started, in request order. */
+  private readonly decodes = new Set<DecodeRequest>();
+
   private resumeFailureLogged = false;
   private readonly resolveFailuresLogged = new Set<string>();
 
@@ -321,6 +367,9 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     } catch (error) {
       resumed = Promise.reject(error);
     }
+    // Decoding needs the context, not a running one; it starts after the
+    // gesture-critical prime and resume.
+    this.startWaitingDecodes(context);
     return resumed.then(
       () => this.applyRunState(),
       (error: unknown) => {
@@ -356,6 +405,25 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     return voice ? this.handleFor(voice) : INERT_HANDLE;
   }
 
+  decode(data: ArrayBuffer): Promise<AudioBufferLike | null> {
+    if (this.disposed || this.unsupported) return Promise.resolve(null);
+    return new Promise<AudioBufferLike | null>((resolve) => {
+      let settled = false;
+      const request: DecodeRequest = {
+        data,
+        started: false,
+        settle: (buffer) => {
+          if (settled) return;
+          settled = true;
+          this.decodes.delete(request);
+          resolve(buffer);
+        },
+      };
+      this.decodes.add(request);
+      if (this.context) this.startDecode(this.context, request);
+    });
+  }
+
   suspend(): void {
     if (this.disposed) return;
     this.hostSuspended = true;
@@ -380,6 +448,7 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
       }
       this.finishVoice(voice);
     }
+    this.settleAllDecodes();
     const context = this.context;
     const graph = this.graph;
     this.context = null;
@@ -412,6 +481,8 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     if (!context) {
       this.unsupported = true;
       console.warn("[audio] Web Audio is unavailable; the game runs silent.", failure ?? "");
+      // No context will ever exist, so no waiting decode can start.
+      this.settleAllDecodes();
       return null;
     }
     this.context = context;
@@ -445,7 +516,7 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     };
   }
 
-  /** The iOS unlock prime: a 1-sample silent buffer played inside the gesture (docs/08 §3.3, §10). */
+  /** The iOS unlock prime: a 1-sample silent buffer played inside the gesture (docs/08 Â§3.3, Â§10). */
   private primeOutput(context: AudioContextLike): void {
     try {
       const source = context.createBufferSource();
@@ -456,6 +527,40 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     } catch {
       // The prime is best effort; resume() still runs.
     }
+  }
+
+  // ----- decoding -----
+
+  private startWaitingDecodes(context: AudioContextLike): void {
+    for (const request of [...this.decodes]) {
+      if (!request.started) this.startDecode(context, request);
+    }
+  }
+
+  /**
+   * Hands one request to the decoder. The callbacks and the returned promise
+   * may both report (current browsers), or only the callbacks (older
+   * WebKit); the request's `settle` keeps the first report.
+   */
+  private startDecode(context: AudioContextLike, request: DecodeRequest): void {
+    request.started = true;
+    const decoded = (buffer: unknown) => request.settle(isDecodedBuffer(buffer) ? buffer : null);
+    const failed = () => request.settle(null);
+    try {
+      if (typeof context.decodeAudioData !== "function") {
+        failed();
+        return;
+      }
+      const result = context.decodeAudioData(request.data, decoded, failed);
+      if (result && typeof result.then === "function") result.then(decoded, failed);
+    } catch {
+      failed();
+    }
+  }
+
+  /** Settles every unsettled request with `null`; a decoder result after this is ignored. */
+  private settleAllDecodes(): void {
+    for (const request of [...this.decodes]) request.settle(null);
   }
 
   // ----- run state -----
@@ -670,7 +775,7 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     };
   }
 
-  /** A smooth parameter change from the current value (docs/08 §3.2: `setTargetAtTime`). */
+  /** A smooth parameter change from the current value (docs/08 Â§3.2: `setTargetAtTime`). */
   private rampTo(param: AudioParamLike, value: number): void {
     const context = this.context;
     if (!context) return;

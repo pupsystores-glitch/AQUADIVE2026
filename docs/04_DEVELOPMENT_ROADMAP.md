@@ -42,7 +42,7 @@ Sprints are the execution units of this roadmap; each sprint delivers into one o
   - Approved sequence, one atomic commit per step: **P7-0 → A1–A4 → V1–V7 → A6 → A5 → P7-C** (docs/08 §12).
   - The renderer exception (proposed **E-X5**) and the UI exception (proposed **UI-X1**) are accepted in principle only. Their file scopes (docs/08 §13) must be ratified before those files change. `src/engine` and `src/shared` take no Phase 7 change.
   - Open owner decisions: Q3–Q12, Q14, Q15 (docs/08 §1.3), including audio assets and licensing (Q5) and device QA (Q14). No audio asset exists, and no licence is cleared.
-  - **Next:** owner review of P7-0, then the owner's authorization of A1. A1 is not started.
+  - **Next:** owner review of P7-0, then the owner's authorization of A1. A1 is not started. *(Superseded 2026-11-15: A1, the `AudioManager` core, is done and accepted (`3761062`). A1.1, the `AudioManager` decode interface (docs/08 §7.1), is authorized and delivered in its own commit. **A2 is next and not authorized.**)*
 
 ---
 
@@ -161,7 +161,7 @@ Professional UI Framework.
 
 # PHASE 7 — AUDIO & VISUAL EFFECTS
 
-Status: 🔄 In Progress (Sprint 5, TASK 008, started 2026-11-15, per `docs/08_AUDIO_FX_ARCHITECTURE.md`. Architecture approved by the owner 2026-11-15; P7-0, the blueprint, is the only authorized step. A1–A6, V1–V7 and P7-C each need their own authorization. *Previous status: "Pending (next planned phase after Phase 6; not started. Planning begins only on the owner's instruction.)"*)
+Status: 🔄 In Progress (Sprint 5, TASK 008, started 2026-11-15, per `docs/08_AUDIO_FX_ARCHITECTURE.md`. Architecture approved by the owner 2026-11-15. P7-0, A1 and A1.1 are done; A2–A6, V1–V7 and P7-C each need their own authorization. *(Until A1.1, 2026-11-15, this read: "P7-0, the blueprint, is the only authorized step. A1–A6, V1–V7 and P7-C each need their own authorization.")* *Previous status: "Pending (next planned phase after Phase 6; not started. Planning begins only on the owner's instruction.)"*)
 
 Objectives
 

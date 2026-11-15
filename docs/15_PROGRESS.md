@@ -52,6 +52,8 @@ M2 (the rest of integer minor units) is still deferred.
 
 **A1 accepted 2026-11-15 — supersedes "A1 is not started" above.** The owner authorized A1 on the P7-0 blueprint (`0e7ff80`). A1, the `AudioManager` core, is committed as `3761062` and pushed to `origin/develop`, and the owner accepted it on its recorded validation evidence. It is not wired, so the app is unchanged. **A2 (sound bank and manifest) is the next step. It is not authorized and not started.** See "Step A1" below.
 
+**A1.1 delivered 2026-11-15.** The owner authorized the `AudioManager` decode interface as its own step before A2. It is committed and pushed and awaits the owner's review. **A2 is still not authorized.** See "Step A1.1" below.
+
 ---
 
 ## TASK 008 — Sprint 5: Audio & Visual Effects (Phase 7) (ACTIVE, started 2026-11-15)
@@ -93,6 +95,27 @@ M2 (the rest of integer minor units) is still deferred.
   - The unlock, interruption and suspend behavior is proven against the fake context only. Real-device proof waits for the device matrix (Q14); audible proof waits for A6.
   - The limiter settings, the 15 ms parameter time constant and the voice-steal fade are untuned engineering defaults until the A6 listening pass.
   - Voice priorities are numbers chosen by the A2 manifest; no tier policy exists yet.
+  - *(2026-11-15: the decode risk is resolved by A1.1, below.)*
+
+### Step A1.1 — `AudioManager` decode interface — DELIVERED 2026-11-15; AWAITING OWNER REVIEW
+
+- **Task ID:** TASK 008, step A1.1. **Date:** 2026-11-15.
+- **Authorization:** the owner approved a narrowly scoped decode interface after the A1 acceptance and the A2 reconciliation report, as one atomic commit before A2 (docs/08 §1.1). The authorization does not cover A2.
+- **Summary** (docs/08 §7.1): `AudioManager.decode(data: ArrayBuffer): Promise<AudioBufferLike | null>`.
+  - It uses the manager's single, lazily created context. It never creates a context, never exposes it, and adds no second one.
+  - A request made before the first unlock waits. It starts inside `unlock()`, after the iOS prime and `resume()`.
+  - It never rejects. It resolves `null` on a decoding error, a synchronous throw, a malformed result, an unsupported environment (no factory result, a throwing factory, or no `decodeAudioData`) and on `dispose()`. Waiting requests settle when the unsupported environment is detected. Waiting and in-flight requests settle on `dispose()`.
+  - Each request settles exactly once. The callback-only form (older WebKit), the promise-only form, and both forms together (current browsers) are supported. The first report wins, and a late report, including one after `dispose()`, is ignored.
+  - No playback side effect, and no logging of decode failures: the A2 sound bank owns the per-asset failure policy.
+  - `AudioContextLike` gains `decodeAudioData`. The fake context records each call as a `FakeDecodeRequest` that the test settles by hand, in a chosen API style (`both` / `promise` / `callback`), with an optional synchronous throw.
+- **Files:** modified `src/audio/audio-manager.ts`, `src/audio/test/fake-audio-context.ts`, `src/audio/audio-manager.test.ts`; docs `docs/08_AUDIO_FX_ARCHITECTURE.md` (§1.1, §1.3 Q6 note, §7, §7.1, §12 row, §14 risk 12, §18), `docs/04_DEVELOPMENT_ROADMAP.md`, `docs/14_TASKS.md`, `docs/15_PROGRESS.md`, `docs/16_CURRENT_TASK.md`, `src/audio/README.md` (status line, which was stale since A1). No other file. Nothing imports the module yet.
+- **Validation (2026-11-15, PowerShell, on the A1.1 tree):** `tsc --noEmit` clean; **663/663 tests across 43 files** (40 new; the 623 existing pass unchanged); ESLint 0 errors + 6 pre-existing warnings (end-of-line neutralized), `src/audio` clean raw; `src/audio` Prettier-clean; production build passes; SSR smoke HTTP 200 with canvas markup; `git diff --check` clean; LF in every changed file; `src/engine`, `src/shared`, `src/rendering`, `src/ui`, `src/components`, `src/styles.css`, `src/assets` and the package and lock files unchanged; no dependency added.
+- **Mutation check (manual, reverted):** removing the settle-on-dispose, the settle-on-unsupported, or the `started` guard each fails tests (3, 3 and 1). Removing the per-request `settled` flag fails none, because a native promise already ignores a second resolve. The flag is kept as an explicit guard that tests cannot observe; exactly-once behavior is still pinned by the tests.
+- **Limitations:**
+  - Proven against the fake context only. Real `decodeAudioData` behavior, AAC-LC support included, waits for A2/A6 and the device matrix (Q14).
+  - A request made before unlock stays pending until a gesture or `dispose()`. That is by design (no context before a gesture), but A2 must not wait on it before the game can start.
+  - The docs are not Prettier-formatted, as at HEAD (repository convention).
+- **Voice-cap analysis (owner's instruction, recorded for A2; no code change):** see docs/08 §14 risk 12. Fixed tiers alone do not guarantee that loops survive: an equal-priority newcomer steals the oldest voice, which is usually the loop; a loop refused at a full cap gets an inert handle with no retry; a one-shot tier above the loops steals them; fading voices are not counted toward the cap. To be decided and tested before A2.
 
 ---
 

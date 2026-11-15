@@ -17,6 +17,13 @@
 // `systemSuspend()` and `systemResume()` simulate the browser changing the
 // state by itself (iOS interruption, a phone call ending). `currentTime`
 // moves only through `advance()`; playback ends only through `end()`.
+//
+// Decoding (A1.1) is manual: each `decodeAudioData` call is recorded as a
+// `FakeDecodeRequest`, and a test settles it with `succeed()` / `fail()`, or
+// drives each reporting channel on its own to test exactly-once settlement.
+// `decodeStyle` picks the API form: "both" (current browsers: callbacks and
+// a promise), "promise" (callbacks ignored) or "callback" (older WebKit: no
+// promise is returned).
 
 import type {
   AudioBufferLike,
@@ -166,12 +173,72 @@ export class FakeAudioBufferSourceNode extends FakeAudioNode implements AudioBuf
   }
 }
 
+/** How `decodeAudioData` reports: see the file header. */
+export type FakeDecodeStyle = "both" | "promise" | "callback";
+
+/** One recorded `decodeAudioData` call, settled by the test. */
+export class FakeDecodeRequest {
+  private resolvePromise: ((buffer: unknown) => void) | null = null;
+  private rejectPromise: ((error: unknown) => void) | null = null;
+  /** The promise returned to the caller, or `undefined` in the "callback" style. */
+  readonly promise: Promise<AudioBufferLike> | undefined;
+
+  constructor(
+    readonly data: ArrayBuffer,
+    readonly style: FakeDecodeStyle,
+    private readonly successCallback: ((buffer: AudioBufferLike) => void) | undefined,
+    private readonly errorCallback: ((error: unknown) => void) | undefined,
+  ) {
+    if (style !== "callback") {
+      this.promise = new Promise<AudioBufferLike>((resolve, reject) => {
+        this.resolvePromise = resolve as (buffer: unknown) => void;
+        this.rejectPromise = reject;
+      });
+      // A rejection nobody listens to must not fail the test run.
+      this.promise.catch(() => {});
+    }
+  }
+
+  /** Reports a decoded buffer through every channel of the style. */
+  succeed(buffer: unknown = fakeBuffer(1)): void {
+    if (this.style !== "promise") this.callSuccess(buffer);
+    if (this.style !== "callback") this.resolve(buffer);
+  }
+
+  /** Reports a decoding error through every channel of the style. */
+  fail(error: unknown = new Error("EncodingError: unable to decode audio data")): void {
+    if (this.style !== "promise") this.callError(error);
+    if (this.style !== "callback") this.reject(error);
+  }
+
+  // Single channels, for exactly-once tests.
+  callSuccess(buffer: unknown): void {
+    this.successCallback?.(buffer as AudioBufferLike);
+  }
+
+  callError(error: unknown): void {
+    this.errorCallback?.(error);
+  }
+
+  resolve(buffer: unknown): void {
+    this.resolvePromise?.(buffer);
+  }
+
+  reject(error: unknown): void {
+    this.rejectPromise?.(error);
+  }
+}
+
 export interface FakeAudioContextOptions {
   /** Initial state; a real context created outside a gesture starts "suspended". */
   readonly state?: string;
   readonly sampleRate?: number;
   /** When true, `resume()` rejects and the state does not change. */
   readonly rejectResume?: boolean;
+  /** The `decodeAudioData` API form; "both" by default. */
+  readonly decodeStyle?: FakeDecodeStyle;
+  /** When true, `decodeAudioData` throws synchronously. */
+  readonly throwOnDecode?: boolean;
 }
 
 export class FakeAudioContext implements AudioContextLike {
@@ -181,6 +248,9 @@ export class FakeAudioContext implements AudioContextLike {
   readonly destination = new FakeAudioNode("destination");
 
   rejectResume: boolean;
+  decodeStyle: FakeDecodeStyle;
+  throwOnDecode: boolean;
+  readonly decodes: FakeDecodeRequest[] = [];
   resumeCalls = 0;
   suspendCalls = 0;
   closeCalls = 0;
@@ -197,6 +267,8 @@ export class FakeAudioContext implements AudioContextLike {
     this.state = options.state ?? "suspended";
     this.sampleRate = options.sampleRate ?? 48_000;
     this.rejectResume = options.rejectResume ?? false;
+    this.decodeStyle = options.decodeStyle ?? "both";
+    this.throwOnDecode = options.throwOnDecode ?? false;
   }
 
   createGain(): FakeGainNode {
@@ -227,6 +299,22 @@ export class FakeAudioContext implements AudioContextLike {
     const buffer = new FakeAudioBuffer(numberOfChannels, length, sampleRate);
     this.buffers.push(buffer);
     return buffer;
+  }
+
+  decodeAudioData(
+    audioData: ArrayBuffer,
+    successCallback?: (decodedData: AudioBufferLike) => void,
+    errorCallback?: (error: unknown) => void,
+  ): Promise<AudioBufferLike> | void {
+    if (this.throwOnDecode) throw new TypeError("decodeAudioData: invalid argument");
+    const request = new FakeDecodeRequest(
+      audioData,
+      this.decodeStyle,
+      successCallback,
+      errorCallback,
+    );
+    this.decodes.push(request);
+    return request.promise;
   }
 
   resume(): Promise<void> {
