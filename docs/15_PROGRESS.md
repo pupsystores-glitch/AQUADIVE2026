@@ -44,9 +44,13 @@ M2 (the rest of integer minor units) is still deferred.
 - **Freeze:** the approved engine freeze exceptions are E-X1, E-X2 and E-X3. The renderer and the shared floor are frozen.
 - **Working tree:** it holds uncommitted renderer changes (chain visuals). They are preserved, but they are not part of any approved exception.
 
+**Reconciliation 2026-11-15 (close-out Step 3) — supersedes the statements above as a description of the repository.** `develop` = `origin/develop` = `81eb985`. Since `be10b19`: `c046b33` (close-out Step 2 docs, QA fixes D1–D4, first part of the renderer work, under the message `Update lockfile`), the web-editor `vite.config.ts` / `package.json` commits `5c5741a` … `2b8d51b`, the repairs `9ef35e9` and `4d44a50`, and `81eb985` (renderer visuals). The owner accepted the visuals and D1–D4, and approved the renderer exception **E-X4**. Approved exceptions: E-X1 to E-X4. Phase 6 is **not closed**.
+
+**Official close-out 2026-11-15 — supersedes the statements above.** **TASK 007 / Sprint 4 / Phase 6 COMPLETED.** OWNER APPROVED — 2026-11-15: gameplay including Dual Bet, mobile gameplay, and the seven-size screenshot matrix (docs/07 §19 gates 7–8). E-X4 and D1–D4 formally ratified. Close-out commits: G1 `6e28ce0`, G2 `9bded6b`, G3 `3346ed8`, G4 (the close-out documentation). 572/572 tests green. M1 stays deferred and not closed; M2 and B-R are not started. Phase 7 is not started. See "Sprint 4 close-out — Step 4" below.
+
 ---
 
-## TASK 007 — Sprint 4: User Interface (IN PROGRESS, started 2026-08-17)
+## TASK 007 — Sprint 4: User Interface (COMPLETED 2026-11-15, started 2026-08-17)
 
 Tracking note (process deviation, recorded for provenance): Commit U1 (`140790f`) landed without the per-commit tracking updates to docs 14/15/16 that every prior sprint's commits carried. The gap was caught by the U2 preparation audit (2026-08-17) and closed by this dedicated documentation catch-up commit; the entries below are recorded retroactively from the commit itself and the audit's verification.
 
@@ -66,7 +70,124 @@ Tracking note (process deviation, recorded for provenance): Commit U1 (`140790f`
 - Architectural decisions: per §8/§9 as specified — factory + module singleton so tests construct deterministic sessions while production initialization order is unchanged (§20 risk 5); the renderer factory is injectable because `SceneRenderer` needs a real 2D context; `attachCanvas` accepts the host sync callback as a documented U1→U4 seam.
 - Risks: none open. Validation (per the commit and re-verified by the 2026-08-17 U2 audit): `tsc --noEmit` clean; **93/93 tests green** (10 new: 6 store-primitive semantics — set/subscribe/Object.is bailout incl. NaN, unsubscribe isolation; 4 session tests — inert construction, attach drives resize/frame/sync, optional sync, detach/re-attach remount semantics with engine state surviving); engine/renderer freeze check clean (`140790f` touches only `src/components` and `src/ui`); working tree clean after commit. Manual gameplay pass: owner approved 2026-08-17.
 
-### Sprint 4 close-out — Step 2: browser QA, QA fixes and quality gates (2026-11-14) — UNCOMMITTED; AWAITING OWNER ACCEPTANCE
+### Sprint 4 close-out — Step 4: official close-out (2026-11-15) — COMPLETED; TASK 007 / SPRINT 4 / PHASE 6 CLOSED
+
+- **Task ID:** TASK 007 (Sprint 4, Phase 6). **Date:** 2026-11-15.
+- **Owner acceptance — OWNER APPROVED — 2026-11-15.** The owner completed and approved:
+  - manual gameplay QA, including Dual Bet, with BET 1 and BET 2 behaving independently;
+  - cashout and gameplay acceptance;
+  - mobile gameplay at 375×667 and 390×844;
+  - the full seven-size screenshot matrix (375×667, 390×844, 768×1024, 1280×720, 1366×768, 1440×900, 1920×1080);
+  - the ship, waterline and chain connection; the anchor descent, landing and slack chain; the illustrated sea floor; the redesigned Bonus Chest.
+
+  This satisfies docs/07 §19 gates 7 and 8. It also records the E-X3 Dual Bet browser QA, which had no owner record until now. It is not to be requested again unless a later change materially affects the approved behavior or visuals.
+- **E-X4 ratified** (renderer visuals; docs/07 §19 gate 4). The documented 19-file list was compared with `git diff --name-only be10b19 -- src/rendering src/assets`: an exact match, with no other rendering or asset file and nothing untracked. `src/rendering/render-state.ts`, `src/engine` and `src/shared` show no diff from `be10b19`. Committed parts: `c046b33`, `81eb985`, and the last seven files in G2 `9bded6b`. E-X4 is retrospective and file-limited. It authorizes no further renderer work, and the renderer is frozen again.
+- **D1–D4 ratified** as approved QA improvements (docs/07 §15), including the departures recorded there.
+- **Commits** (explicit path staging; no amend, rebase, reset, stash or force-push):
+
+| Group | Commit | Message | Files |
+|---|---|---|---|
+| G1 | `6e28ce0` | `feat(ui): redesigned Bonus Chest` | `src/ui/components/ChestPicker.tsx`, `src/ui/components/icons.tsx` |
+| G2 | `9bded6b` | `feat(rendering): slack chain, anchor descent and sea-floor landing (E-X4)` | `src/rendering/draw/chain.ts`, `draw/sea-floor-art.ts`, `draw/sea-floor-art.test.ts`, `layers/actor.ts`, `layers/effects.ts`, `layers/world.ts`, `src/assets/sea-floor.png` |
+| G3 | `3346ed8` | `fix(config): move preview options under vite` | `vite.config.ts` |
+| G4 | this commit | `docs: Sprint 4 Phase 6 official close-out` | docs 04, 07, 14, 15, 16 |
+
+  G1–G3 commit the owner-approved working-tree content byte for byte; nothing was edited between acceptance and commit. The accepted browser QA therefore still applies, and no check had to be repeated.
+- **Quality gates** (run after G1–G3, on `3346ed8`):
+
+| Gate | Result |
+|---|---|
+| Vitest, full suite | **572/572 passed, 42/42 files** (250 s) |
+| `tsc --noEmit` | Clean |
+| ESLint, full project, end-of-line neutralized | 0 errors, 6 warnings (pre-existing, shadcn `src/components/ui`) |
+| ESLint + Prettier, raw, the 9 changed source files | Clean |
+| Production build | Passes |
+| SSR smoke (dev server) | HTTP 200, canvas markup present |
+| `git diff --check` (G1–G3, and the docs) | Clean |
+| Freeze audit | `src/engine`, `src/shared`, `render-state.ts`: no diff since `be10b19`. `src/rendering` + `src/assets`: the 19 E-X4 files only |
+
+  **Test environment findings (not code defects).** On this Windows machine, Vitest must run from a working directory with an uppercase drive letter (`C:\…`). From `c:\…`, all 42 files fail to load with `TypeError: Cannot read properties of undefined (reading 'config')`, because the runner loads twice under two path casings. A one-assertion probe test fails the same way. At default parallelism, forked workers ran out of memory (5 files and 64 tests not run). The recorded result used `npx vitest run --maxWorkers=2` from `C:\Users\…`. Neither finding is a regression, and neither needs a code change.
+
+#### Sprint 4 completion report — FINAL (2026-11-15)
+
+Compared with docs/07 §22 (Definition of Done):
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `src/ui/` per §16; `AbyssAnchor.tsx` deleted; route mounts `GameScreen` | Met (`4440009`). §16 corrected for `scene-fit.ts`, `use-focus-rescue.ts` and `store/payout.ts` |
+| 2 | V1–V5 landed; no other behavior change | Met. Every other change is owner-approved: E-X1–E-X4, M1, D1–D4, the Bonus Chest redesign |
+| 3 | Money math in one module, settlement session-scoped | Met (`wallet-store.ts` + `payout.ts`, M1-D8) |
+| 4–6 | One owner per value; notifications via the store; strings in `strings.ts` | Met in U4–U6 |
+| 7 | Mobile layout; desktop owner-approved | Met by owner approval 2026-11-15. Mobile is approved as it now is, not as byte-identical: it changed by owner decision (Dual Bet, `tab`, D1) |
+| 8 | Every commit passed the §19 gate | Met for the closed tree. Exceptions recorded, not hidden: `c046b33` and the web-editor commits have no validation run of their own; the close-out gates cover the tree they produced |
+| 9 | Test tiers 1–3; final count recorded | Met: **572 tests across 42 files** (83 entering the sprint) |
+| 10 | Docs current | Met: 04, 07, 14, 15, 16 updated in G4. `src/ui/README.md` was last updated in `c046b33` |
+| 11 | Close-out + retrospective, with the minor-units decision | Met: below. Minor units: M1 deferred, not closed; M2 with B-R tracked separately |
+
+#### Sprint 4 Retrospective
+
+**Accomplished:** the whole docs/07 §17 plan, U0–U7: `AbyssAnchor.tsx` dissolved into a session-owned composition root, framework-agnostic stores (wallet, round, notification, bet input), single-responsibility components, a notification system, a strings seam and the responsive `tab`/`desk` layout. All five sanctioned deltas V1–V5 landed. Beyond the blueprint, under explicit owner approval: bonus eligibility (E-X1), engine-side stake validation (E-X2), Dual Bet with two independent engine slots (E-X3), the M1 money-integrity work (BigInt payout rounded down, wallet rules W1–W11, landed in `e37b81c` and `e8b1b62`), the QA fixes D1–D4, the renderer visuals (E-X4) and the redesigned Bonus Chest. The suite grew from 83 to 572 tests, including the DOM characterization tier. The engine contract stayed intact, and the renderer's `RenderState` contract never changed.
+
+**Lessons learned:**
+
+1. **Freeze exceptions belong before the work.** The renderer visuals started in the working tree under a frozen directory, and E-X4 had to be approved and then ratified after the fact. The work survived because it was kept untouched, hashed before and after every run, and its file list was verified against Git. Next time, the exception and its file list are approved first.
+2. **Web-editor commits bypass the gates.** Commits made through the connected editor landed on `develop` with no §19 run and messages that do not describe their content (`c046b33`, `Update lockfile`, holds the close-out Step 2 work). Pushed history is not rewritten (AGENTS.md), so the documents carry the reconciliation instead. Gated work should not be auto-committed from the editor.
+3. **Characterization pins paid off again.** The U3 DOM pins and the U2 golden ledgers kept "verbatim" checkable through componentization, Dual Bet and M1.
+4. **Layout needs eyes.** Agent-run browser QA found the ship off-canvas on every phone (D1), which no automated test could see. Keeping §19 gates 7–8 manual was correct.
+5. **A mid-sprint security review can outgrow its sprint.** M1 roughly doubled Sprint 4's decision load. The numbered decision log (M1-D1 … M1-D16, Q1–Q14) kept it auditable, but M1 still ends the sprint deferred, not closed. Comparable findings should get their own task from the start.
+6. **The Windows test environment is fragile.** The intermittent worker crash from Sprint 3 now has two concrete causes: the lowercase drive letter and memory pressure at default parallelism. Both are recorded above.
+
+**Deferred work (tracked, not closed):**
+
+- **M1:** deferred by the owner to the final stabilization phase. It is **not closed**. Its implementation is in Git (`e37b81c`, `e8b1b62`).
+- **M2** (integer minor units) and **B-R** (the exact integer-cent ledger): tracked separately, **not started**.
+- **Recovery items 1–3** (docs/16): line-ending normalization and `.gitattributes` (`src/rendering/theme.ts` is still CRLF in the index); a stable `main` branch; scaffold leftovers. `4d44a50` resynced `bun.lock`, but item 3 stays open until it is resolved on its own.
+- The favicon 404; the Phase 8 limitation of E-X1; jackpot RTP economics (TASK 001).
+- `docs/18` asks for a stable `main` that does not exist yet (recovery item 2). This close-out pushes to `develop` only.
+
+**Project status:** Phase 6 is complete. The project is **not production-ready**: M1 is not closed, M2 and B-R are not started, and the platform is still a single-client game with no backend (Phase 8).
+
+**Phase 7 readiness:** Phase 7 (Audio & Visual Effects) is the next planned phase. It is **not started**. Following the Sprint 2–4 pattern, it should begin with a planning step: a blueprint for the Audio Manager and the effects work, including where it may touch the frozen renderer (that needs its own exception), reviewed and approved before any code.
+
+### Sprint 4 close-out — Step 3: visual acceptance, Git reconciliation and final gates (2026-11-15) — superseded by Step 4 (the official close-out)
+
+- **Owner visual acceptance (2026-11-15).** The owner approved the visual implementation as it stands: ship appearance and waterline; the initial anchor position and chain connection; anchor descent and the sea-floor landing animation; the slack-chain animation; the illustrated sea floor; the redesigned Bonus Chest; the existing gameplay presentation. These visuals are not to be redesigned or replaced.
+- **Approvals recorded.**
+  - **E-X4, renderer visuals** (owner-approved 2026-11-15, recorded retroactively, docs/07 §19 gate 4). Presentation only. Its file list, from `be10b19` to the close-out tree, is 14 renderer source files, 4 renderer tests and `src/assets/sea-floor.png`. `render-state.ts`, `src/engine` and `src/shared` are untouched.
+  - **D1–D4 accepted** (docs/07 §15), including the Step 2 scope flags: the D1 zoom-out on short stages, and D2–D4 against the §20 a11y non-goal.
+  - Step 2 blockers 1 (D1–D4) and 4 (the renderer work) are resolved.
+- **Git history reconciled** (Step 2 recorded `develop` = `be10b19` with everything uncommitted; that was out of date):
+
+| Commit | Date | Content |
+|---|---|---|
+| `c046b33` | 2026-11-14 | Message `Update lockfile`, but it holds the close-out Step 2 docs (04, 06, 07, 14, 15, 16), the D1–D4 fixes (`scene-fit.ts`, `use-focus-rescue.ts`, `screen.a11y.test.tsx`, `session.ts`, `strings.ts`, `BetControls`, `BettingPanel`, `ChestPicker`) and the first part of the renderer work (`chain`, `ship`, `theme`, layers, `presentation.ts`). Not rewritten: it is pushed (AGENTS.md) |
+| `5c5741a`, `95e38ac`, `d26699a`, `9d083bd` | 2026-11-14/15 | Web-editor edits to `vite.config.ts` (net: a top-level `preview` block) |
+| `1491b67` … `2b8d51b` (7 commits) | 2026-11-15 | Web-editor edits to `package.json` |
+| `9ef35e9` | 2026-11-15 | Repairs the `package.json` scripts block (net since `be10b19`: a `start` script) |
+| `4d44a50` | 2026-11-15 | Syncs `bun.lock` with the devDependencies |
+| `81eb985` | 2026-11-15 | Renderer visuals: new ship, floating pre-dive anchor, illustrated sea floor (E-X4) |
+
+  None of these commits has a recorded §19 validation run of its own. The gates below cover the current tree.
+- **Close-out preparation (this step, uncommitted):**
+  1. `src/ui/components/icons.tsx`: the six `prettier/prettier` errors in `TreasureChestArt` fixed by Prettier (line wrapping only; the SVG is unchanged).
+  2. `ChestIcon` removed from `icons.tsx`. It was confirmed safe: no importer in `src` (the redesigned `ChestPicker` uses `TreasureChestArt`), no test reference, and `tsc` and the build pass without it.
+  3. Documentation reconciled: 04, 07 (§13.3, §15, §19 gate 4), 14, 15, 16.
+- **Working tree under test:** `81eb985` plus the uncommitted rest of E-X4 (`chain.ts`, `sea-floor-art.ts` + test, `actor.ts`, `effects.ts`, `world.ts`, `sea-floor.png`), the Bonus Chest redesign (`ChestPicker.tsx`, `icons.tsx`), the `vite.config.ts` fix (moves `preview` under `vite:`, as the config package's header requires) and this step's docs. No gameplay, engine or contract file changed in this step.
+- **Quality gates (2026-11-15):**
+
+| Gate | Result |
+|---|---|
+| Vitest, full suite (PowerShell, `C:\`) | **572/572 passed, 42/42 files** (200 s) |
+| `tsc --noEmit` | Clean |
+| ESLint, full project, end-of-line neutralized | 0 errors, 6 warnings (pre-existing, shadcn `src/components/ui`) |
+| ESLint + Prettier, raw, the 9 changed source files | Clean |
+| `git diff --check` | Clean |
+| Production build | Passes |
+| Freeze audit | `src/engine`, `src/shared`: no diff since `be10b19` (E-X3 is the last change). `render-state.ts` unchanged. `src/rendering`: E-X4 files only |
+
+- **Phase 6 is not closed.** Open: §19 gate 7 (owner manual gameplay on the Dual Bet build, including 375×667 and 390×844); §19 gate 8 (owner approval of the 7-size screenshot matrix: the visual acceptance covers the listed visuals and is not recorded as the matrix approval without the owner's word); the owner's E-X3 browser QA; Git authorization for the close-out commits; the retrospective (docs/07 §22 item 11). Non-blocking items are unchanged (favicon 404, M1 deferred, M2/B-R, recovery items 1–3, the E-X1 Phase 8 limitation). **Phase 7 is not started.**
+
+### Sprint 4 close-out — Step 2: browser QA, QA fixes and quality gates (2026-11-14) — superseded by Step 3 (D1–D4 accepted; committed in `c046b33`)
 
 - **Scope.** TASK 007 / Sprint 4 only. The tree under test is `be10b19` plus the uncommitted Sprint 4 QA fixes below, **plus the owner's uncommitted renderer work** (`src/rendering/draw/chain.ts`, `src/rendering/theme.ts`, untracked `src/rendering/draw/chain.test.ts`). The renderer work was present for every browser run and every gate, and it was not reviewed, changed, staged or stashed. Its SHA-256 hashes were checked before and after and are unchanged. **`be10b19` without the renderer work was not browser-tested separately.**
 - **Method.** Agent-run browser QA: headless Chrome driven over the DevTools protocol against `npm run dev` (port 5180). Phones and tablets are emulated with mobile metrics at DPR 2, desktops at DPR 1. Outcomes are forced only by a harness-side `Math.random` wrapper that answers the engine's outcome samplers (crash 2.5×; crash 200× with a 60× jackpot and 2.00× chests). No application code takes part in the forcing. Inputs are real mouse and keyboard events (no touch emulation). **These are agent-run checks. They are not the owner's manual gameplay pass (§19 gate 7) and not the owner's screenshot approval (§19 gate 8).**
@@ -111,7 +232,7 @@ Tracking note (process deviation, recorded for provenance): Commit U1 (`140790f`
 
 - **Git.** Nothing staged, committed, pushed or stashed. `develop` = `origin/develop` = `be10b19`.
 
-### Sprint 4 completion report — DRAFT (2026-11-14), awaiting owner acceptance; Phase 6 NOT closed
+### Sprint 4 completion report — DRAFT (2026-11-14), awaiting owner acceptance; Phase 6 NOT closed — superseded by the final report in Step 4 (2026-11-15)
 
 Compared with docs/07 §22 (Definition of Done):
 
