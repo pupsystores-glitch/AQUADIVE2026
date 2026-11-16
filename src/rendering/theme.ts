@@ -174,3 +174,13 @@ export const DEPTH_FX_THEME = {
   vignette: (alpha: number) =>
     `rgba(${DEPTH_VIGNETTE_TONE[0]}, ${DEPTH_VIGNETTE_TONE[1]}, ${DEPTH_VIGNETTE_TONE[2]}, ${alpha})`,
 } as const;
+
+// ----- Anchor wake and release splash (draw/particles.ts; Phase 7 step V3, docs/08 §4.3 F3 and F4) -----
+// Provisional until the owner's visual review. Alpha arrives through globalAlpha.
+
+export const WAKE_FX_THEME = {
+  /** F3 anchor-wake and F4 release bubbles. */
+  bubble: "rgb(222, 242, 255)",
+  /** F4 waterline ripple ring: a water blue, so it reads on the white hull. */
+  ripple: "rgb(78, 136, 196)",
+} as const;

@@ -31,8 +31,12 @@ import { SHIP_THEME } from "../theme";
 
 type Ctx = CanvasRenderingContext2D;
 
-/** Water surface below the ship's origin (px). */
-const WATERLINE = 20;
+/**
+ * Water surface below the ship's origin (px). Exported (Phase 7 V3, owner
+ * decision Q10/V3 item 5, option A) so the F4 release splash finds the drawn
+ * waterline; the ship's own drawing is unchanged.
+ */
+export const WATERLINE = 20;
 
 const HULL_TOP = -22; // gunwale at the stern
 const HULL_LENGTH = 600;

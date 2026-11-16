@@ -42,6 +42,56 @@ import {
   marineSnowSpecks,
 } from "./particles";
 import particlesSource from "./particles.ts?raw";
+// V3 — F3 anchor wake, F4 release splash and the Effects layer.
+import { SHIP_WORLD_Y } from "@/shared/world";
+import { SHIP_CHAIN_ATTACH_DY, SHIP_IMPACT_FX_SECONDS } from "../constants";
+import { anchorPose } from "../layers/actor";
+import { effectsLayer } from "../layers/effects";
+import { launchProgress, presentationOffsetY } from "../layers/presentation";
+import { WAKE_FX_THEME } from "../theme";
+import { drawShipImpact } from "./impact-fx";
+import {
+  ANCHOR_WAKE_ALPHA_MAX,
+  ANCHOR_WAKE_ALPHA_MIN,
+  ANCHOR_WAKE_GAP,
+  ANCHOR_WAKE_GROWTH,
+  ANCHOR_WAKE_LIFE,
+  ANCHOR_WAKE_MAX,
+  ANCHOR_WAKE_MAX_LOW,
+  ANCHOR_WAKE_RADIUS_MAX,
+  ANCHOR_WAKE_RADIUS_MIN,
+  ANCHOR_WAKE_SIDE_MAX,
+  ANCHOR_WAKE_SIDE_MIN,
+  ANCHOR_WAKE_SPACING,
+  ANCHOR_WAKE_WOBBLE,
+  BUBBLE_STRIDE,
+  RELEASE_BUBBLE_ALPHA_MAX,
+  RELEASE_BUBBLE_RADIUS_MAX,
+  RELEASE_BUBBLE_RADIUS_MIN,
+  RELEASE_RING_ALPHA,
+  RELEASE_RING_COUNT,
+  RELEASE_RING_FLATNESS,
+  RELEASE_RING_RX_END,
+  RELEASE_RING_STRIDE,
+  RELEASE_RING_UPPER,
+  RELEASE_SPLASH_DEPTH,
+  RELEASE_SPLASH_MAX,
+  RELEASE_SPLASH_MAX_LOW,
+  anchorWakeBubbles,
+  anchorWakeCount,
+  anchorWakeLaunchFade,
+  anchorWakeLifeFade,
+  drawAnchorWake,
+  drawReleaseSplash,
+  layoutAnchorWake,
+  layoutReleaseSplash,
+  releaseSplashBubbles,
+  releaseSplashProgress,
+  releaseSplashRings,
+  shipWaterlineY,
+  waterSurfaceAt,
+} from "./particles";
+import { WATERLINE, drawShip, shipScale } from "./ship";
 
 // ----- Helpers -----
 
@@ -703,5 +753,560 @@ describe("Environment layer with V2", () => {
       );
     }
     expect(named(r.calls, "createRadialGradient")).toHaveLength(1);
+  });
+});
+
+// ===== V3 — F3 anchor wake, F4 release splash (owner decisions Q10/V3) =====
+
+interface Bubble {
+  x: number;
+  y: number;
+  r: number;
+  a: number;
+}
+
+function readBubbles(buffer: Float32Array, n: number): Bubble[] {
+  const out: Bubble[] = [];
+  for (let i = 0; i < n; i++) {
+    const o = i * BUBBLE_STRIDE;
+    out.push({ x: buffer[o], y: buffer[o + 1], r: buffer[o + 2], a: buffer[o + 3] });
+  }
+  return out;
+}
+
+/** A deep, fully launched chain on a tall viewport, so no bubble is culled by an edge. */
+const DEEP = { sx: 195, sy: -300, ex: 205, ey: 1000, h: 2000 };
+
+function wake(worldY: number, fx: FxSettings, launch = 1, surface = -Infinity): Bubble[] {
+  const n = layoutAnchorWake(
+    worldY,
+    DEEP.sx,
+    DEEP.sy,
+    DEEP.ex,
+    DEEP.ey,
+    launch,
+    surface,
+    DEEP.h,
+    fx,
+  );
+  return readBubbles(anchorWakeBubbles(), n);
+}
+
+/** The chain line's x at screen height y (DEEP geometry). */
+const chainLineX = (y: number) => {
+  const u = Math.min(1, Math.max(0, (y - DEEP.ey) / (DEEP.sy - DEEP.ey)));
+  return DEEP.ex + (DEEP.sx - DEEP.ex) * u;
+};
+
+/** The camera exactly as SceneRenderer sets it up for a frame at `worldY`. */
+function diveCamera(w: number, h: number, worldY: number): Camera {
+  const camera = new Camera();
+  camera.setViewport(w, h);
+  camera.follow(worldY);
+  camera.setPresentationOffset(presentationOffsetY(worldY, w, h));
+  return camera;
+}
+
+function diveState(
+  worldY: number,
+  phase: RenderState["phase"] = "diving",
+  shipImpact: RenderState["shipImpact"] = null,
+): RenderState {
+  return {
+    phase,
+    worldY,
+    depthRatio: Math.min(1, worldY / 4200),
+    boost: 0,
+    creatures: [],
+    crashed: phase === "crashed",
+    shipImpact,
+  };
+}
+
+/** The release-splash geometry the Effects layer hands over for a frame. */
+function splashGeometry(w: number, h: number, worldY: number, t: number) {
+  const camera = diveCamera(w, h, worldY);
+  const p = anchorPose(worldY, camera, t);
+  const k = shipScale(w);
+  const shipY = camera.worldToScreenY(SHIP_WORLD_Y);
+  return {
+    holeX: p.chainStartX,
+    holeY: p.chainStartY,
+    cx: w / 2,
+    shipY,
+    k,
+    waterline: shipWaterlineY(shipY, SHIP_CHAIN_ATTACH_DY, k),
+  };
+}
+
+function splash(w: number, h: number, worldY: number, t: number, fx: FxSettings) {
+  const g = splashGeometry(w, h, worldY, t);
+  const n = layoutReleaseSplash(worldY, g.holeX, g.holeY, g.cx, g.waterline, t, g.k, fx);
+  const ringBuffer = releaseSplashRings();
+  const rings: Array<{ x: number; y: number; rx: number; ry: number; a: number }> = [];
+  for (let i = 0; i < RELEASE_RING_COUNT; i++) {
+    const o = i * RELEASE_RING_STRIDE;
+    if (ringBuffer[o + 4] > 0) {
+      rings.push({
+        x: ringBuffer[o],
+        y: ringBuffer[o + 1],
+        rx: ringBuffer[o + 2],
+        ry: ringBuffer[o + 3],
+        a: ringBuffer[o + 4],
+      });
+    }
+  }
+  return { g, bubbles: readBubbles(releaseSplashBubbles(), n), rings };
+}
+
+/** Initial descent speed, px/s: the engine's descentSpeed(1) = 120 + 28 (src/engine/domain/descent.ts). */
+const INITIAL_DESCENT_SPEED = 148;
+/** Fastest descent, px/s: (120 + 520) × (1 + 0.8 boost). */
+const MAX_DESCENT_SPEED = 1152;
+
+describe("anchor wake (F3)", () => {
+  it("caps the trail at 16 bubbles on High and 8 on Low, at every depth", () => {
+    expect([ANCHOR_WAKE_MAX, ANCHOR_WAKE_MAX_LOW]).toEqual([16, 8]);
+    expect(ANCHOR_WAKE_SPACING).toBe(20);
+    expect(anchorWakeCount(HIGH)).toBe(16);
+    expect(anchorWakeCount(LOW)).toBe(8);
+    let maxHigh = 0;
+    let maxLow = 0;
+    for (let worldY = 0.25; worldY < 4300; worldY += 0.75) {
+      const high = wake(worldY, HIGH).length;
+      const low = wake(worldY, LOW).length;
+      expect(high).toBeLessThanOrEqual(16);
+      expect(low).toBeLessThanOrEqual(8);
+      maxHigh = Math.max(maxHigh, high);
+      maxLow = Math.max(maxLow, low);
+    }
+    // The cap is actually used: the trail is full apart from a bubble at the very end of its fade.
+    expect(maxHigh).toBeGreaterThanOrEqual(15);
+    expect(maxLow).toBeGreaterThanOrEqual(7);
+  });
+
+  it("is deterministic and depth-driven: no randomness, the same inputs give the same trail", () => {
+    const random = vi.spyOn(Math, "random");
+    const a = wake(1234.5, HIGH);
+    wake(77, LOW);
+    wake(3999, HIGH, 0.7, 400);
+    expect(wake(1234.5, HIGH)).toEqual(a);
+    expect(random).not.toHaveBeenCalled();
+  });
+
+  it("keeps sizes within 0.9–2.2 px and alpha within 0.28–0.42 before the lifetime fade", () => {
+    expect([ANCHOR_WAKE_RADIUS_MIN, ANCHOR_WAKE_ALPHA_MIN, ANCHOR_WAKE_ALPHA_MAX]).toEqual([
+      0.9, 0.28, 0.42,
+    ]);
+    expect(ANCHOR_WAKE_RADIUS_MAX * (1 + ANCHOR_WAKE_GROWTH)).toBeLessThanOrEqual(2.2);
+    for (let worldY = 150; worldY < 2000; worldY += 7.3) {
+      for (const b of wake(worldY, HIGH)) {
+        expect(b.r).toBeGreaterThanOrEqual(0.9 - 1e-6);
+        expect(b.r).toBeLessThanOrEqual(2.2 + 1e-6);
+        expect(b.a).toBeGreaterThan(0);
+        expect(b.a).toBeLessThanOrEqual(0.42 + 1e-6);
+      }
+    }
+    // The lifetime envelope never amplifies; it is 0 outside the life.
+    for (let life = -0.1; life <= 1.1; life += 0.01) {
+      expect(anchorWakeLifeFade(life)).toBeGreaterThanOrEqual(0);
+      expect(anchorWakeLifeFade(life)).toBeLessThanOrEqual(1);
+    }
+    expect(anchorWakeLifeFade(0)).toBe(0);
+    expect(anchorWakeLifeFade(1)).toBe(0);
+  });
+
+  it("follows the chain above the ring and never covers the anchor", () => {
+    for (let worldY = 150; worldY < 4200; worldY += 13.7) {
+      for (const b of wake(worldY, HIGH)) {
+        expect(b.y).toBeLessThanOrEqual(DEEP.ey - ANCHOR_WAKE_GAP + 1e-3);
+        const off = Math.abs(b.x - chainLineX(b.y));
+        expect(off).toBeLessThanOrEqual(ANCHOR_WAKE_SIDE_MAX + ANCHOR_WAKE_WOBBLE + 1e-3);
+        expect(off).toBeGreaterThanOrEqual(ANCHOR_WAKE_SIDE_MIN - ANCHOR_WAKE_WOBBLE - 1e-3);
+      }
+    }
+    // The trail spans a few hundred px above the ring, not the whole screen.
+    const ys = wake(2010, HIGH).map((b) => b.y);
+    expect(DEEP.ey - Math.min(...ys)).toBeLessThan(ANCHOR_WAKE_LIFE * 1.5);
+    expect(DEEP.ey - Math.min(...ys)).toBeGreaterThan(ANCHOR_WAKE_LIFE);
+  });
+
+  it("Low draws every other bubble of the same trail", () => {
+    for (const worldY of [300, 1234.5, 2999.9]) {
+      const high = wake(worldY, HIGH).map((b) => JSON.stringify(b));
+      for (const b of wake(worldY, LOW)) expect(high).toContain(JSON.stringify(b));
+    }
+  });
+
+  it("fades in over launchProgress 0.5 → 1 and is absent before", () => {
+    expect(anchorWakeLaunchFade(0)).toBe(0);
+    expect(anchorWakeLaunchFade(0.5)).toBe(0);
+    expect(anchorWakeLaunchFade(0.75)).toBeCloseTo(0.5, 12);
+    expect(anchorWakeLaunchFade(1)).toBe(1);
+    for (let l = 0.5; l < 1; l += 0.01) {
+      expect(anchorWakeLaunchFade(l + 0.01)).toBeGreaterThanOrEqual(anchorWakeLaunchFade(l));
+    }
+    expect(wake(1000, HIGH, 0.5)).toEqual([]);
+    expect(wake(1000, HIGH, 0.3)).toEqual([]);
+    const half = wake(1000, HIGH, 0.75);
+    const full = wake(1000, HIGH, 1);
+    expect(half.length).toBeGreaterThan(0);
+    for (let i = 0; i < half.length; i++) expect(half[i].a).toBeCloseTo(full[i].a * 0.5, 6);
+  });
+
+  it("is never drawn at or above the water surface while the ship is in view", () => {
+    const surface = 700;
+    for (let worldY = 200; worldY < 800; worldY += 3.1) {
+      for (const b of wake(worldY, HIGH, 1, surface)) expect(b.y).toBeGreaterThan(surface + 2);
+    }
+  });
+
+  it("is hidden under reduced motion, at the surface and for invalid input", () => {
+    for (const worldY of [0, 150, 1000, 4000]) {
+      expect(wake(worldY, HIGH_REDUCED)).toEqual([]);
+      expect(wake(worldY, LOW_REDUCED)).toEqual([]);
+    }
+    expect(wake(0, HIGH)).toEqual([]);
+    expect(wake(-20, HIGH)).toEqual([]);
+    expect(wake(Number.NaN, HIGH)).toEqual([]);
+    expect(layoutAnchorWake(1000, 0, -300, 0, 400, 1, -Infinity, 0, HIGH)).toBe(0);
+  });
+
+  it("does not strobe at high descent speed: no pop at birth, no frozen or regular grid", () => {
+    // Birth: a bubble's first frame carries almost no alpha even at the full-speed step.
+    const fullStep = MAX_DESCENT_SPEED / 60;
+    expect(fullStep).toBeLessThan(ANCHOR_WAKE_SPACING);
+    expect(
+      ANCHOR_WAKE_ALPHA_MAX * anchorWakeLifeFade(ANCHOR_WAKE_SPACING / ANCHOR_WAKE_LIFE),
+    ).toBeLessThan(0.1);
+    // Death: the last frame of a life is invisible.
+    expect(
+      ANCHOR_WAKE_ALPHA_MAX * anchorWakeLifeFade(1 - ANCHOR_WAKE_SPACING / ANCHOR_WAKE_LIFE),
+    ).toBeLessThan(0.01);
+
+    for (const step of [INITIAL_DESCENT_SPEED / 60, 10, fullStep, ANCHOR_WAKE_SPACING]) {
+      let prevMass = -1;
+      for (let f = 0; f < 240; f++) {
+        const worldY = 1000 + f * step;
+        const bubbles = wake(worldY, HIGH);
+        // Whatever is near the ring (born within the last step) is still nearly transparent.
+        for (const b of bubbles) {
+          if (b.y > DEEP.ey - ANCHOR_WAKE_GAP - step * 1.45) expect(b.a).toBeLessThan(0.1);
+        }
+        // Total visual weight changes smoothly from frame to frame: no bubble pops in or out.
+        const mass = bubbles.reduce((s, b) => s + b.a * b.r * b.r, 0);
+        if (prevMass >= 0)
+          expect(Math.abs(mass - prevMass)).toBeLessThan(0.35 * Math.max(mass, prevMass));
+        prevMass = mass;
+      }
+    }
+
+    // At a step equal to the spacing a rigid grid would look frozen; this trail does not.
+    const a = wake(2000, HIGH)
+      .map((b) => b.y)
+      .sort((p, q) => p - q);
+    const b = wake(2000 + ANCHOR_WAKE_SPACING, HIGH)
+      .map((v) => v.y)
+      .sort((p, q) => p - q);
+    const n = Math.min(a.length, b.length);
+    let diff = 0;
+    for (let i = 0; i < n; i++) diff += Math.abs(a[i] - b[i]);
+    expect(diff / n).toBeGreaterThan(2);
+    // Irregular spacing along the trail (per-bubble rise).
+    const gaps: number[] = [];
+    for (let i = 1; i < a.length; i++) gaps.push(a[i] - a[i - 1]);
+    expect(Math.max(...gaps) / Math.max(1e-6, Math.min(...gaps))).toBeGreaterThan(1.3);
+  });
+
+  it("writes into one reused buffer and draws with constant styles", () => {
+    const buffer = anchorWakeBubbles();
+    wake(500, HIGH);
+    wake(3000, LOW);
+    expect(anchorWakeBubbles()).toBe(buffer);
+    expect(buffer).toHaveLength(ANCHOR_WAKE_MAX * BUBBLE_STRIDE);
+
+    const r = recorder();
+    drawAnchorWake(r.ctx, 2010, DEEP.sx, DEEP.sy, DEEP.ex, DEEP.ey, 1, -Infinity, DEEP.h, HIGH);
+    const n = wake(2010, HIGH).length;
+    expect(r.calls[0]).toEqual(["save"]);
+    expect(r.calls[r.calls.length - 1]).toEqual(["restore"]);
+    expect(named(r.calls, "arc")).toHaveLength(n);
+    expect(named(r.calls, "set fillStyle")).toEqual([["set fillStyle", WAKE_FX_THEME.bubble]]);
+    const allowed = [
+      "save",
+      "restore",
+      "set fillStyle",
+      "set globalAlpha",
+      "beginPath",
+      "arc",
+      "fill",
+    ];
+    for (const c of r.calls) expect(allowed).toContain(c[0]);
+
+    const none = recorder();
+    drawAnchorWake(
+      none.ctx,
+      2010,
+      DEEP.sx,
+      DEEP.sy,
+      DEEP.ex,
+      DEEP.ey,
+      1,
+      -Infinity,
+      DEEP.h,
+      HIGH_REDUCED,
+    );
+    expect(none.calls).toEqual([]);
+  });
+});
+
+describe("release splash (F4)", () => {
+  const T = 4.2;
+
+  it("plays over the first 120 world px — about 0.8 s at the initial descent speed", () => {
+    expect(RELEASE_SPLASH_DEPTH).toBe(120);
+    const seconds = RELEASE_SPLASH_DEPTH / INITIAL_DESCENT_SPEED;
+    expect(seconds).toBeGreaterThan(0.75);
+    expect(seconds).toBeLessThan(0.85);
+    expect(releaseSplashProgress(60)).toBe(0.5);
+    for (const worldY of [0, -1, 120, 121, 4000, Number.NaN]) {
+      expect(releaseSplashProgress(worldY)).toBe(0);
+    }
+  });
+
+  it("is exactly absent at worldY 0, from 120 on and under reduced motion", () => {
+    for (const [w, h] of VIEWPORTS) {
+      for (const worldY of [0, 120, 500]) {
+        for (const fx of [HIGH, LOW]) {
+          const s = splash(w, h, worldY, T, fx);
+          expect(s.bubbles).toEqual([]);
+          expect(s.rings).toEqual([]);
+          const g = s.g;
+          const r = recorder();
+          drawReleaseSplash(r.ctx, worldY, g.holeX, g.holeY, g.cx, g.waterline, T, g.k, fx);
+          expect(r.calls).toEqual([]);
+        }
+      }
+      for (const fx of [HIGH_REDUCED, LOW_REDUCED]) {
+        const g = splashGeometry(w, h, 60, T);
+        const r = recorder();
+        drawReleaseSplash(r.ctx, 60, g.holeX, g.holeY, g.cx, g.waterline, T, g.k, fx);
+        expect(r.calls).toEqual([]);
+      }
+    }
+  });
+
+  it("caps the bubbles at 8 on High and 4 on Low; Low is a subset of High", () => {
+    expect([RELEASE_SPLASH_MAX, RELEASE_SPLASH_MAX_LOW]).toEqual([8, 4]);
+    for (const [w, h] of VIEWPORTS) {
+      let seen = 0;
+      for (let worldY = 0.5; worldY < 120; worldY += 0.5) {
+        const high = splash(w, h, worldY, T, HIGH).bubbles;
+        const low = splash(w, h, worldY, T, LOW).bubbles;
+        expect(high.length).toBeLessThanOrEqual(8);
+        expect(low.length).toBeLessThanOrEqual(4);
+        const highKeys = high.map((b) => JSON.stringify(b));
+        for (const b of low) expect(highKeys).toContain(JSON.stringify(b));
+        seen = Math.max(seen, high.length);
+      }
+      expect(seen).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps every bubble under the water surface, small and faint", () => {
+    for (const [w, h] of VIEWPORTS) {
+      for (let worldY = 0.5; worldY < 120; worldY += 1.5) {
+        for (const t of [0, 1.3, 9.9]) {
+          const { g, bubbles } = splash(w, h, worldY, t, HIGH);
+          for (const b of bubbles) {
+            expect(b.y - b.r).toBeGreaterThan(waterSurfaceAt(g.cx, g.waterline, t, b.x));
+            expect(b.r).toBeGreaterThanOrEqual(RELEASE_BUBBLE_RADIUS_MIN - 1e-6);
+            expect(b.r).toBeLessThanOrEqual(RELEASE_BUBBLE_RADIUS_MAX + 1e-6);
+            expect(b.a).toBeGreaterThan(0);
+            expect(b.a).toBeLessThanOrEqual(RELEASE_BUBBLE_ALPHA_MAX + 1e-6);
+            // They stay at the hole: never further from it than the largest ring.
+            expect(Math.abs(b.x - g.holeX)).toBeLessThan(RELEASE_RING_RX_END[1] * g.k);
+          }
+        }
+      }
+    }
+  });
+
+  it("draws two rings on the ship's drawn waterline above the hawse hole, at every viewport", () => {
+    const points = (calls: Call[]) => {
+      // drawShip strokes the surface polyline last: beginPath, moveTo, lineTo…, stroke.
+      const end = calls.map((c) => c[0]).lastIndexOf("stroke");
+      const start = calls
+        .slice(0, end)
+        .map((c) => c[0])
+        .lastIndexOf("beginPath");
+      return calls.slice(start + 1, end).map((c) => [c[1] as number, c[2] as number]);
+    };
+    for (const [w, h] of VIEWPORTS) {
+      for (const worldY of [10, 45, 90]) {
+        for (const t of [0, 2.5, 13.1]) {
+          const { g, rings } = splash(w, h, worldY, t, HIGH);
+          expect(rings.length).toBeGreaterThan(0);
+          expect(rings.length).toBeLessThanOrEqual(2);
+          const ship = recorder();
+          const motion = 1 - launchProgress(worldY, w, h);
+          drawShip(ship.ctx, g.cx, g.shipY, t, w, SHIP_CHAIN_ATTACH_DY, motion);
+          const line = points(ship.calls);
+          const i = line.findIndex((p, j) => j > 0 && p[0] >= g.holeX);
+          const [x0, y0] = line[i - 1];
+          const [x1, y1] = line[i];
+          const drawnY = y0 + ((y1 - y0) * (g.holeX - x0)) / (x1 - x0);
+          for (const ring of rings) {
+            expect(ring.x).toBe(Math.fround(g.holeX));
+            expect(ring.y).toBeCloseTo(drawnY, 3);
+          }
+        }
+      }
+    }
+  });
+
+  it("scales the rings with the ship and keeps them flat and faint", () => {
+    expect(WATERLINE).toBe(20);
+    for (const [w, h] of VIEWPORTS) {
+      const k = shipScale(w);
+      for (let worldY = 0.5; worldY < 120; worldY += 0.5) {
+        for (const ring of splash(w, h, worldY, T, HIGH).rings) {
+          expect(ring.rx).toBeLessThanOrEqual(RELEASE_RING_RX_END[1] * k + 1e-3);
+          expect(ring.ry).toBeCloseTo(ring.rx * RELEASE_RING_FLATNESS, 4);
+          expect(ring.a).toBeLessThanOrEqual(Math.max(...RELEASE_RING_ALPHA) + 1e-6);
+        }
+      }
+    }
+    // Same progress, smaller ship → proportionally smaller rings.
+    const big = splash(1920, 1080, 60, T, HIGH).rings;
+    const small = splash(375, 667, 60, T, HIGH).rings;
+    expect(small).toHaveLength(big.length);
+    const ratio = shipScale(375) / shipScale(1920);
+    expect(ratio).toBeLessThan(1);
+    for (let i = 0; i < big.length; i++) expect(small[i].rx / big[i].rx).toBeCloseTo(ratio, 4);
+  });
+
+  it("strokes each ring's lower half at the ring alpha and its upper half at 0.45 of it", () => {
+    const g = splashGeometry(390, 844, 50, T);
+    const s = splash(390, 844, 50, T, HIGH);
+    expect(s.rings).toHaveLength(2);
+    const r = recorder();
+    drawReleaseSplash(r.ctx, 50, g.holeX, g.holeY, g.cx, g.waterline, T, g.k, HIGH);
+    expect(named(r.calls, "set strokeStyle")).toEqual([["set strokeStyle", WAKE_FX_THEME.ripple]]);
+    const ellipses = named(r.calls, "ellipse");
+    expect(ellipses).toHaveLength(4);
+    const alphas = named(r.calls, "set globalAlpha").map((c) => c[1] as number);
+    for (let i = 0; i < 2; i++) {
+      expect(ellipses[2 * i].slice(6)).toEqual([0, Math.PI]);
+      expect(ellipses[2 * i + 1].slice(6)).toEqual([Math.PI, Math.PI * 2]);
+      expect(alphas[2 * i]).toBeCloseTo(s.rings[i].a, 6);
+      expect(alphas[2 * i + 1]).toBeCloseTo(s.rings[i].a * RELEASE_RING_UPPER, 6);
+    }
+    expect(named(r.calls, "save")).toHaveLength(named(r.calls, "restore").length);
+    expect(releaseSplashRings()).toHaveLength(RELEASE_RING_COUNT * RELEASE_RING_STRIDE);
+    expect(releaseSplashBubbles()).toHaveLength(RELEASE_SPLASH_MAX * BUBBLE_STRIDE);
+  });
+});
+
+describe("Effects layer with V3", () => {
+  const TIME = { animTime: 7.77, frameDt: 1 / 60 };
+
+  it("draws nothing new before the dive: the pre-dive surface is unchanged", () => {
+    for (const [w, h] of VIEWPORTS) {
+      for (const fx of [HIGH, LOW, HIGH_REDUCED, undefined]) {
+        for (const state of [diveState(0, "idle"), diveState(0, "diving")]) {
+          const r = recorder();
+          effectsLayer.render(r.ctx, state, diveCamera(w, h, 0), TIME, fx);
+          expect(r.calls).toEqual([]);
+        }
+      }
+    }
+  });
+
+  it("vanishes at once on crash, cashout and bonus, and under reduced motion", () => {
+    for (const [w, h] of VIEWPORTS) {
+      for (const worldY of [40, 300, 2500]) {
+        for (const phase of ["crashed", "cashed", "bonus", "idle"] as const) {
+          const r = recorder();
+          effectsLayer.render(
+            r.ctx,
+            diveState(worldY, phase),
+            diveCamera(w, h, worldY),
+            TIME,
+            HIGH,
+          );
+          expect(r.calls).toEqual([]);
+        }
+        for (const fx of [HIGH_REDUCED, LOW_REDUCED]) {
+          const r = recorder();
+          effectsLayer.render(r.ctx, diveState(worldY), diveCamera(w, h, worldY), TIME, fx);
+          expect(r.calls).toEqual([]);
+        }
+      }
+    }
+  });
+
+  it("while diving draws the release splash at the start and the wake once launched", () => {
+    for (const [w, h] of VIEWPORTS) {
+      // Release: rings centred on the chain's top (the hawse hole).
+      const early = recorder();
+      effectsLayer.render(early.ctx, diveState(50), diveCamera(w, h, 50), TIME, HIGH);
+      const hole = anchorPose(50, diveCamera(w, h, 50), TIME.animTime).chainStartX;
+      const ellipses = named(early.calls, "ellipse");
+      expect(ellipses.length).toBeGreaterThan(0);
+      for (const e of ellipses) expect(e[1]).toBe(Math.fround(hole));
+
+      // Deep: the wake only — bubbles above the ring, within the cap.
+      for (const [fx, cap] of [
+        [HIGH, 16],
+        [LOW, 8],
+      ] as const) {
+        const camera = diveCamera(w, h, 2000);
+        const r = recorder();
+        effectsLayer.render(r.ctx, diveState(2000), camera, TIME, fx);
+        const end = anchorPose(2000, camera, TIME.animTime).chainEndY;
+        const arcs = named(r.calls, "arc");
+        expect(arcs.length).toBeGreaterThan(0);
+        expect(arcs.length).toBeLessThanOrEqual(cap);
+        for (const a of arcs)
+          expect(a[2] as number).toBeLessThanOrEqual(end - ANCHOR_WAKE_GAP + 1e-3);
+        expect(named(r.calls, "ellipse")).toEqual([]);
+        expect(named(r.calls, "save")).toHaveLength(named(r.calls, "restore").length);
+      }
+    }
+  });
+
+  it("without an FX argument falls back to the renderer defaults", () => {
+    const implicit = recorder();
+    effectsLayer.render(implicit.ctx, diveState(1500), diveCamera(390, 844, 1500), TIME);
+    const explicit = recorder();
+    effectsLayer.render(explicit.ctx, diveState(1500), diveCamera(390, 844, 1500), TIME, HIGH);
+    expect(implicit.calls).toEqual(explicit.calls);
+  });
+
+  it("leaves the jackpot impact burst exactly as before", () => {
+    let seed = 0;
+    const random = vi.spyOn(Math, "random").mockImplementation(() => (seed++ * 0.6180339887) % 1);
+    for (const [w, h] of VIEWPORTS) {
+      for (const elapsed of [0, 0.4, 1.2, SHIP_IMPACT_FX_SECONDS]) {
+        for (const phase of ["bonus", "cashed", "diving"] as const) {
+          const worldY = 4200;
+          const state = diveState(worldY, phase, { elapsed });
+          const camera = diveCamera(w, h, worldY);
+          seed = 0;
+          const now = recorder();
+          effectsLayer.render(now.ctx, state, camera, TIME, HIGH);
+          seed = 0;
+          const before = recorder();
+          if (elapsed < SHIP_IMPACT_FX_SECONDS) {
+            const p = anchorPose(worldY, camera, TIME.animTime, Math.max(0, elapsed));
+            const life = Math.min(1, elapsed / SHIP_IMPACT_FX_SECONDS);
+            drawShipImpact(before.ctx, p.x, p.y, w, h, elapsed, life);
+          }
+          expect(normalise(now.calls)).toEqual(normalise(before.calls));
+        }
+      }
+    }
+    expect(random).toHaveBeenCalled();
   });
 });
