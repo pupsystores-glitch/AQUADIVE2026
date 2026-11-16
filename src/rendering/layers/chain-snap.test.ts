@@ -295,11 +295,23 @@ describe("upper chain motion", () => {
         const n = layoutUpperChain(t, s.csx, s.csy);
         expect(polylineLength(n)).toBeCloseTo(L0 - snapRecoil(t), 6);
         const { list } = upperLinks(t, s.csx, s.csy);
+        // Chord between consecutive link centres stays within the curve tolerance of one pitch.
+        // D-T1: the same bounds on every link, asserted once per time step on the
+        // shortest and longest chord instead of twice per link. A NaN chord fails
+        // the Number.isFinite check, as it failed the per-link comparisons.
+        let min = Infinity;
+        let max = -Infinity;
+        let finite = true;
         for (let i = 1; i < list.length - 1; i++) {
-          // Chord between consecutive link centres stays within the curve tolerance of one pitch.
           const d = Math.hypot(list[i].cx - list[i - 1].cx, list[i].cy - list[i - 1].cy);
-          expect(d).toBeGreaterThan(CHAIN_LINK_PITCH - 0.6);
-          expect(d).toBeLessThan(CHAIN_LINK_PITCH + 1e-6);
+          if (!Number.isFinite(d)) finite = false;
+          if (d < min) min = d;
+          if (d > max) max = d;
+        }
+        if (list.length > 2) {
+          expect(finite).toBe(true);
+          expect(min).toBeGreaterThan(CHAIN_LINK_PITCH - 0.6);
+          expect(max).toBeLessThan(CHAIN_LINK_PITCH + 1e-6);
         }
       }
     }
