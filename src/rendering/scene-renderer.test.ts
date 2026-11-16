@@ -4,6 +4,9 @@
 // untouched), one latch per crash on the first rendered crashed frame, the
 // settled result after a remount mid-crash, a caller-supplied chainSnap
 // winning over the renderer's own clock, and no per-frame allocation.
+// Since V1 also: the FX queue's crash entry shares the chain-snap break time
+// (one crash clock), triggers leave the chain-snap timing unchanged, the
+// queue resets for the next round, and the motion / quality flags are inert.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RenderState } from "./render-state";
 
@@ -101,5 +104,95 @@ describe("SceneRenderer chain-snap timing", () => {
       chainSnap: { startedAt: 0.5, elapsed: 0.7 },
     };
     expect(frame(r, supplied, 1.2)).toBe(supplied);
+  });
+});
+
+// V1 (docs/08 §4.2): the FX queue reuses the E-X7 break time — one crash clock.
+describe("SceneRenderer FX queue (V1)", () => {
+  beforeEach(() => {
+    seen.length = 0;
+  });
+
+  it("stamps a crash trigger with the chain-snap break time, every frame", () => {
+    const r = renderer();
+    frame(r, engineState("diving"), 9.98);
+    r.trigger("crash"); // the session forwards `crashed` before the frame renders
+    for (const t of [10, 10.5, 11.25, 12.29]) {
+      const v = frame(r, engineState("crashed"), t);
+      expect(r.activeFx("crash")?.startedAt).toBe(v.chainSnap?.startedAt);
+      expect(r.activeFx("crash")?.elapsed).toBe(v.chainSnap?.elapsed);
+    }
+    expect(r.activeFx("crash")?.startedAt).toBe(10);
+    frame(r, engineState("crashed"), 10 + CHAIN_SNAP_SETTLE_SECONDS);
+    expect(r.activeFx("crash")).toBeNull();
+  });
+
+  it("chain-snap timing is identical with or without triggers, including duplicates", () => {
+    const script = (withTriggers: boolean) => {
+      seen.length = 0;
+      const r = renderer();
+      const out: unknown[] = [];
+      for (const [phase, t] of [
+        ["diving", 1],
+        ["crashed", 2],
+        ["crashed", 2.5],
+        ["crashed", 4.4],
+        ["idle", 4.5],
+        ["diving", 9.5],
+        ["crashed", 10],
+        ["crashed", 11],
+      ] as const) {
+        if (withTriggers && phase === "crashed") r.trigger("crash");
+        if (withTriggers && phase === "idle") r.trigger("reset");
+        const v = frame(r, engineState(phase), t);
+        out.push(v.chainSnap ? { ...v.chainSnap } : null);
+      }
+      return out;
+    };
+    expect(script(true)).toEqual(script(false));
+  });
+
+  it("resets for the next round and stamps the next crash freshly", () => {
+    const r = renderer();
+    frame(r, engineState("diving"), 1);
+    r.trigger("crash");
+    frame(r, engineState("crashed"), 2);
+    r.trigger("reset");
+    frame(r, engineState("idle"), 4.4);
+    expect(r.activeFx("crash")).toBeNull();
+    expect(r.activeFx("reset")).toEqual({ kind: "reset", startedAt: 4.4, elapsed: 0 });
+    frame(r, engineState("diving"), 9.5);
+    r.trigger("crash");
+    frame(r, engineState("crashed"), 10);
+    expect(r.activeFx("crash")).toEqual({ kind: "crash", startedAt: 10, elapsed: 0 });
+  });
+
+  it("a fresh renderer mid-crash (remount) has no crash FX and shows the settled break", () => {
+    const r = renderer();
+    const v = frame(r, engineState("crashed"), 30);
+    expect(v.chainSnap?.elapsed).toBeCloseTo(CHAIN_SNAP_SETTLE_SECONDS, 12);
+    expect(r.activeFx("crash")).toBeNull();
+  });
+
+  it("uses a caller-supplied chainSnap as the crash timestamp", () => {
+    const r = renderer();
+    frame(r, engineState("diving"), 1);
+    r.trigger("crash");
+    frame(r, { ...engineState("crashed"), chainSnap: { startedAt: 0.5, elapsed: 0.7 } }, 1.2);
+    expect(r.activeFx("crash")?.startedAt).toBe(0.5);
+  });
+
+  it("motion and quality flags are stored, default off/high, and change no state; shake stays 0", () => {
+    const r = renderer();
+    expect(r.fxSettings()).toEqual({ reducedMotion: false, quality: "high", shakeOffset: 0 });
+    r.setMotion({ reducedMotion: true });
+    r.setQuality("low");
+    (r as unknown as { setQuality(q: string): void }).setQuality("ultra"); // ignored
+    const s = engineState("diving");
+    expect(frame(r, s, 1)).toBe(s);
+    expect(r.fxSettings()).toEqual({ reducedMotion: true, quality: "low", shakeOffset: 0 });
+    r.trigger("crash");
+    frame(r, engineState("crashed"), 2);
+    expect(r.fxSettings().shakeOffset).toBe(0);
   });
 });

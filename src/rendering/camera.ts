@@ -9,6 +9,11 @@
 // inside worldToScreenY): the pre-dive view shifts the world down on short
 // viewports so the surface ship is fully visible (layers/presentation.ts).
 // It is 0 during normal diving, which leaves the transform bit-identical.
+//
+// Shake offset (docs/05 §6 reserved `shake`, docs/08 §4.2; V1): a second
+// additive screen-Y offset, set once per frame by SceneRenderer from the FX
+// queue. V1 always sets 0, so the transform is unchanged; the deterministic
+// crash shake (F6) is V5.
 
 import { ANCHOR_WORLD_OFFSET_PX } from "@/shared/world";
 import { ANCHOR_SCREEN_Y_FRAC } from "./constants";
@@ -16,6 +21,7 @@ import { ANCHOR_SCREEN_Y_FRAC } from "./constants";
 export class Camera {
   private followY = 0;
   private offsetY = 0;
+  private shakeY = 0;
 
   readonly viewport = { w: 0, h: 0 };
 
@@ -35,11 +41,22 @@ export class Camera {
     this.offsetY = dy;
   }
 
+  /** Owner-only: additive screen-Y shake offset (0 = none; a non-finite value is treated as 0). */
+  setShake(dy: number) {
+    this.shakeY = Number.isFinite(dy) ? dy : 0;
+  }
+
+  /** The current shake offset (screen px). */
+  get shakeOffset(): number {
+    return this.shakeY;
+  }
+
   worldToScreenY(worldY: number): number {
     return (
       this.viewport.h * ANCHOR_SCREEN_Y_FRAC +
       (worldY - (this.followY + ANCHOR_WORLD_OFFSET_PX)) +
-      this.offsetY
+      this.offsetY +
+      this.shakeY
     );
   }
 

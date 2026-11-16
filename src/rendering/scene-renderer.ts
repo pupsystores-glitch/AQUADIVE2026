@@ -12,6 +12,7 @@
 
 import { Camera } from "./camera";
 import { MAX_DPR } from "./constants";
+import { cameraShakeOffset, FxQueue, type FxEntry, type FxKind, type FxQuality } from "./fx-queue";
 import { actorLayer } from "./layers/actor";
 import { ChainSnapClock } from "./layers/chain-snap";
 import { backgroundLayer } from "./layers/background";
@@ -33,6 +34,7 @@ export type {
   RenderState,
   RenderTime,
 } from "./render-state";
+export type { FxEntry, FxKind, FxQuality } from "./fx-queue";
 export { SHIP_IMPACT_FX_SECONDS } from "./constants";
 
 // Dev-only frame-time meter (§14 item 8, landed in R5). The wall-clock read
@@ -63,6 +65,11 @@ export class SceneRenderer {
     shipImpact: null,
     chainSnap: null,
   };
+  // V1 (docs/08 §4.2): the FX queue and the motion / quality flags. The
+  // queue's crash entry reads the chain-snap break above — one crash clock.
+  private readonly fx = new FxQueue();
+  private reducedMotion = false;
+  private fxQuality: FxQuality = "high";
 
   // Canonical layer order, bottom → top (§5).
   private readonly layers: readonly RenderLayer[] = [
@@ -104,9 +111,12 @@ export class SceneRenderer {
     // While betting is open the layers draw the surface view
     // (layers/presentation.ts); in every other phase `view` is `state`.
     const view = this.withChainSnap(presentState(state), time.animTime);
+    // V1: stamp queued FX on this frame's animTime; the crash entry shares the break time.
+    this.fx.update(time.animTime, view.chainSnap?.startedAt ?? null);
     this.camera.setViewport(w, h);
     this.camera.follow(view.worldY);
     this.camera.setPresentationOffset(presentationOffsetY(view.worldY, w, h));
+    this.camera.setShake(cameraShakeOffset(this.fx, time.animTime, this.reducedMotion));
 
     for (const layer of this.layers) {
       layer.render(ctx, view, this.camera, time);
@@ -116,10 +126,44 @@ export class SceneRenderer {
   }
 
   /**
+   * V1: queue an FX event (docs/08 §5). Fire-and-forget: it is stamped on the
+   * next frame's animTime and never throws. A repeated crash trigger during
+   * one break is ignored. No visible effect reads the queue in V1.
+   */
+  trigger(kind: FxKind) {
+    this.fx.trigger(kind);
+  }
+
+  /** V1: the reduced-motion flag (default false). Behavior-neutral until an effect reads it. */
+  setMotion(opts: { readonly reducedMotion: boolean }) {
+    this.reducedMotion = opts?.reducedMotion === true;
+  }
+
+  /** V1: render quality (default "high"). Behavior-neutral in V1; other values are ignored. */
+  setQuality(quality: FxQuality) {
+    if (quality === "high" || quality === "low") this.fxQuality = quality;
+  }
+
+  /** V1 diagnostics and tests: the active FX entry of a kind, as of the last frame. */
+  activeFx(kind: FxKind): FxEntry | null {
+    return this.fx.active(kind);
+  }
+
+  /** V1 diagnostics and tests: the current flags and the last frame's camera shake offset. */
+  fxSettings(): { reducedMotion: boolean; quality: FxQuality; shakeOffset: number } {
+    return {
+      reducedMotion: this.reducedMotion,
+      quality: this.fxQuality,
+      shakeOffset: this.camera.shakeOffset,
+    };
+  }
+
+  /**
    * E-X7: the state with renderer-owned chain-snap timing while crashed. A
-   * caller-supplied `chainSnap` (a future FX queue) wins, so the renderer
-   * never runs a second crash clock. Outside crashed the state passes through
-   * untouched; while crashed it is copied into one reused object.
+   * caller-supplied `chainSnap` wins, so the renderer never runs a second
+   * crash clock. Outside crashed the state passes through untouched; while
+   * crashed it is copied into one reused object. Since V1 this break time is
+   * also the FX queue's crash timestamp (frame()).
    */
   private withChainSnap(state: RenderState, animTime: number): RenderState {
     const timing = this.chainSnapClock.update(state.phase, animTime);
@@ -154,5 +198,6 @@ export class SceneRenderer {
   dispose() {
     this.canvas = null;
     this.ctx = null;
+    this.fx.clear();
   }
 }

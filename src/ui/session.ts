@@ -56,6 +56,13 @@
 // time the frame callback received, so no extra engine read is made. The
 // host never throws, so audio cannot stop the rAF loop or settlement.
 // dispose() ends the audio subsystem only.
+//
+// Since V1 (Phase 7, docs/08 §4.2, §5) the session also forwards two engine
+// events to the attached renderer's FX queue: `crashed` → trigger("crash")
+// and `bettingOpened` → trigger("reset"). The two listeners are subscribed
+// once, at construction, after the audio host (every earlier listener keeps
+// its order); they reach only the renderer currently attached, never throw,
+// and forward nothing while no canvas is attached. V1 adds no visible effect.
 
 import {
   BET_SLOTS,
@@ -91,8 +98,13 @@ import {
   type WalletStore,
 } from "@/ui/store/wallet-store";
 
-/** The renderer surface the session drives — SceneRenderer in production, injectable for headless tests (§8 test seam). */
-export type CanvasRenderer = Pick<SceneRenderer, "resize" | "frame" | "dispose">;
+/**
+ * The renderer surface the session drives — SceneRenderer in production,
+ * injectable for headless tests (§8 test seam). `trigger` (V1, the FX event
+ * channel) is optional so a test renderer may omit it.
+ */
+export type CanvasRenderer = Pick<SceneRenderer, "resize" | "frame" | "dispose"> &
+  Partial<Pick<SceneRenderer, "trigger">>;
 
 /** Engine deps injectable per §8: scripted authority, deterministic Rngs, and (because SceneRenderer needs a real 2D context) the renderer factory. */
 export interface GameSessionDeps {
@@ -224,6 +236,21 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   // construction — no context, DOM, storage or fetch (SSR-safe).
   const soundSettings = createSoundSettingsStore({ storage: deps.soundSettingsStorage });
   const audio = createAudioHost({ ...deps.audio, events: engine.events, settings: soundSettings });
+  // V1 (docs/08 §4.2, §5): forward `crashed` / `bettingOpened` to the attached
+  // renderer's FX queue. Subscribed once, here, after the audio host, so every
+  // earlier listener keeps its order; the renderer stamps the event on its next
+  // frame. Nothing is forwarded while no canvas is attached, and a renderer
+  // failure never reaches the engine bus.
+  let fxTarget: CanvasRenderer | null = null;
+  const forwardFx = (kind: "crash" | "reset") => {
+    try {
+      fxTarget?.trigger?.(kind);
+    } catch {
+      // FX are presentation only; dropping one is harmless.
+    }
+  };
+  engine.events.on("crashed", () => forwardFx("crash"));
+  engine.events.on("bettingOpened", () => forwardFx("reset"));
 
   return {
     engine,
@@ -249,6 +276,7 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     },
     attachCanvas: (canvas) => {
       const renderer = createRenderer(canvas);
+      fxTarget = renderer;
       // Synchronize once on attach. In production this changes nothing (the
       // engine advances only inside driver frames, each followed by a sync),
       // so it never notifies; it guarantees a remount cannot show a stale
@@ -294,6 +322,7 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
         },
       });
       return () => {
+        if (fxTarget === renderer) fxTarget = null;
         driver.detach();
         renderer.dispose();
         detachAudio();
