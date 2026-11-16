@@ -41,6 +41,22 @@ export interface RenderState {
   readonly crashed: boolean;
   /** Seconds since ship impact (renderer-clock based), or null when no FX is active. */
   readonly shipImpact: { readonly elapsed: number } | null;
+  /**
+   * E-X7 — chain-snap timing while crashed. Renderer-owned: the engine never
+   * sets it. SceneRenderer derives it from the phase transition and the
+   * animation clock (layers/chain-snap.ts, ChainSnapClock) when the caller
+   * leaves it undefined; a future renderer FX queue (docs/08 V1) may supply it
+   * instead, so there is only ever one crash clock.
+   */
+  readonly chainSnap?: ChainSnapTiming | null;
+}
+
+/** When the chain snapped, on the animation clock (E-X7). */
+export interface ChainSnapTiming {
+  /** animTime of the break (the first rendered crashed frame), seconds. */
+  readonly startedAt: number;
+  /** animTime − startedAt, seconds, never negative. */
+  readonly elapsed: number;
 }
 
 /** The only time the renderer ever sees — no wall clocks inside src/rendering (§4). */

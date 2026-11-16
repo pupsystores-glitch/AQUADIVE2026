@@ -34,7 +34,29 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 | E-X3 — Dual Bet (engine freeze exception + M1 per-slot amendment + dual panel) | **Owner-approved 2026-11-14; committed in `be10b19`, on `origin/develop`.** This implements the layout decision above: BET 1 and BET 2 side by side on phones and `tab`, stacked in the `desk` rail, both real engine slots. Engine (docs/06 §13.2): `slot` on `placeBet`/`cashOut`/`betPlaced`/`cashedOut`, `invalid-slot`, per-slot impact auto-cash, one chest pick for all eligible slots, `participants`, snapshot v3. Wallet (docs/07 §23.17): every rule per slot, per-slot fault isolation, W2/W3 per slot. Session (docs/07 §8): `betInputs`, in-flight stake reservation. UI (docs/07 §13.3): `BetSlotPanel` ×2, `slot` props, quick bets hidden below `tab`. **Validation not recorded** (the commit message has none). **Pending:** owner browser QA, including 375×667 and 390×844 (no overflow, no unnecessary scroll, canvas unclipped) |
 | Sprint 4 close-out (Steps 1–4) | **Completed 2026-11-15.** Owner approved gates 7–8 (gameplay incl. Dual Bet, mobile, seven-size matrix); E-X4 and D1–D4 ratified; G1 `6e28ce0`, G2 `9bded6b`, G3 `3346ed8`, G4 docs; 572/572 tests. **TASK 007 / Phase 6 closed.** M1 deferred, not closed |
 
-## Current: E-X6 — Ship visual replacement, S3 shine overlay DELIVERED (2026-11-16, WORKING TREE, UNCOMMITTED), AWAITING OWNER REVIEW
+## Current: E-X7 — Chain Snapped animation DELIVERED (2026-11-16, WORKING TREE, UNCOMMITTED), AWAITING OWNER VISUAL REVIEW
+
+- **Authorization (2026-11-16):** rendering-only exception E-X7 (docs/08 §13.4); 2.4 s engine crash timing unchanged; no UI, engine, shared, audio, anchor-drawing, ship or asset change.
+- **Delivered:** the chain breaks four links above the anchor at the first rendered crashed frame; anchor and links fall away (or land near the floor); the upper chain recoils, whips and settles by 2.3 s. Files: `render-state.ts`, `scene-renderer.ts`, `scene-renderer.test.ts` (new), `layers/actor.ts`, `layers/chain-snap.ts` (new), `layers/chain-snap.test.ts` (new), `draw/chain.ts`, `draw/chain.test.ts`, docs 08, 14–16. Record: docs/15, "E-X7".
+- **Coexists with** the uncommitted E-X6 S3 refinement below (untouched).
+- **Next:** the owner's visual review. **Stop condition:** do not commit or push; no V1 or other Phase 7 work.
+
+## Current: E-X6 — Ship visual replacement, S3 refinement DELIVERED, S4 lamp CANCELLED AND REMOVED (2026-11-16, WORKING TREE, UNCOMMITTED), AWAITING OWNER REVIEW
+
+*(Until the S4 cancellation this heading read: "E-X6 — Ship visual replacement, S3 refinement + S4 amber lamp DELIVERED (2026-11-16, WORKING TREE, UNCOMMITTED), AWAITING OWNER REVIEW".)*
+
+- **S4 cancelled (owner, 2026-11-16):** the amber lamp — drawing, glow, blink logic, constants and tests — is removed from `src/rendering/draw/ship.ts` and `draw/ship.test.ts`; no lamp asset ever existed. The flag stays cancelled (S5). Kept: S1, S2, S2.1 and S3 with its refinement (shine 0.50 above / 0.35 below the water, 7 s cycle). Uncommitted changes against `2c4d4bf`: the S3 refinement in those two files and docs 14–16.
+- **Next:** the owner's review. **Stop condition:** do not commit or push; do not start S6.
+
+*(Bullets of the S3 refinement + S4 delivery, kept as written; the S4 parts are superseded:)*
+
+*(Until this step the heading read: "E-X6 — Ship visual replacement, S3 shine overlay DELIVERED (2026-11-16, WORKING TREE, UNCOMMITTED), AWAITING OWNER REVIEW". S1–S3 and S2.1 were since committed in `2c4d4bf` and pushed — not by this agent; `HEAD` = `origin/develop` = `2c4d4bf`.)*
+
+- **Authorization (2026-11-16):** S3 refinement (shine peak 0.50 above the water surface, 0.35 below, same 7 s phase) and S4 (exactly one amber lamp at the reference position, one on/off cycle every 2 s: lit 0.00–0.15 s, held to 0.85 s, out by 1.10 s, off to 2.00 s). Scope: the ship-rendering files and tests in `src/rendering`, `src/assets` if needed, docs 14–16.
+- **Delivered:** `src/rendering/draw/ship.ts` and `draw/ship.test.ts` only. Lamp at source (1444, 463), radius 25, on the stern rail post mapped from the reference — **not** at the end post near (1570, 505); see docs/15, "E-X6 S3 refinement + S4".
+- **Next:** the owner's review. **Stop condition:** do not commit or push; do not start S6.
+
+*(Previous S3 bullets, kept as written:)*
 
 *(Until S3 this heading read: "E-X6 — Ship visual replacement, S1 + S2 DELIVERED (2026-11-15, WORKING TREE, UNCOMMITTED), AWAITING OWNER REVIEW". The S1 + S2 bullets below are kept as written.)*
 

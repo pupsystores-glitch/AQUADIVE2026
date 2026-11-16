@@ -12,8 +12,10 @@
 // E-X6 S3: the owner-supplied shine overlay (src/assets/ship-shine.png, the
 // same 1774 × 887 frame as the base artwork) is drawn directly over the base,
 // in the same rectangle and transform, with an opacity that fades in and out
-// on the animation clock (`shineAlpha`). It is never drawn over the vector
-// fallback and is skipped while its opacity is effectively zero.
+// on the animation clock (`shineLevel`): up to 0.50 above the water surface and
+// 0.35 below it (S3 refinement), the two regions meeting at the surface line
+// the underwater tint starts at. It is never drawn over the vector fallback and
+// is skipped while its opacity is effectively zero.
 //
 // Layout, relative to the ship's origin (cx, cy):
 //   y = WATERLINE   water surface (unchanged from the previous ship)
@@ -106,37 +108,53 @@ export const SHINE_PERIOD = 7;
 export const SHINE_RISE_END = 1.6;
 export const SHINE_HOLD_END = 2.2;
 export const SHINE_FALL_END = 4.4;
-/** Peak opacity of the shine overlay. */
-export const SHINE_PEAK = 0.35;
+/**
+ * Peak opacity of the shine overlay above and below the water surface
+ * (S3 refinement, 2026-11-16): stronger reflections on the visible upper
+ * boat, the earlier 0.35 kept for the part seen through the water.
+ */
+export const SHINE_PEAK_ABOVE = 0.5;
+export const SHINE_PEAK_BELOW = 0.35;
 /** Clock offset (s): at t = 0 the cycle is in its rest, and the first glint starts 1.5 s later. */
 export const SHINE_OFFSET = 5.5;
 /**
- * Opacity used when the shine is not animated (a future reduced-motion
+ * Level used when the shine is not animated (a future reduced-motion
  * setting, docs D6): 0 keeps the approved clean base ship. Not wired to
- * any configuration in S3.
+ * any configuration.
  */
-export const SHINE_STILL_ALPHA = 0;
-/** Below this opacity (under one 8-bit alpha step) the shine draw is skipped. */
-const SHINE_MIN_ALPHA = 1 / 255;
+export const SHINE_STILL_LEVEL = 0;
+/** Below this opacity (under one 8-bit alpha step) a draw is skipped. */
+const MIN_ALPHA = 1 / 255;
 
 /** Smoothstep ease on [0, 1]: x² (3 − 2x). */
 const smoothstep = (x: number) => x * x * (3 - 2 * x);
 
 /**
- * Opacity of the shine overlay at animation time `t` (s): a smooth fade from
- * 0 to SHINE_PEAK, a hold, a smooth fade back to 0 and a rest, repeating every
- * SHINE_PERIOD seconds. Continuous at every phase boundary. With `animate`
- * false it returns the constant SHINE_STILL_ALPHA (for a future
- * reduced-motion setting). Pure and allocation-free.
+ * Fade-in / hold / fade-out / rest envelope on [0, 1] at phase `p` of a
+ * cycle (s), with smoothstep fades; continuous at every boundary.
  */
-export function shineAlpha(t: number, animate = true): number {
-  if (!animate) return SHINE_STILL_ALPHA;
-  const p = (((t + SHINE_OFFSET) % SHINE_PERIOD) + SHINE_PERIOD) % SHINE_PERIOD;
-  if (p < SHINE_RISE_END) return SHINE_PEAK * smoothstep(p / SHINE_RISE_END);
-  if (p < SHINE_HOLD_END) return SHINE_PEAK;
-  if (p < SHINE_FALL_END)
-    return SHINE_PEAK * (1 - smoothstep((p - SHINE_HOLD_END) / (SHINE_FALL_END - SHINE_HOLD_END)));
+function envelope(p: number, riseEnd: number, holdEnd: number, fallEnd: number): number {
+  if (p < riseEnd) return smoothstep(p / riseEnd);
+  if (p < holdEnd) return 1;
+  if (p < fallEnd) return 1 - smoothstep((p - holdEnd) / (fallEnd - holdEnd));
   return 0;
+}
+
+/** Phase of `t` within a cycle of length `period`, in [0, period). */
+const phase = (t: number, period: number) => ((t % period) + period) % period;
+
+/**
+ * Level of the shine overlay at animation time `t` (s), 0..1: a smooth fade
+ * in, a hold, a smooth fade out and a rest, repeating every SHINE_PERIOD
+ * seconds. Both regions use it — the opacity is level · SHINE_PEAK_ABOVE
+ * above the water and level · SHINE_PEAK_BELOW below it, in the same phase.
+ * With `animate` false it returns SHINE_STILL_LEVEL (future reduced motion).
+ * Pure and allocation-free.
+ */
+export function shineLevel(t: number, animate = true): number {
+  if (!animate) return SHINE_STILL_LEVEL;
+  const p = phase(t + SHINE_OFFSET, SHINE_PERIOD);
+  return envelope(p, SHINE_RISE_END, SHINE_HOLD_END, SHINE_FALL_END);
 }
 
 export interface ShipOffset {
@@ -275,10 +293,10 @@ export function drawShip(
 
   const image = artwork?.ready ? artwork.image : null;
   if (image) {
-    // The shine only ever goes over the artwork, never over the vector fallback.
+    // The shine only ever goes on the artwork, never on the vector fallback.
     const shineImage = shine?.ready ? shine.image : null;
-    const overlay = shineImage ? shineAlpha(t) : 0;
-    drawArtworkHull(ctx, image, shineImage, overlay, cx + dx, surfaceY, dy, r, k, attachDy);
+    const level = shineImage ? shineLevel(t) : 0;
+    drawArtworkHull(ctx, image, shineImage, level, cx + dx, surfaceY, dy, r, k, attachDy);
   } else drawVectorHull(ctx, cx + dx, surfaceY, dy, r, k, attachDy, fallbackScale(w, k));
 
   // Water surface line, crossing in front of the hull
@@ -291,19 +309,32 @@ export function drawShip(
   ctx.restore();
 }
 
+/** The ship transform: pivot on the water surface at (x, y), rolled by r, scaled by k, origin WATERLINE above. */
+function shipTransform(ctx: Ctx, x: number, y: number, r: number, k: number) {
+  ctx.translate(x, y);
+  ctx.rotate(r);
+  ctx.scale(k, k);
+  ctx.translate(0, -WATERLINE);
+}
+
 /**
  * The rescue boat artwork in the ship's transform (pivot on the water surface
  * at x, rolled, scaled, origin WATERLINE above the pivot), its hole centre on
- * (0, attachDy). The shine overlay, when given, is drawn right over it at
- * opacity `overlay`, in the same rectangle and transform (normal source-over).
- * Below the surface the tinted silhouette is laid over both, level with the
- * water like the vector hull's tint.
+ * (0, attachDy). Draw order:
+ *   1. the base artwork;
+ *   2. the shine overlay above the water surface at shine · SHINE_PEAK_ABOVE;
+ *   3. below the surface, the shine at shine · SHINE_PEAK_BELOW, then the
+ *      tinted silhouette over everything, as before.
+ * The two shine regions are clipped by complementary rectangles meeting at the
+ * water surface — the line the underwater tint already starts at — so every
+ * pixel of the shine is drawn exactly once. Both use the base's rectangle and
+ * transform; the clips are level with the water, like the tint's.
  */
 function drawArtworkHull(
   ctx: Ctx,
   image: HTMLImageElement,
   shineImage: HTMLImageElement | null,
-  overlay: number,
+  shine: number,
   x: number,
   surfaceY: number,
   dy: number,
@@ -317,29 +348,40 @@ function drawArtworkHull(
   const sh = SPRITE_H * SPRITE_SCALE;
 
   ctx.save();
-  ctx.translate(x, surfaceY + dy);
-  ctx.rotate(r);
-  ctx.scale(k, k);
-  ctx.translate(0, -WATERLINE);
+  shipTransform(ctx, x, surfaceY + dy, r, k);
   ctx.drawImage(image, sx, sy, sw, sh);
-  if (shineImage && overlay >= SHINE_MIN_ALPHA) {
-    ctx.globalAlpha *= overlay; // restored with the transform below
-    ctx.drawImage(shineImage, sx, sy, sw, sh);
-  }
   ctx.restore();
 
+  const above = shineImage ? shine * SHINE_PEAK_ABOVE : 0;
+  if (shineImage && above >= MIN_ALPHA) {
+    ctx.save();
+    ctx.translate(x, surfaceY);
+    ctx.beginPath();
+    ctx.rect(-sw, -sh, 2 * sw, sh); // everything above the surface around the ship
+    ctx.clip();
+    shipTransform(ctx, 0, dy, r, k);
+    ctx.globalAlpha *= above; // restored with the clip
+    ctx.drawImage(shineImage, sx, sy, sw, sh);
+    ctx.restore();
+  }
+
   const tinted = prepareTint(image);
-  if (!tinted) return;
+  const below = shineImage ? shine * SHINE_PEAK_BELOW : 0;
+  const shineBelow = shineImage !== null && below >= MIN_ALPHA;
+  if (!tinted && !shineBelow) return;
   ctx.save();
   ctx.translate(x, surfaceY);
   ctx.beginPath();
   ctx.rect(-sw, 0, 2 * sw, sh); // everything below the surface around the ship
   ctx.clip();
-  ctx.translate(0, dy);
-  ctx.rotate(r);
-  ctx.scale(k, k);
-  ctx.translate(0, -WATERLINE);
-  ctx.drawImage(tinted, sx, sy, sw, sh);
+  shipTransform(ctx, 0, dy, r, k);
+  if (shineImage && shineBelow) {
+    const a = ctx.globalAlpha;
+    ctx.globalAlpha = a * below;
+    ctx.drawImage(shineImage, sx, sy, sw, sh);
+    ctx.globalAlpha = a;
+  }
+  if (tinted) ctx.drawImage(tinted, sx, sy, sw, sh);
   ctx.restore();
 }
 

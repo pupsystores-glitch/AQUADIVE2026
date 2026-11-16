@@ -18,6 +18,12 @@
 // A slack chain (the anchor lying on the sea floor) follows a caller-supplied
 // polyline instead of the swaying line: layoutChainPath / drawChainPath place
 // and paint the links the same way along any path.
+//
+// E-X7 (chain snap): sampleChainLine exposes the swaying line's own samples,
+// so a caller can split the chain at an original joint and re-lay the part
+// above it with layoutChainPath link for link; `firstIndex` keeps the
+// face-on / edge-on parity of a chain that does not start at the anchor, and
+// drawChainLinks paints a caller-built layout. layoutChain is unchanged.
 
 import { CHAIN_THEME } from "../theme";
 
@@ -90,6 +96,8 @@ let lineNy = 0;
 let lineSag = 0;
 let linePhase = 0;
 let lineSteps = 1;
+/** Chain index of the marched path's first link (0 = the link at the anchor). */
+let indexBase = 0;
 
 /**
  * Computes link placement along the chain path. Pure and deterministic for
@@ -116,6 +124,7 @@ export function layoutChain(
 
   pathXs = null;
   pathYs = null;
+  indexBase = 0;
   lineX1 = x1;
   lineY1 = y1;
   lineDx = dx;
@@ -128,9 +137,57 @@ export function layoutChain(
   return marchLinks(x2, y2, lineSteps, clip);
 }
 
+/** Number of points sampleChainLine writes for these endpoints (0 for a degenerate span). */
+export function chainLinePoints(x1: number, y1: number, x2: number, y2: number): number {
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  if (!Number.isFinite(len) || len < 1e-6) return 0;
+  return Math.max(1, Math.ceil(len / SAMPLE_STEP)) + 1;
+}
+
+/**
+ * E-X7: writes the swaying line's samples into xs / ys — point 0 at the
+ * anchor end (x2, y2), the last at the attachment (x1, y1) — exactly the
+ * samples layoutChain marches for the same inputs, so a polyline built from
+ * them lays out link for link like the swaying chain. Returns the point count
+ * (chainLinePoints), or 0 for a degenerate span or too-small buffers.
+ */
+export function sampleChainLine(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  t: number,
+  xs: Float64Array,
+  ys: Float64Array,
+): number {
+  const n = chainLinePoints(x1, y1, x2, y2);
+  if (n === 0 || n > xs.length || n > ys.length) return 0;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  const nx = -dy / len;
+  const ny = dx / len;
+  const sag = SAG * Math.sign(dx || 1);
+  const phase = t * WAVE_SPEED;
+  const steps = n - 1;
+  xs[0] = x2;
+  ys[0] = y2;
+  for (let si = 1; si <= steps; si++) {
+    // Same expression as marchLinks, so the samples are bit-identical.
+    const u = 1 - si / steps;
+    const env = Math.sin(u * Math.PI);
+    const off = env * (sag + Math.sin(u * Math.PI * 2 - phase) * WAVE);
+    xs[si] = x1 + dx * u + nx * off;
+    ys[si] = y1 + dy * u + ny * off;
+  }
+  return n;
+}
+
 /**
  * Link placement along a polyline of `n` points; point 0 is the anchor end.
- * Same joint spacing and link data as layoutChain. The returned object and its
+ * Same joint spacing and link data as layoutChain. `firstIndex` (E-X7) is the
+ * chain index of the link at point 0 — it keeps the face-on / edge-on parity
+ * of a chain that does not start at the anchor. The returned object and its
  * buffer are reused by the next call.
  */
 export function layoutChainPath(
@@ -138,12 +195,14 @@ export function layoutChainPath(
   ys: ArrayLike<number>,
   n: number,
   clip?: ChainClip,
+  firstIndex = 0,
 ): ChainLayout {
   layout.count = 0;
   layout.first = 0;
   if (n < 2) return layout;
   pathXs = xs;
   pathYs = ys;
+  indexBase = firstIndex;
   return marchLinks(xs[0], ys[0], n - 1, clip);
 }
 
@@ -204,7 +263,7 @@ function marchLinks(x2: number, y2: number, steps: number, clip?: ChainClip): Ch
 
     if (visible) {
       const n = layout.count;
-      if (n === 0) layout.first = k;
+      if (n === 0) layout.first = k + indexBase;
       const o = n * CHAIN_LINK_STRIDE;
       if (o + CHAIN_LINK_STRIDE > layout.data.length) {
         const grown = new Float64Array(layout.data.length * 2);
@@ -346,14 +405,23 @@ export function drawChain(
   paintChain(ctx, layoutChain(x1, y1, x2, y2, t, visibleRect(ctx)));
 }
 
-/** Draws the chain along a polyline of `n` points; point 0 is the anchor end. */
+/**
+ * Draws the chain along a polyline of `n` points; point 0 is the anchor end.
+ * `firstIndex` as in layoutChainPath.
+ */
 export function drawChainPath(
   ctx: CanvasRenderingContext2D,
   xs: ArrayLike<number>,
   ys: ArrayLike<number>,
   n: number,
+  firstIndex = 0,
 ) {
-  paintChain(ctx, layoutChainPath(xs, ys, n, visibleRect(ctx)));
+  paintChain(ctx, layoutChainPath(xs, ys, n, visibleRect(ctx), firstIndex));
+}
+
+/** E-X7: paints a caller-built layout with the same shading and fixed stroke budget. */
+export function drawChainLinks(ctx: CanvasRenderingContext2D, l: ChainLayout) {
+  paintChain(ctx, l);
 }
 
 function paintChain(ctx: Ctx, l: ChainLayout) {

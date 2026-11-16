@@ -778,6 +778,14 @@ Follows the E-X1–E-X4 precedent (docs/07 §19 gate 4). Presentation only. `src
 - `src/engine` and `src/shared`: **no change in Phase 7** [OWNER]. There is no exception to request.
 - `src/audio` and `src/assets/audio`: new Phase 7 territory, not frozen. Each step still changes only the files listed in §12 for it.
 
+### 13.4 Ratified renderer exception — **E-X7** (Chain Snapped animation, 2026-11-16) [OWNER]
+
+A strictly rendering-only exception to the Phase 7 renderer restrictions, ratified by the owner's E-X7 implementation authorization. It is not part of E-X5 and does not start V1.
+
+- **Scope:** `src/rendering/render-state.ts`, `scene-renderer.ts`, `layers/actor.ts`, `layers/chain-snap.ts` (new), `layers/chain-snap.test.ts` (new), `draw/chain.ts`, `draw/chain.test.ts`, narrowly scoped tests of the changed renderer contract (`scene-renderer.test.ts`, new), and docs 08, 14–16. **Excluded:** `src/engine`, `src/shared`, `src/ui`, `src/audio`, `draw/anchor.ts`, `draw/ship.ts` and every image asset.
+- **Behavior:** on entering `crashed` the chain breaks four links above the anchor (fewer on a short chain). The anchor and those links fall away (water drag; near the sea floor the existing landing); the upper chain recoils, a wave runs up it, it swings with decreasing amplitude and hangs still by 2.3 s. The engine's 2.4 s crashed phase, the crack overlay, crash audio, the CHAIN SNAPPED banner, the jackpot landing and every other phase are unchanged.
+- **Crash clock and V1:** `RenderState.chainSnap` (optional, `{ startedAt, elapsed }` in `animTime`) is renderer-owned; the engine never sets it. `SceneRenderer` latches it on the first rendered crashed frame (up to one frame after the engine transition — not claimed synchronous), resets it on leaving `crashed`, and shows the settled result after a remount mid-crash or a backwards clock. A caller-supplied `chainSnap` wins over the renderer's own clock, so when V1's FX queue exists it can stamp the crash once (`{ kind: "crash", startedAt }`) and the latch in `SceneRenderer.withChainSnap` is removed — there is never a second crash clock. F6's fragments, if approved, would anchor to the same break.
+
 ---
 
 ## 14. Risks and trade-offs

@@ -5,8 +5,12 @@ import {
   CHAIN_LINK_LENGTH,
   CHAIN_LINK_PITCH,
   CHAIN_LINK_STRIDE,
+  chainLinePoints,
   drawChain,
+  drawChainLinks,
   layoutChain,
+  layoutChainPath,
+  sampleChainLine,
 } from "./chain";
 
 interface Link {
@@ -117,6 +121,65 @@ describe("layoutChain", () => {
   it("returns no links for a degenerate or non-finite span", () => {
     expect(layoutChain(10, 10, 10, 10, 0).count).toBe(0);
     expect(layoutChain(10, NaN, 10, 10, 0).count).toBe(0);
+  });
+});
+
+// E-X7: the chain snap re-lays the chain from the swaying line's own samples.
+describe("sampleChainLine + layoutChainPath", () => {
+  it("reproduces layoutChain link for link from the sampled line", () => {
+    const xs = new Float64Array(4096);
+    const ys = new Float64Array(4096);
+    for (const [x1, y1, x2, y2] of CASES) {
+      for (const t of TIMES) {
+        const n = sampleChainLine(x1, y1, x2, y2, t, xs, ys);
+        expect(n).toBe(chainLinePoints(x1, y1, x2, y2));
+        expect(xs[0]).toBe(x2);
+        expect(ys[0]).toBe(y2);
+        expect(xs[n - 1]).toBeCloseTo(x1, 9);
+        expect(ys[n - 1]).toBeCloseTo(y1, 9);
+        const direct = links(x1, y1, x2, y2, t);
+        const l = layoutChainPath(xs, ys, n);
+        const path: Link[] = [];
+        for (let i = 0; i < l.count; i++) {
+          const o = i * CHAIN_LINK_STRIDE;
+          path.push({ cx: l.data[o], cy: l.data[o + 1], ux: l.data[o + 2], uy: l.data[o + 3] });
+        }
+        expect({ first: l.first, list: path }).toEqual(direct);
+      }
+    }
+  });
+
+  it("refuses buffers that are too small or a degenerate span", () => {
+    const small = new Float64Array(4);
+    expect(sampleChainLine(0, 0, 0, 300, 0, small, small)).toBe(0);
+    expect(sampleChainLine(5, 5, 5, 5, 0, small, small)).toBe(0);
+    expect(chainLinePoints(5, 5, 5, 5)).toBe(0);
+  });
+
+  it("offsets the link index (parity) by firstIndex without moving any link", () => {
+    const xs = new Float64Array(512);
+    const ys = new Float64Array(512);
+    const n = sampleChainLine(187.5, 0, 187.5, 357, 1, xs, ys);
+    const base = layoutChainPath(xs, ys, n);
+    const firstA = base.first;
+    const dataA = Array.from(base.data.subarray(0, base.count * CHAIN_LINK_STRIDE));
+    const shifted = layoutChainPath(xs, ys, n, undefined, 3);
+    expect(shifted.first).toBe(firstA + 3);
+    expect(Array.from(shifted.data.subarray(0, shifted.count * CHAIN_LINK_STRIDE))).toEqual(dataA);
+    // layoutChain afterwards is back to index 0.
+    expect(layoutChain(187.5, 0, 187.5, 357, 1).first).toBe(0);
+  });
+});
+
+describe("drawChainLinks", () => {
+  it("paints a caller-built layout exactly like drawChain paints the same links", () => {
+    const a = recordingCtx();
+    const b = recordingCtx();
+    drawChain(a.ctx, 195, -40, 150, 455, 7.5);
+    const l = layoutChain(195, -40, 150, 455, 7.5);
+    const copy = { count: l.count, first: l.first, data: l.data.slice() };
+    drawChainLinks(b.ctx, copy);
+    expect(b.calls).toEqual(a.calls);
   });
 });
 

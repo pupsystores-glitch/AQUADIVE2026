@@ -13,11 +13,12 @@ import {
   SHINE_FALL_END,
   SHINE_HOLD_END,
   SHINE_OFFSET,
-  SHINE_PEAK,
+  SHINE_PEAK_ABOVE,
+  SHINE_PEAK_BELOW,
   SHINE_PERIOD,
   SHINE_RISE_END,
-  SHINE_STILL_ALPHA,
-  shineAlpha,
+  SHINE_STILL_LEVEL,
+  shineLevel,
   shipChainAttach,
   shipScale,
   SPRITE_HOLE_X,
@@ -413,94 +414,129 @@ describe("drawShip — artwork (E-X6 S1)", () => {
   });
 });
 
-describe("shineAlpha (E-X6 S3)", () => {
+describe("shineLevel (E-X6 S3)", () => {
   /** Animation time at which the cycle is at phase `p` (s). */
   const at = (p: number, cycle = 0) => p - SHINE_OFFSET + SHINE_PERIOD * (cycle + 1);
 
-  it("uses the owner-approved timing: 7 s cycle, 0.35 peak, offset 5.5 s", () => {
+  it("uses the owner-approved timing: 7 s cycle, offset 5.5 s; peaks 0.50 above and 0.35 below the water", () => {
     expect(SHINE_PERIOD).toBe(7);
     expect(SHINE_RISE_END).toBe(1.6);
     expect(SHINE_HOLD_END).toBe(2.2);
     expect(SHINE_FALL_END).toBe(4.4);
-    expect(SHINE_PEAK).toBe(0.35);
     expect(SHINE_OFFSET).toBe(5.5);
+    expect(SHINE_PEAK_ABOVE).toBe(0.5);
+    expect(SHINE_PEAK_BELOW).toBe(0.35);
   });
 
   it("fades in, holds, fades out and rests, with smoothstep easing", () => {
     const smooth = (x: number) => x * x * (3 - 2 * x);
-    expect(shineAlpha(0)).toBe(0); // t = 0 is in the rest; the first glint starts at 1.5 s
-    expect(shineAlpha(1.5)).toBeCloseTo(0, 12);
+    expect(shineLevel(0)).toBe(0); // t = 0 is in the rest; the first glint starts at 1.5 s
+    expect(shineLevel(1.5)).toBeCloseTo(0, 12);
     for (const p of [0.2, 0.4, 0.8, 1.2, 1.5]) {
-      expect(shineAlpha(at(p))).toBeCloseTo(0.35 * smooth(p / 1.6), 9);
+      expect(shineLevel(at(p))).toBeCloseTo(smooth(p / 1.6), 9);
     }
-    expect(shineAlpha(at(0.8))).toBeCloseTo(0.175, 9); // half way up
-    for (const p of [1.6001, 1.9, 2.1999]) expect(shineAlpha(at(p))).toBe(0.35);
+    expect(shineLevel(at(0.8))).toBeCloseTo(0.5, 9); // half way up
+    for (const p of [1.6001, 1.9, 2.1999]) expect(shineLevel(at(p))).toBe(1);
     for (const p of [2.5, 3.3, 4.0]) {
-      expect(shineAlpha(at(p))).toBeCloseTo(0.35 * (1 - smooth((p - 2.2) / 2.2)), 9);
+      expect(shineLevel(at(p))).toBeCloseTo(1 - smooth((p - 2.2) / 2.2), 9);
     }
-    expect(shineAlpha(at(3.3))).toBeCloseTo(0.175, 9); // half way down
-    for (const p of [4.4001, 5, 6, 6.9999]) expect(shineAlpha(at(p))).toBe(0);
+    expect(shineLevel(at(3.3))).toBeCloseTo(0.5, 9); // half way down
+    for (const p of [4.4001, 5, 6, 6.9999]) expect(shineLevel(at(p))).toBe(0);
   });
 
-  it("stays within 0..0.35 and repeats every 7 s", () => {
+  it("stays within 0..1, reaches 1 and repeats every 7 s", () => {
     let max = 0;
     for (let t = -20; t < 60; t += 0.01) {
-      const a = shineAlpha(t);
+      const a = shineLevel(t);
       expect(a).toBeGreaterThanOrEqual(0);
-      expect(a).toBeLessThanOrEqual(0.35);
-      expect(shineAlpha(t + 7)).toBeCloseTo(a, 9);
+      expect(a).toBeLessThanOrEqual(1);
+      expect(shineLevel(t + 7)).toBeCloseTo(a, 9);
       max = Math.max(max, a);
     }
-    expect(max).toBe(0.35);
+    expect(max).toBe(1);
   });
 
   it("has no jumps: continuous at every phase boundary and across the cycle wrap", () => {
-    // The steepest slope of the smoothstep fade-in is 1.5 · 0.35 / 1.6 ≈ 0.33 per second.
+    // The steepest slope of the smoothstep fade-in is 1.5 / 1.6 ≈ 0.94 per second.
     const dt = 1e-4;
     let steepest = 0;
     for (let t = 0; t < 21; t += dt * 37) {
-      steepest = Math.max(steepest, Math.abs(shineAlpha(t + dt) - shineAlpha(t)) / dt);
+      steepest = Math.max(steepest, Math.abs(shineLevel(t + dt) - shineLevel(t)) / dt);
     }
-    expect(steepest).toBeLessThan(0.34);
+    expect(steepest).toBeLessThan(0.95);
     for (const p of [0, 1.6, 2.2, 4.4, 7]) {
       for (const cycle of [0, 3]) {
         const t = at(p, cycle);
-        expect(Math.abs(shineAlpha(t + 1e-9) - shineAlpha(t - 1e-9))).toBeLessThan(1e-6);
+        expect(Math.abs(shineLevel(t + 1e-9) - shineLevel(t - 1e-9))).toBeLessThan(1e-6);
       }
     }
   });
 
-  it("returns the constant still opacity when not animated (future reduced motion)", () => {
-    expect(SHINE_STILL_ALPHA).toBe(0);
-    for (const t of [0, 3.4, 9.1, 100]) expect(shineAlpha(t, false)).toBe(SHINE_STILL_ALPHA);
+  it("returns the constant still level when not animated (future reduced motion)", () => {
+    expect(SHINE_STILL_LEVEL).toBe(0);
+    for (const t of [0, 3.4, 9.1, 100]) expect(shineLevel(t, false)).toBe(SHINE_STILL_LEVEL);
   });
 });
+
+/** Artwork rectangle in local px, as drawShip places it (attachDy 40). */
+const SW = 1774 * SPRITE_SCALE;
+const SH = 887 * SPRITE_SCALE;
+const SX = -876.7 * SPRITE_SCALE;
+const SY = 40 - 677.4 * SPRITE_SCALE;
+const f3 = (v: number) => v.toFixed(3);
+const surgeAt = (t: number) => Math.sin(t * 0.52 + 0.4) * 6;
+
+/** A document stub whose canvases support what the underwater tint needs; records every canvas. */
+function canvasDocument() {
+  const created: Array<{ sources: unknown[] }> = [];
+  const doc = {
+    createElement: (tag: string) => {
+      expect(tag).toBe("canvas");
+      const canvas = {
+        width: 0,
+        height: 0,
+        sources: [] as unknown[],
+        getContext: () => c2d,
+      };
+      const c2d = {
+        drawImage: (s: unknown) => canvas.sources.push(s),
+        fillRect: () => {},
+        globalCompositeOperation: "source-over",
+        fillStyle: "" as unknown,
+      };
+      created.push(canvas);
+      return canvas;
+    },
+  };
+  return { doc, created };
+}
 
 describe("drawShip — shine overlay (E-X6 S3)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  /** Times inside the hold (peak), the rise and the rest of the shine cycle. */
+  /** Times inside the shine's hold (peak), its rise and its rest. */
   const PEAK_T = 3.4;
   const RISE_T = 2.3;
   const REST_T = 0;
 
-  it("draws the shine right over the artwork: same rectangle, same transform, at the curve's opacity", () => {
+  it("draws the shine once per region over the artwork: 0.50 above and 0.35 below the surface, same rectangle and transform", () => {
     for (const t of [PEAK_T, RISE_T]) {
       const shine = shineHandle();
       const { ctx, raw, calls, draws, stackDepth } = recordingCtx();
       drawShip(ctx, 544.5, 300, t, 1089, 40, 1, artworkHandle(), shine);
-      expect(draws).toHaveLength(2); // no tint canvas without a DOM
+      expect(draws).toHaveLength(3); // base, shine above, shine below (no tint canvas without a DOM)
       expect(draws[1].source).toBe(shine.image);
-      expect(draws[1].args).toEqual(draws[0].args);
-      expect(draws[1].m).toEqual(draws[0].m);
+      expect(draws[2].source).toBe(shine.image);
+      for (const d of draws.slice(1)) {
+        expect(d.args).toEqual(draws[0].args);
+        expect(d.m).toEqual(draws[0].m);
+      }
       expect(draws[0].alpha).toBe(1);
-      expect(draws[1].alpha).toBeCloseTo(shineAlpha(t), 12);
-      // Directly above the base: no transform change between the two draws.
-      const i = calls.findIndex((c) => c.startsWith("drawImage("));
-      expect(calls[i + 1].startsWith("drawImage(")).toBe(true);
-      // Opacity and state are restored afterwards.
+      expect(draws[1].alpha).toBeCloseTo(0.5 * shineLevel(t), 12);
+      expect(draws[2].alpha).toBeCloseTo(0.35 * shineLevel(t), 12);
+      // State restored afterwards.
       expect(raw.globalAlpha).toBe(1);
       expect(raw.globalCompositeOperation).toBe("source-over");
       expect(stackDepth()).toBe(0);
@@ -508,7 +544,34 @@ describe("drawShip — shine overlay (E-X6 S3)", () => {
     }
   });
 
-  it("follows surge, heave, roll and scaling exactly: the shine's hole stays on shipChainAttach", () => {
+  it("splits the regions exactly at the water surface the tint uses: complementary clips, no pixel drawn twice", () => {
+    const t = PEAK_T;
+    const { ctx, calls } = recordingCtx();
+    drawShip(ctx, 544.5, 300, t, 1089, 40, 1, artworkHandle(), shineHandle());
+    const clips = calls.flatMap((c, i) => (c === "clip()" ? [i] : []));
+    expect(clips).toHaveLength(2);
+    // Both clips are set up in the same level frame: (cx + surge, surfaceY), not heaved or rolled.
+    const level = `translate(${f3(544.5 + surgeAt(t))},320.000)`;
+    for (const i of clips) {
+      expect(calls.slice(i - 3, i)).toEqual([
+        level,
+        "beginPath()",
+        expect.stringMatching(/^rect\(/),
+      ]);
+    }
+    // Above: [−SH, 0); below: [0, SH) — they meet at y = 0, the surface line.
+    expect(calls[clips[0] - 1]).toBe(`rect(${f3(-SW)},${f3(-SH)},${f3(2 * SW)},${f3(SH)})`);
+    expect(calls[clips[1] - 1]).toBe(`rect(${f3(-SW)},0.000,${f3(2 * SW)},${f3(SH)})`);
+    // Each region draws the shine exactly once.
+    const drawsAfter = (i: number) => {
+      const end = calls.indexOf("restore()", i);
+      return calls.slice(i, end).filter((c) => c.startsWith("drawImage(")).length;
+    };
+    expect(drawsAfter(clips[0])).toBe(1);
+    expect(drawsAfter(clips[1])).toBe(1);
+  });
+
+  it("follows surge, heave, roll and scaling exactly: both regions' hole stays on shipChainAttach", () => {
     const hole = { x: 0, y: 0 };
     for (const w of [...WIDTHS, 320]) {
       const k = shipScale(w);
@@ -516,26 +579,27 @@ describe("drawShip — shine overlay (E-X6 S3)", () => {
         for (let t = 2; t < 5; t += 0.137) {
           const { ctx, draws } = recordingCtx();
           drawShip(ctx, w / 2, 123, t, w, 40, motion, artworkHandle(), shineHandle());
-          expect(draws).toHaveLength(2);
-          expect(draws[1].m).toEqual(draws[0].m);
-          expect(draws[1].args).toEqual(draws[0].args);
-          const d = draws[1];
-          const [hx, hy] = apply(
-            d.m,
-            d.args[0] + SPRITE_HOLE_X * SPRITE_SCALE,
-            d.args[1] + SPRITE_HOLE_Y * SPRITE_SCALE,
-          );
+          expect(draws).toHaveLength(3);
           shipChainAttach(t, motion, 40, k, hole);
-          expect(hx).toBeCloseTo(w / 2 + hole.x, 9);
-          expect(hy).toBeCloseTo(123 + hole.y, 9);
+          for (const d of draws.slice(1)) {
+            expect(d.m).toEqual(draws[0].m);
+            expect(d.args).toEqual(draws[0].args);
+            const [hx, hy] = apply(
+              d.m,
+              d.args[0] + SPRITE_HOLE_X * SPRITE_SCALE,
+              d.args[1] + SPRITE_HOLE_Y * SPRITE_SCALE,
+            );
+            expect(hx).toBeCloseTo(w / 2 + hole.x, 9);
+            expect(hy).toBeCloseTo(123 + hole.y, 9);
+          }
         }
       }
     }
   });
 
-  it("skips the extra draw while the opacity is effectively zero", () => {
+  it("skips both shine draws while the shine is at rest", () => {
     for (const t of [REST_T, 6.0, 8.0, 8.4]) {
-      expect(shineAlpha(t)).toBe(0);
+      expect(shineLevel(t)).toBe(0);
       const a = recordingCtx();
       const b = recordingCtx();
       drawShip(a.ctx, 544.5, 300, t, 1089, 40, 1, artworkHandle());
@@ -558,7 +622,7 @@ describe("drawShip — shine overlay (E-X6 S3)", () => {
 
   it("never draws the shine over the vector fallback", () => {
     for (const w of WIDTHS) {
-      for (const t of [PEAK_T, RISE_T, REST_T]) {
+      for (const t of [PEAK_T, RISE_T, REST_T, 0.5]) {
         const a = recordingCtx();
         const b = recordingCtx();
         drawShip(a.ctx, w / 2, 51, t, w, 40, 1, NOT_LOADED);
@@ -574,26 +638,14 @@ describe("drawShip — shine overlay (E-X6 S3)", () => {
     raw.globalAlpha = 0.5;
     drawShip(ctx, 544.5, 300, PEAK_T, 1089, 40, 1, artworkHandle(), shineHandle());
     expect(draws[0].alpha).toBe(0.5);
-    expect(draws[1].alpha).toBeCloseTo(0.175, 12);
+    expect(draws[1].alpha).toBeCloseTo(0.25, 12);
+    expect(draws[2].alpha).toBeCloseTo(0.175, 12);
     expect(raw.globalAlpha).toBe(0.5);
   });
 
-  it("keeps the underwater tint unchanged: built from the base once, drawn after the shine", () => {
-    const created: Array<{ sources: unknown[] }> = [];
-    vi.stubGlobal("document", {
-      createElement: () => {
-        const sources: unknown[] = [];
-        const c2d = {
-          drawImage: (s: unknown) => sources.push(s),
-          fillRect: () => {},
-          globalCompositeOperation: "source-over",
-          fillStyle: "",
-        };
-        const canvas = { width: 0, height: 0, getContext: () => c2d, sources };
-        created.push(canvas);
-        return canvas;
-      },
-    });
+  it("keeps the underwater tint unchanged: built once from the base, drawn last, at full opacity, over the shine below", () => {
+    const { doc, created } = canvasDocument();
+    vi.stubGlobal("document", doc);
     const base = artworkHandle();
     const shine = shineHandle();
     let last: ReturnType<typeof recordingCtx> | null = null;
@@ -601,32 +653,39 @@ describe("drawShip — shine overlay (E-X6 S3)", () => {
       last = recordingCtx();
       drawShip(last.ctx, 544.5, 300, PEAK_T + frame / 60, 1089, 40, 1, base, shine);
     }
-    expect(created).toHaveLength(1); // still one tint canvas, not per frame
+    expect(created).toHaveLength(1); // the tint only, not per frame
     expect(created[0].sources).toEqual([base.image]); // the tint silhouette is the base's
     const draws = last?.draws ?? [];
-    expect(draws.map((d) => d.source)).toEqual([base.image, shine.image, created[0]]);
-    expect(draws[2].args).toEqual(draws[0].args);
-    expect(draws[2].m).toEqual(draws[0].m);
-    expect(draws[2].alpha).toBe(1); // the tint is not dimmed by the shine's opacity
+    expect(draws.map((d) => d.source)).toEqual([base.image, shine.image, shine.image, created[0]]);
+    expect(draws[3].args).toEqual(draws[0].args);
+    expect(draws[3].m).toEqual(draws[0].m);
+    expect(draws[3].alpha).toBe(1); // the tint is not dimmed by the shine's opacity
+    // The shine below and the tint share the below-surface clip.
+    const calls = last?.calls ?? [];
+    const clip = calls.lastIndexOf("clip()");
+    const end = calls.indexOf("restore()", clip);
+    expect(calls.slice(clip, end).filter((c) => c.startsWith("drawImage("))).toHaveLength(2);
   });
 
   it("starts no animation loop or timer and allocates no canvas per frame", () => {
     const raf = vi.fn();
     const timeout = vi.fn();
-    const createElement = vi.fn(() => ({ width: 0, height: 0, getContext: () => null }));
     vi.stubGlobal("requestAnimationFrame", raf);
     vi.stubGlobal("setTimeout", timeout);
     vi.stubGlobal("setInterval", timeout);
-    vi.stubGlobal("document", { createElement });
+    const { doc, created } = canvasDocument();
+    vi.stubGlobal("document", doc);
     const base = artworkHandle();
     const shine = shineHandle();
-    for (let t = 0; t < 14; t += 0.1) {
-      const { ctx } = recordingCtx();
+    for (let t = 0; t < 14; t += 0.05) {
+      const { ctx, calls } = recordingCtx();
       drawShip(ctx, 544.5, 300, t, 1089, 40, 1, base, shine);
+      expect(countOf(calls, "createRadialGradient")).toBe(0);
+      expect(countOf(calls, "createLinearGradient")).toBe(0);
     }
     expect(raf).not.toHaveBeenCalled();
     expect(timeout).not.toHaveBeenCalled();
-    expect(createElement.mock.calls.length).toBeLessThanOrEqual(1); // the tint, once per base image at most
+    expect(created).toHaveLength(1); // the tint, once
   });
 });
 

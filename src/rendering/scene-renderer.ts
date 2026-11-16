@@ -13,6 +13,7 @@
 import { Camera } from "./camera";
 import { MAX_DPR } from "./constants";
 import { actorLayer } from "./layers/actor";
+import { ChainSnapClock } from "./layers/chain-snap";
 import { backgroundLayer } from "./layers/background";
 import { effectsLayer } from "./layers/effects";
 import { environmentLayer } from "./layers/environment";
@@ -25,7 +26,13 @@ import type { RenderLayer, RenderState, RenderTime } from "./render-state";
 // SHIP_IMPACT_FX_SECONDS rides along for the caller-side half of the FX
 // timing handoff (R5): the caller stops reporting `shipImpact` once the FX
 // lifetime has elapsed.
-export type { Phase, RenderCreature, RenderState, RenderTime } from "./render-state";
+export type {
+  ChainSnapTiming,
+  Phase,
+  RenderCreature,
+  RenderState,
+  RenderTime,
+} from "./render-state";
 export { SHIP_IMPACT_FX_SECONDS } from "./constants";
 
 // Dev-only frame-time meter (§14 item 8, landed in R5). The wall-clock read
@@ -44,6 +51,18 @@ export class SceneRenderer {
   private readonly camera = new Camera();
   private readonly frameMs = new Float64Array(METER_WINDOW);
   private frameCount = 0;
+  // E-X7 chain-snap clock and the reused crashed-frame view (no per-frame allocation).
+  private readonly chainSnapClock = new ChainSnapClock();
+  private readonly snapView: { -readonly [K in keyof RenderState]: RenderState[K] } = {
+    phase: "crashed",
+    worldY: 0,
+    depthRatio: 0,
+    boost: 0,
+    creatures: [],
+    crashed: true,
+    shipImpact: null,
+    chainSnap: null,
+  };
 
   // Canonical layer order, bottom → top (§5).
   private readonly layers: readonly RenderLayer[] = [
@@ -84,7 +103,7 @@ export class SceneRenderer {
     // layer renders (§6); layers never write to it.
     // While betting is open the layers draw the surface view
     // (layers/presentation.ts); in every other phase `view` is `state`.
-    const view = presentState(state);
+    const view = this.withChainSnap(presentState(state), time.animTime);
     this.camera.setViewport(w, h);
     this.camera.follow(view.worldY);
     this.camera.setPresentationOffset(presentationOffsetY(view.worldY, w, h));
@@ -94,6 +113,27 @@ export class SceneRenderer {
     }
 
     if (import.meta.env.DEV) this.recordFrameTime(performance.now() - meterStart);
+  }
+
+  /**
+   * E-X7: the state with renderer-owned chain-snap timing while crashed. A
+   * caller-supplied `chainSnap` (a future FX queue) wins, so the renderer
+   * never runs a second crash clock. Outside crashed the state passes through
+   * untouched; while crashed it is copied into one reused object.
+   */
+  private withChainSnap(state: RenderState, animTime: number): RenderState {
+    const timing = this.chainSnapClock.update(state.phase, animTime);
+    if (timing === null || state.chainSnap !== undefined) return state;
+    const v = this.snapView;
+    v.phase = state.phase;
+    v.worldY = state.worldY;
+    v.depthRatio = state.depthRatio;
+    v.boost = state.boost;
+    v.creatures = state.creatures;
+    v.crashed = state.crashed;
+    v.shipImpact = state.shipImpact;
+    v.chainSnap = timing;
+    return v;
   }
 
   /** Dev-only: rolling avg + p95 of frame() cost, logged every METER_LOG_EVERY frames. */

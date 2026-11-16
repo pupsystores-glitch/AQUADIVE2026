@@ -20,6 +20,13 @@
 // to the sand beside the crown, tips over onto its side with a small bounce,
 // and the chain goes slack and settles in a loose coil next to it. All of it
 // is a pure function of the time since impact (RenderState.shipImpact).
+//
+// Chain snapped (E-X7): while crashed, with RenderState.chainSnap set by
+// SceneRenderer, the chain breaks above the anchor (layers/chain-snap.ts).
+// The break pose is copied out of anchorPose's reused object into scalars
+// before any further anchorPose call. The anchor falls away with the detached
+// links — or, when the sand is in view, lands with the existing landing — and
+// the upper chain recoils and settles. Every other phase is drawn as before.
 
 import { ANCHOR_WORLD_OFFSET_PX, CHAIN_MAX_DEPTH, SHIP_WORLD_Y } from "@/shared/world";
 import {
@@ -37,10 +44,19 @@ import {
 import { assets } from "../assets";
 import type { Camera } from "../camera";
 import { drawAnchor } from "../draw/anchor";
-import { drawChain, drawChainPath } from "../draw/chain";
+import { CHAIN_LINK_PITCH, drawChain, drawChainLinks, drawChainPath } from "../draw/chain";
 import { seaFloorRestPoint } from "../draw/sea-floor-art";
 import { shipChainAttach, shipScale, type ShipOffset } from "../draw/ship";
-import type { RenderLayer, RenderState } from "../render-state";
+import type { ChainSnapTiming, RenderLayer, RenderState } from "../render-state";
+import {
+  chainSnapBreak,
+  layoutDetachedLinks,
+  layoutUpperChain,
+  prepareChainSnap,
+  snapAnchorFall,
+  upperChainPoints,
+  type ChainSnapBreakInput,
+} from "./chain-snap";
 import { launchProgress, presentedShipRestY } from "./presentation";
 
 /** Anchor sway — faster & wider for a more natural pendulum swing. */
@@ -139,8 +155,11 @@ function tipLift(angle: number): number {
 
 const smooth = (p: number) => (p <= 0 ? 0 : p >= 1 ? 1 : p * p * (3 - 2 * p));
 
-/** Moves the pinned pose to its place in the landing, `t` seconds after impact. */
-function applyLanding(p: AnchorPose, t: number, camera: Camera) {
+/**
+ * Moves the pinned pose to its place in the landing, `t` seconds after impact.
+ * Returns the drop time (seconds until the anchor stands on the sand).
+ */
+function applyLanding(p: AnchorPose, t: number, camera: Camera): number {
   const { w, h } = camera.viewport;
   const floorScreenY = camera.worldToScreenY(CHAIN_MAX_DEPTH + ANCHOR_WORLD_OFFSET_PX);
   const rest = seaFloorRestPoint(w, h, floorScreenY);
@@ -158,7 +177,7 @@ function applyLanding(p: AnchorPose, t: number, camera: Camera) {
     p.x += (standX - p.x) * smooth(q);
     p.y += (standY - p.y) * (0.4 * q + 0.6 * q * q);
     p.swayAngle += (-LAND_LEAN - p.swayAngle) * q;
-    return;
+    return dropSeconds;
   }
 
   const since = t - dropSeconds;
@@ -177,6 +196,7 @@ function applyLanding(p: AnchorPose, t: number, camera: Camera) {
   p.y = tipY - Math.cos(angle) * TIP_BELOW_CENTER;
   p.swayAngle = -angle;
   p.slack = smooth((since - SLACK_DELAY) / SLACK_SECONDS);
+  return dropSeconds;
 }
 
 /** Seconds since the anchor reached the sea floor, or -1 while it has not (or betting is open). */
@@ -359,9 +379,156 @@ export function anchorPose(
   return pose;
 }
 
+// ----- Chain snapped (E-X7) -----
+
+/** Finite-difference step (s) for the anchor's velocity at the break. */
+const SNAP_VELOCITY_DT = 1 / 120;
+/** The snapped anchor lands (instead of falling out of view) when the sand is at most this far below the bottom edge. */
+const SNAP_FLOOR_MARGIN = TIP_BELOW_CENTER;
+/** Detached links lie down on the sand over this long once the landed anchor stands (seconds). */
+const SNAP_LIE_SECONDS = 0.6;
+
+/** Break-time scalars, copied out of the reused pose object (never retained). */
+const snapInput: ChainSnapBreakInput = {
+  t: 0,
+  anchorX: 0,
+  anchorY: 0,
+  anchorAngle: 0,
+  anchorVx: 0,
+  anchorVy: 0,
+  anchorVa: 0,
+  chainStartX: 0,
+  chainStartY: 0,
+  chainEndX: 0,
+  chainEndY: 0,
+  chainEndVx: 0,
+};
+/** What the prepared break was built for; any change rebuilds it (pure, so a rebuild is identical). */
+const snapKey = { valid: false, startedAt: 0, worldY: 0, w: 0, h: 0, origin: 0 };
+let snapLands = false;
+/** Scratch pose for the near-floor landing of the snapped anchor. */
+const snapLandPose: AnchorPose = { ...pose };
+
+function prepareSnap(worldY: number, camera: Camera, startedAt: number) {
+  const { w, h } = camera.viewport;
+  let p = anchorPose(worldY, camera, startedAt);
+  const x = p.x;
+  const y = p.y;
+  const a = p.swayAngle;
+  const endX = p.chainEndX;
+  snapInput.t = startedAt;
+  snapInput.anchorX = x;
+  snapInput.anchorY = y;
+  snapInput.anchorAngle = a;
+  snapInput.chainStartX = p.chainStartX;
+  snapInput.chainStartY = p.chainStartY;
+  snapInput.chainEndX = endX;
+  snapInput.chainEndY = p.chainEndY;
+  p = anchorPose(worldY, camera, startedAt - SNAP_VELOCITY_DT); // overwrites the pose object
+  snapInput.anchorVx = (x - p.x) / SNAP_VELOCITY_DT;
+  snapInput.anchorVy = (y - p.y) / SNAP_VELOCITY_DT;
+  snapInput.anchorVa = (a - p.swayAngle) / SNAP_VELOCITY_DT;
+  snapInput.chainEndVx = (endX - p.chainEndX) / SNAP_VELOCITY_DT;
+  prepareChainSnap(snapInput);
+
+  const floorScreenY = camera.worldToScreenY(CHAIN_MAX_DEPTH + ANCHOR_WORLD_OFFSET_PX);
+  snapLands = seaFloorRestPoint(w, h, floorScreenY).y < h + SNAP_FLOOR_MARGIN;
+
+  snapKey.valid = true;
+  snapKey.startedAt = startedAt;
+  snapKey.worldY = worldY;
+  snapKey.w = w;
+  snapKey.h = h;
+  snapKey.origin = camera.worldToScreenY(0);
+}
+
+/** The crashed frame: anchor + detached links falling away, the upper chain recoiling and settling. */
+function renderChainSnap(
+  ctx: CanvasRenderingContext2D,
+  state: RenderState,
+  camera: Camera,
+  animTime: number,
+  snap: ChainSnapTiming,
+) {
+  const { w, h } = camera.viewport;
+  if (
+    !snapKey.valid ||
+    snapKey.startedAt !== snap.startedAt ||
+    snapKey.worldY !== state.worldY ||
+    snapKey.w !== w ||
+    snapKey.h !== h ||
+    snapKey.origin !== camera.worldToScreenY(0)
+  ) {
+    prepareSnap(state.worldY, camera, snap.startedAt);
+  }
+  const t = Math.max(0, snap.elapsed);
+  const b = chainSnapBreak();
+
+  // The chain's top stays where it is drawn now (the hull's hawse hole while
+  // the ship is in view, else the unchanged off-screen attachment).
+  const cur = anchorPose(state.worldY, camera, animTime);
+  const attachX = cur.chainStartX;
+  const attachY = cur.chainStartY;
+  const fromHull = cur.fromHull;
+
+  let ax: number;
+  let ay: number;
+  let aa: number;
+  let vx = 0;
+  let trail = 1;
+  let floorY = Infinity;
+  if (snapLands) {
+    snapLandPose.x = b.anchorX;
+    snapLandPose.y = b.anchorY;
+    snapLandPose.swayAngle = b.anchorAngle;
+    const drop = applyLanding(snapLandPose, t, camera);
+    ax = snapLandPose.x;
+    ay = snapLandPose.y;
+    aa = snapLandPose.swayAngle;
+    floorY = snapLandPose.floorY;
+    trail = 1 - smooth((t - drop) / SNAP_LIE_SECONDS);
+  } else {
+    const f = snapAnchorFall(t);
+    ax = f.x;
+    ay = f.y;
+    aa = f.angle;
+    vx = f.vx;
+  }
+  const ringOffsetFromCenter = ANCHOR_DRAW_H * (0.5 - ANCHOR_RING_Y_FRAC);
+  const ringX = ax + Math.sin(aa) * ringOffsetFromCenter;
+  const ringY = ay - Math.cos(aa) * ringOffsetFromCenter - CHAIN_END_ABOVE_RING;
+
+  // Anchor and its links, once they have fallen out of view, are skipped.
+  const lowest = ringY - b.detached * CHAIN_LINK_PITCH - CHAIN_LINK_PITCH;
+  if (lowest < h) {
+    drawAnchor(ctx, ax, ay, aa, state.crashed, state.boost, ANCHOR_DRAW_H, assets.get("anchor"));
+    const lie = Math.sin(aa) < 0 ? -1 : 1;
+    drawChainLinks(ctx, layoutDetachedLinks(t, ringX, ringY, vx, trail, lie, floorY));
+  }
+
+  const n = layoutUpperChain(t, attachX, attachY);
+  if (n < 2) return;
+  const { xs, ys } = upperChainPoints();
+  if (fromHull) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, attachY - 2, w, h - attachY + 2);
+    ctx.clip();
+    drawChainPath(ctx, xs, ys, n, b.detached);
+    ctx.restore();
+  } else {
+    drawChainPath(ctx, xs, ys, n, b.detached);
+  }
+}
+
 export const actorLayer: RenderLayer = {
   name: "actor",
   render(ctx, state, camera, time) {
+    const snap = state.phase === "crashed" ? state.chainSnap : null;
+    if (snap) {
+      renderChainSnap(ctx, state, camera, time.animTime, snap);
+      return;
+    }
     const p = anchorPose(state.worldY, camera, time.animTime, landingSeconds(state));
 
     // Anchor sprite (in front of shipwreck so it lands ON the ship)
