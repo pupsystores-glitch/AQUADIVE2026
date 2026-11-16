@@ -3,12 +3,18 @@
 // verbatim from the component's drawScene; the animation clock arrives as
 // `time.animTime` (formerly swayRef.current). The `screen` composite mode
 // stays inside its own save/restore, exactly as before.
+//
+// Phase 7 step V2 (docs/08 §4.3): after the unchanged rays and bubbles the
+// layer draws F1 marine snow and, last, F2 the depth vignette (D-V2-2), so
+// the vignette darkens only the backdrop and this layer — never the World,
+// Actor or Effects layers above. Both are absent at depthRatio 0.
 
+import { DEFAULT_FX_SETTINGS, drawDepthVignette, drawMarineSnow } from "../draw/particles";
 import type { RenderLayer } from "../render-state";
 
 export const environmentLayer: RenderLayer = {
   name: "environment",
-  render(ctx, state, camera, time) {
+  render(ctx, state, camera, time, fx) {
     const { w, h } = camera.viewport;
 
     // Light rays from surface (fade with depth)
@@ -44,5 +50,10 @@ export const environmentLayer: RenderLayer = {
       ctx.arc(bx, by, br, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    // V2 — F1 marine snow, then F2 depth vignette at the end of the layer.
+    const settings = fx ?? DEFAULT_FX_SETTINGS;
+    drawMarineSnow(ctx, w, h, state.worldY, state.depthRatio, time.animTime, settings);
+    drawDepthVignette(ctx, w, h, state.depthRatio);
   },
 };

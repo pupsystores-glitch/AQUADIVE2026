@@ -194,14 +194,18 @@ const scene = (phase: RenderState["phase"], worldY: number): RenderState => ({
   shipImpact: null,
 });
 
-/** Two crash rounds (idle → dive → crashed at representative times → idle); one draw log per frame. */
-function drawLogs(withV1: boolean): string[] {
+/**
+ * Two crash rounds (idle → dive → crashed at representative times → idle); one draw log per frame.
+ * Since V2 the flags are no longer inert (they shape F1 marine snow, draw/particles.test.ts), so
+ * they are a separate switch: the queue's triggers stay invisible under either set of flags.
+ */
+function drawLogs(withV1: boolean, withFlags: boolean = withV1): string[] {
   const log: string[] = [];
   const ctx = recordingContext(log);
   const canvas = { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
   const r = new SceneRenderer(canvas);
   r.resize(390, 844, 1);
-  if (withV1) {
+  if (withFlags) {
     r.setMotion({ reducedMotion: true });
     r.setQuality("low");
   }
@@ -231,11 +235,19 @@ function drawLogs(withV1: boolean): string[] {
 }
 
 describe("V1 is invisible", () => {
-  it("draws exactly the same calls, frame by frame, with triggers, reduced motion and low quality", () => {
-    const plain = drawLogs(false);
-    const fx = drawLogs(true);
+  it("draws exactly the same calls, frame by frame, with triggers, under either motion / quality setting", () => {
+    const plain = drawLogs(false, false);
+    const fx = drawLogs(true, false);
     expect(fx).toHaveLength(plain.length);
     for (let i = 0; i < plain.length; i++) expect(fx[i]).toBe(plain[i]);
+    // V2: the same with reduced motion and low quality on both sides.
+    const plainLow = drawLogs(false, true);
+    const fxLow = drawLogs(true, true);
+    expect(fxLow).toHaveLength(plainLow.length);
+    for (let i = 0; i < plainLow.length; i++) expect(fxLow[i]).toBe(plainLow[i]);
+    // V2: the flags change nothing at the surface (the first frame of each round is the betting view).
+    expect(plainLow[0]).toBe(plain[0]);
+    expect(plainLow[17]).toBe(plain[17]);
     // The logs are real drawing, not empty frames.
     expect(plain.every((f) => f.length > 1000)).toBe(true);
   });

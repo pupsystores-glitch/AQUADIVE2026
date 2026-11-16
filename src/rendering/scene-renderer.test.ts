@@ -7,19 +7,38 @@
 // Since V1 also: the FX queue's crash entry shares the chain-snap break time
 // (one crash clock), triggers leave the chain-snap timing unchanged, the
 // queue resets for the next round, and the motion / quality flags are inert.
+// Since V2 also: every layer receives the renderer's FX settings as one
+// reused, read-only object (D-V2-1) that follows setMotion / setQuality.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RenderState } from "./render-state";
 
-const { seen, idle } = vi.hoisted(() => ({
-  seen: [] as RenderState[],
-  idle: (name: string) => ({ [name]: { name, render: () => {} } }),
-}));
+const { seen, fxSeen, idle } = vi.hoisted(() => {
+  const fxSeen: Array<{ layer: string; fx: unknown }> = [];
+  return {
+    seen: [] as RenderState[],
+    fxSeen,
+    idle: (name: string) => ({
+      [name]: {
+        name,
+        render: (_c: unknown, _s: unknown, _cam: unknown, _t: unknown, fx: unknown) => {
+          fxSeen.push({ layer: name, fx });
+        },
+      },
+    }),
+  };
+});
 vi.mock("./layers/background", () => idle("backgroundLayer"));
 vi.mock("./layers/environment", () => idle("environmentLayer"));
 vi.mock("./layers/world", () => idle("worldLayer"));
 vi.mock("./layers/effects", () => idle("effectsLayer"));
 vi.mock("./layers/actor", () => ({
-  actorLayer: { name: "actor", render: (_c: unknown, s: RenderState) => seen.push(s) },
+  actorLayer: {
+    name: "actor",
+    render: (_c: unknown, s: RenderState, _cam: unknown, _t: unknown, fx: unknown) => {
+      seen.push(s);
+      fxSeen.push({ layer: "actorLayer", fx });
+    },
+  },
 }));
 
 import { CHAIN_SNAP_SETTLE_SECONDS } from "./layers/chain-snap";
@@ -194,5 +213,57 @@ describe("SceneRenderer FX queue (V1)", () => {
     r.trigger("crash");
     frame(r, engineState("crashed"), 2);
     expect(r.fxSettings().shakeOffset).toBe(0);
+  });
+});
+
+// V2 (D-V2-1, option E): the FX settings reach the layers as an extra argument.
+describe("SceneRenderer FX settings forwarding (V2)", () => {
+  beforeEach(() => {
+    seen.length = 0;
+    fxSeen.length = 0;
+  });
+
+  it("hands every layer the same reused settings object, every frame", () => {
+    const r = renderer();
+    frame(r, engineState("diving"), 1);
+    expect(fxSeen.map((e) => e.layer)).toEqual([
+      "backgroundLayer",
+      "environmentLayer",
+      "worldLayer",
+      "actorLayer",
+      "effectsLayer",
+    ]);
+    const first = fxSeen[0].fx;
+    expect(first).toEqual({ reducedMotion: false, quality: "high" });
+    frame(r, engineState("diving"), 1.016);
+    frame(r, engineState("crashed"), 1.032);
+    expect(fxSeen).toHaveLength(15);
+    for (const e of fxSeen) expect(e.fx).toBe(first); // one object: no per-frame allocation
+  });
+
+  it("the object follows setMotion / setQuality and matches fxSettings()", () => {
+    const r = renderer();
+    frame(r, engineState("diving"), 1);
+    const fx = fxSeen[0].fx as { reducedMotion: boolean; quality: string };
+    r.setMotion({ reducedMotion: true });
+    r.setQuality("low");
+    (r as unknown as { setQuality(q: string): void }).setQuality("ultra"); // ignored
+    frame(r, engineState("diving"), 1.016);
+    expect(fxSeen[fxSeen.length - 1].fx).toBe(fx);
+    expect(fx).toEqual({ reducedMotion: true, quality: "low" });
+    expect(r.fxSettings()).toEqual({ reducedMotion: true, quality: "low", shakeOffset: 0 });
+    r.setMotion({ reducedMotion: false });
+    r.setQuality("high");
+    expect(fx).toEqual({ reducedMotion: false, quality: "high" });
+  });
+
+  it("carries no engine state: the RenderState passes through untouched", () => {
+    const r = renderer();
+    r.setQuality("low");
+    const s = engineState("diving");
+    const before = JSON.stringify(s);
+    expect(frame(r, s, 1)).toBe(s);
+    expect(JSON.stringify(s)).toBe(before);
+    expect("fx" in s).toBe(false);
   });
 });

@@ -13,6 +13,7 @@
 
 import type { CreatureKind } from "@/shared/creatures";
 import type { Camera } from "./camera";
+import type { FxQuality } from "./fx-queue";
 
 /** Renderer phase strings — engine states map onto these via a fixed projection (docs/06 §5). */
 export type Phase = "idle" | "diving" | "cashed" | "crashed" | "bonus";
@@ -67,8 +68,32 @@ export interface RenderTime {
   readonly frameDt: number;
 }
 
-/** One z-ordered slice of the scene; order in SceneRenderer's array is z-order (§5). */
+/**
+ * Renderer FX settings handed to every layer (Phase 7 step V2, D-V2-1
+ * option E). Renderer-owned and read-only for layers: SceneRenderer keeps one
+ * object (set through setMotion / setQuality) and passes the same reference
+ * every frame. It is never part of RenderState and the engine never sees it.
+ */
+export interface FxSettings {
+  /** True: no time-driven decorative motion. */
+  readonly reducedMotion: boolean;
+  /** Render quality (docs/05 §14 item 9). */
+  readonly quality: FxQuality;
+}
+
+/**
+ * One z-ordered slice of the scene; order in SceneRenderer's array is z-order (§5).
+ * SceneRenderer always passes `fx`. It is optional in the type so a layer
+ * rendered on its own (the layer tests written before V2) needs no change; a
+ * layer that reads it falls back to the renderer's defaults (high, full motion).
+ */
 export interface RenderLayer {
   readonly name: string;
-  render(ctx: CanvasRenderingContext2D, state: RenderState, camera: Camera, time: RenderTime): void;
+  render(
+    ctx: CanvasRenderingContext2D,
+    state: RenderState,
+    camera: Camera,
+    time: RenderTime,
+    fx?: FxSettings,
+  ): void;
 }

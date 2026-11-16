@@ -20,7 +20,7 @@ import { effectsLayer } from "./layers/effects";
 import { environmentLayer } from "./layers/environment";
 import { presentationOffsetY, presentState } from "./layers/presentation";
 import { worldLayer } from "./layers/world";
-import type { RenderLayer, RenderState, RenderTime } from "./render-state";
+import type { FxSettings, RenderLayer, RenderState, RenderTime } from "./render-state";
 
 // The component may only import from this module (§18); the contract types
 // are re-exported here so callers never reach into src/rendering internals.
@@ -68,8 +68,12 @@ export class SceneRenderer {
   // V1 (docs/08 §4.2): the FX queue and the motion / quality flags. The
   // queue's crash entry reads the chain-snap break above — one crash clock.
   private readonly fx = new FxQueue();
-  private reducedMotion = false;
-  private fxQuality: FxQuality = "high";
+  // V2 (D-V2-1): the same flags, held in one reused object that every layer
+  // receives read-only as its FX argument. No second store.
+  private readonly fxFlags: { -readonly [K in keyof FxSettings]: FxSettings[K] } = {
+    reducedMotion: false,
+    quality: "high",
+  };
 
   // Canonical layer order, bottom → top (§5).
   private readonly layers: readonly RenderLayer[] = [
@@ -116,10 +120,10 @@ export class SceneRenderer {
     this.camera.setViewport(w, h);
     this.camera.follow(view.worldY);
     this.camera.setPresentationOffset(presentationOffsetY(view.worldY, w, h));
-    this.camera.setShake(cameraShakeOffset(this.fx, time.animTime, this.reducedMotion));
+    this.camera.setShake(cameraShakeOffset(this.fx, time.animTime, this.fxFlags.reducedMotion));
 
     for (const layer of this.layers) {
-      layer.render(ctx, view, this.camera, time);
+      layer.render(ctx, view, this.camera, time, this.fxFlags);
     }
 
     if (import.meta.env.DEV) this.recordFrameTime(performance.now() - meterStart);
@@ -134,14 +138,14 @@ export class SceneRenderer {
     this.fx.trigger(kind);
   }
 
-  /** V1: the reduced-motion flag (default false). Behavior-neutral until an effect reads it. */
+  /** V1: the reduced-motion flag (default false). Since V2 it stops the marine snow's time-driven motion (F1). */
   setMotion(opts: { readonly reducedMotion: boolean }) {
-    this.reducedMotion = opts?.reducedMotion === true;
+    this.fxFlags.reducedMotion = opts?.reducedMotion === true;
   }
 
-  /** V1: render quality (default "high"). Behavior-neutral in V1; other values are ignored. */
+  /** V1: render quality (default "high"); other values are ignored. Since V2 "low" halves the marine snow and drops its parallax (F1). */
   setQuality(quality: FxQuality) {
-    if (quality === "high" || quality === "low") this.fxQuality = quality;
+    if (quality === "high" || quality === "low") this.fxFlags.quality = quality;
   }
 
   /** V1 diagnostics and tests: the active FX entry of a kind, as of the last frame. */
@@ -152,8 +156,8 @@ export class SceneRenderer {
   /** V1 diagnostics and tests: the current flags and the last frame's camera shake offset. */
   fxSettings(): { reducedMotion: boolean; quality: FxQuality; shakeOffset: number } {
     return {
-      reducedMotion: this.reducedMotion,
-      quality: this.fxQuality,
+      reducedMotion: this.fxFlags.reducedMotion,
+      quality: this.fxFlags.quality,
       shakeOffset: this.camera.shakeOffset,
     };
   }

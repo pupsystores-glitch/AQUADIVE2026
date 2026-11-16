@@ -158,3 +158,19 @@ export const BG_BOTTOM_SURFACE: number[] = [14, 40, 80];
 
 /** Gradient bottom color in the abyss. */
 export const BG_BOTTOM_ABYSS: number[] = [2, 6, 18];
+
+// ----- Ambient depth FX (draw/particles.ts; Phase 7 step V2, docs/08 §4.3 F1 and F2) -----
+// The vignette tone is a dark blue a shade deeper than the abyss gradient's
+// bottom colour (BG_BOTTOM_ABYSS) — never pure black (V2 refinement,
+// provisional). Alpha arrives from the draw module.
+
+/** F2 depth vignette tone, rgb. */
+export const DEPTH_VIGNETTE_TONE: readonly number[] = [0, 3, 10];
+
+export const DEPTH_FX_THEME = {
+  /** F1 marine snow speck; its alpha is applied through globalAlpha. */
+  marineSnow: "rgb(206, 228, 240)",
+  /** F2 depth vignette stop at a given alpha. */
+  vignette: (alpha: number) =>
+    `rgba(${DEPTH_VIGNETTE_TONE[0]}, ${DEPTH_VIGNETTE_TONE[1]}, ${DEPTH_VIGNETTE_TONE[2]}, ${alpha})`,
+} as const;
