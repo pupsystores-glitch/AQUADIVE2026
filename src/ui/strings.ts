@@ -79,6 +79,37 @@ export const STRINGS = {
     placeBet: (seconds: string) => `PLACE BET · ${seconds}s`,
     waiting: "WAITING…",
   },
+  /** LA1: the SOUND and MUSIC buttons under the balance. Accessible names; no visible text. */
+  audioControls: {
+    groupLabel: "Audio",
+    sound: "Sound effects",
+    music: "Music",
+    soundTitle: (on: boolean) => (on ? "Sound on" : "Sound off"),
+    musicTitle: (on: boolean) => (on ? "Music on" : "Music off"),
+  },
+  /** LA1: the startup screen. */
+  loading: {
+    title: "AQUADIVE",
+    tagline: "REAL-TIME",
+    progressLabel: "Loading AQUADIVE",
+    percent: (value: number) => `${value}%`,
+    start: "START GAME",
+    retry: "RETRY",
+    continueAnyway: "Continue anyway",
+    failed: "Some game graphics could not be loaded.",
+    slow: "Slow connection — still loading…",
+    /** Shown by CSS alone if the scripts never start (no hydration). */
+    stalled: "The game is taking too long to start.",
+    reload: "Reload",
+    noScript: "AQUADIVE needs JavaScript.",
+    notice: {
+      "audio-unsupported": "Sound is not supported in this browser. The game plays silently.",
+      "sounds-failed": "Some sounds could not be loaded.",
+      "sounds-deferred": "Sounds are still loading and will start shortly.",
+      "music-unavailable": "Music could not be loaded.",
+      "music-withheld": "Music needs iOS 16.4 or later on this device.",
+    },
+  },
   /** Dev-only diagnostics (§12). Never rendered in production builds. */
   dev: {
     rejection: (command: string, reason: string) => `REJECTED ${command} · ${reason}`,

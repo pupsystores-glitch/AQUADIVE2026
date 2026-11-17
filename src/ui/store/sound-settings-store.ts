@@ -45,6 +45,22 @@
 // applied before the audio unlock or any playback. Nothing here assumes
 // `restore()` runs before the first user gesture.
 //
+// LA1 (owner authorization, 2026-11-17): two independent on/off switches,
+// `soundOn` (effects and ocean ambience) and `musicOn` (the soundtrack
+// only), shown as the two buttons under the balance. They live in the same
+// version-1 record, next to the untouched master mute and the four volumes:
+//
+// - Defaults: both on. A version-1 record written before LA1 has neither
+//   field; that is a complete record, so it reads as `valid` with both on.
+//   A switch that is present but not a boolean is a bad field (D5).
+// - The volumes are never changed by a switch, and a switch never changes
+//   `muted`, except through `toggleSwitch` while muted (below).
+// - Master mute and the switches (no contradictory state): a button shows
+//   ON only when its switch is on AND the master mute is off (`switchShown`).
+//   While muted both buttons show OFF, so pressing one turns the master mute
+//   off, turns the pressed switch on and the other switch off: the player
+//   then hears exactly what the two buttons show.
+//
 // Import rule (docs/07 §6): this module imports only `./store`. It does not
 // import `src/audio`. No React, no DOM.
 
@@ -61,8 +77,17 @@ export const SOUND_CHANNELS = ["master", "music", "ambience", "sfx"] as const;
 
 export type SoundChannel = (typeof SOUND_CHANNELS)[number];
 
+/** LA1: the two on/off switches under the balance. */
+export const SOUND_SWITCHES = ["soundOn", "musicOn"] as const;
+
+export type SoundSwitch = (typeof SOUND_SWITCHES)[number];
+
 export interface SoundSettings {
   readonly muted: boolean;
+  /** LA1: effects and ocean ambience on (the SOUND button). Not the soundtrack. */
+  readonly soundOn: boolean;
+  /** LA1: the soundtrack on (the MUSIC button). Not the effects or the ambience. */
+  readonly musicOn: boolean;
   /** Linear 0..1 (D4). */
   readonly master: number;
   /** Linear 0..1 (D4). */
@@ -73,9 +98,11 @@ export interface SoundSettings {
   readonly sfx: number;
 }
 
-/** The defaults (D1): sound on, every volume at 1.0. */
+/** The defaults (D1): sound on, both switches on (LA1), every volume at 1.0. */
 export const DEFAULT_SOUND_SETTINGS: SoundSettings = Object.freeze({
   muted: false,
+  soundOn: true,
+  musicOn: true,
   master: 1,
   music: 1,
   ambience: 1,
@@ -139,6 +166,8 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 const freezeSettings = (settings: SoundSettings): SoundSettings =>
   Object.freeze({
     muted: settings.muted,
+    soundOn: settings.soundOn,
+    musicOn: settings.musicOn,
     master: settings.master,
     music: settings.music,
     ambience: settings.ambience,
@@ -165,6 +194,14 @@ export function parseSoundSettings(raw: string | null): SoundSettingsRead {
 
   let salvaged = typeof data.muted !== "boolean";
   const muted = typeof data.muted === "boolean" ? data.muted : DEFAULT_SOUND_SETTINGS.muted;
+  // LA1: a switch missing from a record written before LA1 takes its default
+  // without salvaging; a switch of the wrong type is a bad field (D5).
+  const toggle = (name: SoundSwitch): boolean => {
+    const value = data[name];
+    if (typeof value === "boolean") return value;
+    if (value !== undefined) salvaged = true;
+    return DEFAULT_SOUND_SETTINGS[name];
+  };
   const volume = (channel: SoundChannel): number => {
     const value = data[channel];
     if (isValidVolume(value)) return value === 0 ? 0 : value;
@@ -173,6 +210,8 @@ export function parseSoundSettings(raw: string | null): SoundSettingsRead {
   };
   const settings = freezeSettings({
     muted,
+    soundOn: toggle("soundOn"),
+    musicOn: toggle("musicOn"),
     master: volume("master"),
     music: volume("music"),
     ambience: volume("ambience"),
@@ -186,6 +225,8 @@ export function serializeSoundSettings(settings: SoundSettings): string {
   return JSON.stringify({
     version: SOUND_SETTINGS_VERSION,
     muted: settings.muted,
+    soundOn: settings.soundOn,
+    musicOn: settings.musicOn,
     master: settings.master,
     music: settings.music,
     ambience: settings.ambience,
@@ -197,11 +238,21 @@ export function serializeSoundSettings(settings: SoundSettings): string {
 export function sameSoundSettings(a: SoundSettings, b: SoundSettings): boolean {
   return (
     a.muted === b.muted &&
+    a.soundOn === b.soundOn &&
+    a.musicOn === b.musicOn &&
     a.master === b.master &&
     a.music === b.music &&
     a.ambience === b.ambience &&
     a.sfx === b.sfx
   );
+}
+
+/**
+ * LA1: what a switch's button shows: on only when the switch is on and the
+ * master mute is off, so the buttons never claim a sound that cannot play.
+ */
+export function switchShown(settings: SoundSettings, name: SoundSwitch): boolean {
+  return !settings.muted && settings[name];
 }
 
 // ----- the store -----
@@ -226,6 +277,14 @@ export interface SoundSettingsStore extends ReadableStore<SoundSettings> {
    * non-finite value is ignored. Does not change `muted` (D7 deferred).
    */
   setVolume(channel: SoundChannel, value: number): void;
+  /** LA1: set one switch. Changes nothing else (not `muted`, no volume). */
+  setSwitch(name: SoundSwitch, on: boolean): void;
+  /**
+   * LA1: a press of a switch's button. Not muted: flips that switch only.
+   * Muted (both buttons show OFF): unmutes, turns this switch on and the
+   * other off, so what plays matches what the buttons show (`switchShown`).
+   */
+  toggleSwitch(name: SoundSwitch): void;
 }
 
 export interface SoundSettingsOptions {
@@ -319,6 +378,20 @@ export function createSoundSettingsStore(options: SoundSettingsOptions = {}): So
       const volume = clampVolume(value);
       if (volume === null) return;
       change({ [channel]: volume });
+    },
+    setSwitch: (name: SoundSwitch, on: boolean) => {
+      if (!SOUND_SWITCHES.includes(name) || typeof on !== "boolean") return;
+      change({ [name]: on });
+    },
+    toggleSwitch: (name: SoundSwitch) => {
+      if (!SOUND_SWITCHES.includes(name)) return;
+      const current = store.get();
+      if (!current.muted) {
+        change({ [name]: !current[name] });
+        return;
+      }
+      const other: SoundSwitch = name === "soundOn" ? "musicOn" : "soundOn";
+      change({ muted: false, [name]: true, [other]: false });
     },
   });
 }

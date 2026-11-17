@@ -1,12 +1,16 @@
 // Top bar — logo block + balance chip (docs/07_UI_ARCHITECTURE.md §13.1).
 // Sprint 4, Commit U6: markup verbatim from the component shell; reads only
 // the wallet's balance, so only balance changes re-render it (V3).
+//
+// LA1: the SOUND and MUSIC buttons sit directly under the balance chip,
+// right-aligned with it (SoundToggles, which reads its own store slice).
 
 import { formatMoney } from "@/game/presentation";
 import { useStore } from "@/ui/hooks/use-store";
 import { gameSession } from "@/ui/session";
 import { STRINGS } from "@/ui/strings";
 import { AnchorIcon } from "./icons";
+import { SoundToggles } from "./SoundToggles";
 
 const { wallet } = gameSession;
 
@@ -28,9 +32,12 @@ export function TopBar() {
           </div>
         </div>
       </div>
-      <div className="rounded-full border border-border bg-card/70 px-3 py-1 text-xs">
-        <span className="text-muted-foreground">{STRINGS.topBar.balanceLabel}</span>
-        <span className="font-semibold text-gold">{formatMoney(balance)}</span>
+      <div className="flex flex-col items-end gap-1.5">
+        <div className="rounded-full border border-border bg-card/70 px-3 py-1 text-xs">
+          <span className="text-muted-foreground">{STRINGS.topBar.balanceLabel}</span>
+          <span className="font-semibold text-gold">{formatMoney(balance)}</span>
+        </div>
+        <SoundToggles />
       </div>
     </header>
   );

@@ -63,7 +63,12 @@
 // once, at construction, after the audio host (every earlier listener keeps
 // its order); they reach only the renderer currently attached, never throw,
 // and forward nothing while no canvas is attached. V1 adds no visible effect.
-
+//
+// LA1 (the startup screen, src/ui/startup.ts): whenFrameRendered(callback)
+// calls back once, after the next frame the attached renderer has drawn.
+// The startup screen uses it once to know the first playable frame is on
+// the canvas. The frame sink checks one array length per frame; no loading
+// progress runs through the animation loop.
 
 import {
   BET_SLOTS,
@@ -165,6 +170,12 @@ export interface GameSession {
    */
   attachCanvas(canvas: HTMLCanvasElement): () => void;
   /**
+   * LA1: calls back once, right after the next frame a renderer has drawn
+   * (no canvas attached: after the first frame once one is). Returns the
+   * cancel. A throwing callback is logged and does not affect the frame.
+   */
+  whenFrameRendered(callback: () => void): () => void;
+  /**
    * The single command edge for components (§8). placeBet is dropped unless
    * its slot is 0 or 1 and its amount is a valid stake (M1-D1/D2: whole
    * cents, ≥ 0.01) the wallet can afford once the stakes still in flight are
@@ -253,6 +264,17 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   };
   engine.events.on("crashed", () => forwardFx("crash"));
   engine.events.on("bettingOpened", () => forwardFx("reset"));
+  // LA1: one-shot callbacks after the next drawn frame.
+  const frameWaiters: (() => void)[] = [];
+  const notifyFrameWaiters = () => {
+    for (const callback of frameWaiters.splice(0)) {
+      try {
+        callback();
+      } catch (error) {
+        console.error("[ui] a frame-rendered callback failed:", error);
+      }
+    }
+  };
 
   return {
     engine,
@@ -264,6 +286,13 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     soundSettings,
     audio,
     dispose: () => audio.dispose(),
+    whenFrameRendered: (callback) => {
+      frameWaiters.push(callback);
+      return () => {
+        const i = frameWaiters.indexOf(callback);
+        if (i >= 0) frameWaiters.splice(i, 1);
+      };
+    },
     submit: (command) => {
       if (command.type === "placeBet") {
         if (!BET_SLOTS.includes(command.slot)) return;
@@ -310,6 +339,7 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
           }
           renderer.resize(fit.width, fit.height, fit.dpr);
           renderer.frame(state, time);
+          if (frameWaiters.length > 0) notifyFrameWaiters();
         },
         sync: (state) => {
           round.write(state);

@@ -71,14 +71,41 @@
 // playing media element moves the whole page to the system's "playback"
 // audio category, which ignores the silent switch, even when the element is
 // routed into Web Audio (docs/08 §7.6, "iOS silent switch"). The streamed
-// soundtrack would therefore override Q15 for every sound. Until the owner
-// decides otherwise, `browserMusicElement` returns no element on those
-// devices: the music stays off there, and effects and ambience behave
-// exactly as before. No audio-session API is touched.
+// soundtrack would therefore override Q15 for every sound.
 //
-// Not here: adaptive music stems, countdown audio (Q9), a sound control
-// (A5), any audio-session override (Q15), media-session metadata or
-// controls.
+// LA1 (owner authorization 2026-11-17: the soundtrack must play on iPhone;
+// docs/08 §7.6 alternative 2): on iOS and iPadOS the host sets the documented
+// Audio Session API, `navigator.audioSession.type = "ambient"` (W3C Audio
+// Session draft; Safari 16.4 and later), once, on the client, before any
+// sound: at `attach()`/`preload()` and again in `browserMusicElement`. The
+// whole page, the soundtrack included, then stays in the "ambient" category:
+// it plays with the ringer on, and the silent switch silences everything,
+// music too, so Q15 holds. Where the API is missing (iOS before 16.4) no
+// element is made and the music stays off there, as before LA1. The session
+// is never touched on any other platform, and never set to "playback".
+//
+// LA1 switches (the two buttons under the balance, `sound-settings-store`):
+// SOUND off sets the `sfx` and `ambience` buses to 0; MUSIC off sets the
+// `music` bus to 0 and holds the one stream through the director (paused,
+// position kept; never requested while off, so nothing is downloaded). The
+// master mute and the four volumes keep their meaning. With both switches
+// off the manager is muted as well, so the context suspends and nothing
+// runs. A switch change made by a button press is applied synchronously,
+// inside that press, so iOS accepts the resume and the `play()` it causes.
+//
+// LA1 loading (the startup screen, `src/ui/startup.ts`): `preload()` starts
+// the cue downloads before the canvas attaches, checks Web Audio and codec
+// support, and probes the soundtrack with one HEAD request (no body: the
+// soundtrack is still streamed only after START GAME). `loading` is a store
+// of what has arrived. Bytes are counted by wrapping the bank's fetch, so
+// there is still one request per cue. Decoding still waits for the unlock.
+// `unlock()` is the explicit gesture path for the START GAME button, and
+// `deferGestureUnlock()` (called by the startup) makes page-wide gestures
+// wait for it: a tap on the loading screen or on Retry starts no sound.
+//
+// Not here: adaptive music stems, countdown audio (Q9), volume sliders
+// (A5), an audio-session type other than "ambient", media-session metadata
+// or controls.
 
 import {
   createAudioManager,
@@ -102,10 +129,12 @@ import { MUSIC_MAIN, type MusicTrack } from "@/audio/music";
 import {
   createSoundBank,
   type FetchLike,
+  type FetchResponseLike,
   type SoundBank,
   type SoundBankOptions,
 } from "@/audio/sound-bank";
 import type { SoundSettings, SoundSettingsStore } from "@/ui/store/sound-settings-store";
+import { createStore, type ReadableStore } from "@/ui/store/store";
 
 /** The bus each settings channel drives. Settings channels and buses share names (A3, D3). */
 const BUSES: readonly AudioBus[] = ["master", "music", "ambience", "sfx"];
@@ -184,16 +213,167 @@ export function isSilentSwitchPlatform(hints: PlatformHints | null | undefined):
   return mac && typeof hints.maxTouchPoints === "number" && hints.maxTouchPoints > 1;
 }
 
+/** `navigator` as the host reads it: the platform hints and, on iOS only, the Audio Session API. */
+export interface NavigatorHints extends PlatformHints {
+  readonly audioSession?: unknown;
+}
+
 /**
- * The production media element factory for the music (M-OWN): the browser's
- * `Audio`, except on iOS and iPadOS, where it returns `null` so that the
- * music stays off and Q15 holds (see the header). Reads `navigator` at call
- * time, never at import.
+ * What `prepareAmbientAudioSession` found (LA1):
+ * - `not-needed`: not iOS or iPadOS; nothing was read or written;
+ * - `ambient`: iOS or iPadOS, and the page's audio session type is "ambient";
+ * - `unavailable`: iOS or iPadOS without a usable `navigator.audioSession`.
+ */
+export type AudioSessionOutcome = "not-needed" | "ambient" | "unavailable";
+
+/**
+ * LA1: on iOS and iPadOS, sets the documented `navigator.audioSession.type`
+ * to "ambient", so a playing soundtrack keeps the page in the category that
+ * obeys the silent switch (Q15). Idempotent. Reads `audioSession` on those
+ * devices only. Never throws.
+ */
+export function prepareAmbientAudioSession(
+  nav: NavigatorHints | null | undefined,
+): AudioSessionOutcome {
+  if (!isSilentSwitchPlatform(nav)) return "not-needed";
+  try {
+    const session = nav?.audioSession as { type?: unknown } | null | undefined;
+    if (typeof session !== "object" || session === null || typeof session.type !== "string") {
+      return "unavailable";
+    }
+    if (session.type !== "ambient") session.type = "ambient";
+    return session.type === "ambient" ? "ambient" : "unavailable";
+  } catch {
+    return "unavailable";
+  }
+}
+
+const browserNavigator = (): NavigatorHints | undefined =>
+  (globalThis as { navigator?: NavigatorHints }).navigator;
+
+/**
+ * The production media element factory for the music (M-OWN, LA1): the
+ * browser's `Audio`. On iOS and iPadOS only once the page's audio session is
+ * "ambient" (set here if it is not yet); without the Audio Session API it
+ * returns `null` there, so that the music stays off and Q15 holds (see the
+ * header). Reads `navigator` at call time, never at import.
  */
 export const browserMusicElement = (): MediaElementLike | null => {
-  const hints = (globalThis as { navigator?: PlatformHints }).navigator;
-  return isSilentSwitchPlatform(hints) ? null : createBrowserMediaElement();
+  if (prepareAmbientAudioSession(browserNavigator()) === "unavailable") return null;
+  return createBrowserMediaElement();
 };
+
+/** LA1: what this browser can play, checked once by `preload()`. */
+export interface AudioSupport {
+  /** `AudioContext` or `webkitAudioContext` exists. */
+  readonly webAudio: boolean;
+  /** MP3 (the soundtrack and some cues). */
+  readonly mp3: boolean;
+  /** AAC in MP4 (the other cues). */
+  readonly aac: boolean;
+}
+
+/** Production support check: constructors and `canPlayType`, read at call time. Creates no context. */
+export const browserAudioSupport = (): AudioSupport | null => {
+  const scope = globalThis as {
+    AudioContext?: unknown;
+    webkitAudioContext?: unknown;
+    document?: { createElement?: (tag: string) => { canPlayType?: (type: string) => string } };
+  };
+  if (typeof scope.document?.createElement !== "function") return null;
+  const probe = scope.document.createElement("audio");
+  const can = (type: string) =>
+    typeof probe.canPlayType === "function" && probe.canPlayType(type) !== "";
+  return {
+    webAudio:
+      typeof scope.AudioContext === "function" || typeof scope.webkitAudioContext === "function",
+    mp3: can("audio/mpeg"),
+    aac: can('audio/mp4; codecs="mp4a.40.2"'),
+  };
+};
+
+/**
+ * LA1: whether the soundtrack file is reachable, without downloading it.
+ * true: found; false: missing (404/410) or the request failed; null: the
+ * server does not say (HEAD refused, for example). Never rejects.
+ */
+export type MusicProbe = (url: string) => Promise<boolean | null>;
+
+/** Production probe: one HEAD request (no body). */
+export const browserMusicProbe: MusicProbe = (url) => {
+  const scope = globalThis as {
+    fetch?: (url: string, init: { method: string }) => Promise<{ ok: boolean; status: number }>;
+  };
+  if (typeof scope.fetch !== "function") return Promise.resolve(null);
+  try {
+    return scope.fetch(url, { method: "HEAD" }).then(
+      (response) => {
+        if (response.ok) return true;
+        return response.status === 404 || response.status === 410 ? false : null;
+      },
+      () => false,
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
+};
+
+/**
+ * LA1: the soundtrack's readiness for the startup screen.
+ * - `none`: the host has no soundtrack;
+ * - `withheld`: iOS or iPadOS without the Audio Session API (Q15 keeps it off);
+ * - `unsupported`: the browser cannot play MP3 or has no Web Audio;
+ * - `pending`: not checked yet;
+ * - `available` / `unavailable`: the probe's answer (`available` also when the
+ *   server would not say).
+ */
+export type MusicReadiness =
+  "none" | "withheld" | "unsupported" | "pending" | "available" | "unavailable";
+
+/** LA1: what the startup screen knows about the audio downloads. */
+export interface AudioLoadState {
+  /** `preload()` (or the first attach) has started the downloads. */
+  readonly started: boolean;
+  /** Cue files to download: the enabled cues that have an asset. */
+  readonly cues: number;
+  /** Cue files whose bytes have arrived. */
+  readonly fetched: number;
+  /** Cue files that failed to download. */
+  readonly failed: number;
+  readonly music: MusicReadiness;
+  /**
+   * `pending` until checked; `unknown`: no DOM to check with; `unsupported`:
+   * no Web Audio, or neither codec.
+   */
+  readonly support: "pending" | "unknown" | "supported" | "unsupported";
+}
+
+const INITIAL_LOAD_STATE: AudioLoadState = Object.freeze({
+  started: false,
+  cues: 0,
+  fetched: 0,
+  failed: 0,
+  music: "pending",
+  support: "pending",
+});
+
+/** The global `fetch`, read at call time, as the sound bank reads it. */
+const globalFetch = (): FetchLike | null => {
+  const scope = globalThis as { fetch?: FetchLike };
+  if (typeof scope.fetch !== "function") return null;
+  return (url, init) => scope.fetch!(url, init);
+};
+
+/** LA1: a bus's gain: the mix × the user's volume, or 0 while its switch is off. */
+export function busLevel(bus: AudioBus, settings: SoundSettings): number {
+  if (bus === "music" && !settings.musicOn) return 0;
+  if ((bus === "sfx" || bus === "ambience") && !settings.soundOn) return 0;
+  return AUDIO_MIX[bus] * settings[bus];
+}
+
+/** LA1: the manager is muted by the master mute, and also when both switches are off. */
+export const managerMuted = (settings: SoundSettings): boolean =>
+  settings.muted || (!settings.soundOn && !settings.musicOn);
 
 /** The settings surface the host uses: read, subscribe, and the one-time restore. */
 export type AudioSettingsSource = Pick<SoundSettingsStore, "get" | "subscribe" | "restore">;
@@ -237,6 +417,12 @@ export interface AudioHostOptions {
   readonly music?: MusicTrack | null;
   /** The music's media element factory. Default: `browserMusicElement`, resolved at the first unlock. */
   readonly createMediaElement?: () => MediaElementLike | null;
+  /** LA1: the iOS audio session step. Default: `prepareAmbientAudioSession(navigator)`. */
+  readonly prepareAudioSession?: () => AudioSessionOutcome;
+  /** LA1: the support check. Default: `browserAudioSupport`. */
+  readonly audioSupport?: () => AudioSupport | null;
+  /** LA1: the soundtrack probe. Default: `browserMusicProbe` (one HEAD request). */
+  readonly probeMusic?: MusicProbe;
   /** Test seams: replace a component, for example to inject failures. */
   readonly createManager?: (options: AudioManagerOptions<CueId>) => AudioManager<CueId>;
   readonly createBank?: (options: SoundBankOptions<CueId>) => SoundBank<CueId>;
@@ -253,6 +439,28 @@ export interface AudioHost {
   attach(): () => void;
   /** One rendered frame → the director. A no-op while detached or disposed. Never throws. */
   update(input: AudioFrameInput): void;
+  /**
+   * LA1, client only: start the cue downloads (once), prepare the iOS audio
+   * session, check support and probe the soundtrack (once). Creates no
+   * context and plays nothing. Idempotent. Never throws.
+   */
+  preload(): void;
+  /**
+   * LA1: the gesture path, for a button's own handler (START GAME): restore
+   * and apply the settings, then unlock, exactly as a listened gesture does.
+   * Call it inside the user gesture. Also ends `deferGestureUnlock()`, so
+   * later page-wide gestures re-unlock after an interruption as before.
+   * Never throws.
+   */
+  unlock(): void;
+  /**
+   * LA1: until the next `unlock()`, page-wide gestures (taps on the startup
+   * screen, Retry) do not unlock audio, so nothing of the round running
+   * under the startup screen is heard before START GAME. Never throws.
+   */
+  deferGestureUnlock(): void;
+  /** LA1: the downloads' progress, for the startup screen. */
+  readonly loading: ReadableStore<AudioLoadState>;
   /** Ends the audio subsystem. Idempotent; every later call is a no-op. Never throws. */
   dispose(): void;
 }
@@ -285,10 +493,87 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
   let director: AudioDirector | null = null;
   /** The cues the host loads: the manifest minus the director's disabled cues (A6.1, A-OWN). */
   let loadCues: readonly CueId[] = [];
+  /** LA1: the soundtrack, or null. */
+  const music = options.music === undefined ? MUSIC_MAIN : options.music;
+
+  // ----- LA1: download progress -----
+
+  const loading = createStore<AudioLoadState>(INITIAL_LOAD_STATE);
+  const patchLoading = (patch: Partial<AudioLoadState>) => {
+    loading.set(Object.freeze({ ...loading.get(), ...patch }));
+  };
+  /** Per counted cue: its download's outcome so far. */
+  const cueDownloads = new Map<CueId, "pending" | "fetched" | "failed">();
+  /** The counted cues of each URL (two cues may share a file). */
+  const cuesByUrl = new Map<string, CueId[]>();
+  const markDownload = (cues: readonly CueId[] | undefined, outcome: "fetched" | "failed") => {
+    if (!cues) return;
+    let changed = false;
+    for (const cue of cues) {
+      if (cueDownloads.get(cue) !== "pending") continue;
+      cueDownloads.set(cue, outcome);
+      changed = true;
+    }
+    if (!changed) return;
+    let fetched = 0;
+    let failed = 0;
+    for (const outcome of cueDownloads.values()) {
+      if (outcome === "fetched") fetched++;
+      else if (outcome === "failed") failed++;
+    }
+    patchLoading({ fetched, failed });
+  };
+  /**
+   * The bank's fetch, counting arrived bytes per URL. Same requests, same
+   * responses: only `arrayBuffer()` is observed. Without a fetch it fails as
+   * the bank's own default does.
+   */
+  const trackedFetch: FetchLike = (url, init) => {
+    const fetchAsset = options.fetch ?? globalFetch();
+    const cues = cuesByUrl.get(url);
+    if (!fetchAsset) {
+      markDownload(cues, "failed");
+      return Promise.reject(new Error("fetch is unavailable"));
+    }
+    let request: Promise<FetchResponseLike>;
+    try {
+      request = fetchAsset(url, init);
+    } catch (error) {
+      markDownload(cues, "failed");
+      return Promise.reject(error);
+    }
+    return request.then(
+      (response): FetchResponseLike => {
+        if (!response.ok) {
+          markDownload(cues, "failed");
+          return response;
+        }
+        return {
+          ok: response.ok,
+          status: response.status,
+          arrayBuffer: () =>
+            response.arrayBuffer().then(
+              (bytes) => {
+                markDownload(cues, "fetched");
+                return bytes;
+              },
+              (error: unknown) => {
+                markDownload(cues, "failed");
+                throw error;
+              },
+            ),
+        };
+      },
+      (error: unknown) => {
+        markDownload(cues, "failed");
+        throw error;
+      },
+    );
+  };
+
   guard("construct", () => {
     const makeManager = options.createManager ?? createAudioManager;
     const makeBank = options.createBank ?? createSoundBank;
-    const music = options.music === undefined ? MUSIC_MAIN : options.music;
     const makeDirector =
       options.createDirector ??
       ((events: AudioEventSource, cueAudio: AudioManager<CueId>) =>
@@ -305,10 +590,17 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
     loadCues = (Object.keys(manifest) as CueId[]).filter(
       (cue) => !DISABLED_CUES_BY_DEFAULT.includes(cue),
     );
+    // LA1: the counted downloads: every loaded cue that has a file.
+    for (const cue of loadCues) {
+      const url = manifest[cue]?.asset?.url;
+      if (typeof url !== "string") continue;
+      cueDownloads.set(cue, "pending");
+      cuesByUrl.set(url, [...(cuesByUrl.get(url) ?? []), cue]);
+    }
     const sounds = makeBank({
       manifest,
       decoder: audio,
-      fetch: options.fetch,
+      fetch: trackedFetch,
     });
     resolveBank = sounds;
     bank = sounds;
@@ -330,8 +622,10 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
     if (current === applied) return true;
     applied = null;
     const ok = guard("apply settings", () => {
-      audio.setMuted(current.muted);
-      for (const bus of BUSES) audio.setBusGain(bus, AUDIO_MIX[bus] * current[bus]);
+      // LA1: unmute first, so a switch turned on inside a press resumes in that gesture.
+      audio.setMuted(managerMuted(current));
+      for (const bus of BUSES) audio.setBusGain(bus, busLevel(bus, current));
+      director?.setMusicEnabled?.(current.musicOn);
     });
     if (ok) applied = current;
     return ok;
@@ -371,8 +665,65 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
     const sounds = bank;
     if (loadStarted || !sounds) return;
     guard("bank load", () => {
-      sounds.loadAll(loadCues).then(undefined, (error: unknown) => report("bank load", error));
+      const cues = loadCues;
+      sounds.loadAll(cues).then(
+        (results) => {
+          // LA1: a cue that ended without a download (invalid entry, cancelled) is settled too.
+          results.forEach((result, i) => {
+            if (result !== "ready") markDownload([cues[i]], "failed");
+          });
+        },
+        (error: unknown) => report("bank load", error),
+      );
       loadStarted = true;
+      patchLoading({ started: true, cues: cueDownloads.size });
+    });
+  };
+
+  // ----- LA1: iOS audio session, support check, soundtrack probe -----
+
+  let sessionOutcome: AudioSessionOutcome | null = null;
+  const prepareSessionOnce = () => {
+    if (sessionOutcome !== null) return;
+    guard("audio session", () => {
+      const prepare =
+        options.prepareAudioSession ?? (() => prepareAmbientAudioSession(browserNavigator()));
+      sessionOutcome = prepare();
+    });
+  };
+
+  let checked = false;
+  const checkOnce = () => {
+    if (checked || disposed) return;
+    checked = true;
+    let support: AudioSupport | null = null;
+    guard("support check", () => {
+      support = (options.audioSupport ?? browserAudioSupport)();
+    });
+    const found = support as AudioSupport | null;
+    const playable = found === null || (found.webAudio && (found.mp3 || found.aac));
+    patchLoading({ support: found === null ? "unknown" : playable ? "supported" : "unsupported" });
+    if (!music) {
+      patchLoading({ music: "none" });
+      return;
+    }
+    if (sessionOutcome === "unavailable") {
+      patchLoading({ music: "withheld" });
+      return;
+    }
+    if (found !== null && (!found.webAudio || !found.mp3)) {
+      patchLoading({ music: "unsupported" });
+      return;
+    }
+    guard("music probe", () => {
+      (options.probeMusic ?? browserMusicProbe)(music.url).then(
+        (reachable) => {
+          if (!disposed) patchLoading({ music: reachable === false ? "unavailable" : "available" });
+        },
+        () => {
+          if (!disposed) patchLoading({ music: "unavailable" });
+        },
+      );
     });
   };
 
@@ -386,13 +737,20 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
   let installed: Installed[] = [];
   let environment: AudioEnvironment | null = null;
 
-  const onGesture = () => {
+  const unlockNow = () => {
     if (disposed) return;
+    prepareSessionOnce(); // LA1: the iOS session is "ambient" before the context exists
     guard("unlock", () => {
       // Settings first (docs/08 §14 risk 14): no unlock unless they are restored and applied.
       if (!restoreOnce() || !applySettings()) return;
       manager?.unlock().then(undefined, (error: unknown) => report("unlock", error));
     });
+  };
+
+  /** LA1: false while the startup screen holds page-wide gestures back (until START GAME). */
+  let gesturesUnlock = true;
+  const onGesture = () => {
+    if (gesturesUnlock) unlockNow();
   };
 
   const isHidden = () => environment?.document?.visibilityState === "hidden";
@@ -495,6 +853,7 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
       if (!attached) {
         attached = true;
         attachment++;
+        prepareSessionOnce();
         restoreOnce();
         applySettings();
         loadOnce();
@@ -521,6 +880,20 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
         cues.update(frame);
       });
     },
+    preload() {
+      if (disposed) return;
+      prepareSessionOnce();
+      loadOnce();
+      checkOnce();
+    },
+    unlock() {
+      gesturesUnlock = true;
+      unlockNow();
+    },
+    deferGestureUnlock() {
+      if (!disposed) gesturesUnlock = false;
+    },
+    loading,
     dispose() {
       if (disposed) return;
       detach();

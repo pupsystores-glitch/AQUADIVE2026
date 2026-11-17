@@ -70,6 +70,19 @@ M2 (the rest of integer minor units) is still deferred.
 
 ---
 
+## LA1 — Premium loading screen, dual audio controls, iPhone music (Phase 7)
+
+### LA1 — DELIVERED 2026-11-17 (WORKING TREE, UNCOMMITTED); AWAITING THE OWNER'S iPHONE TEST
+
+- **Task ID:** LA1. **Date:** 2026-11-17. **Authorization:** the owner's LA1 instruction (loading screen, two audio buttons, iPhone music; no gameplay, RNG, wallet, settlement or artwork change; no Git operation).
+- **Summary:** a server-rendered loading screen whose progress is measured (images loaded and decoded, first frame drawn, cue bytes, support check, soundtrack HEAD probe; weights in docs/07 §24.2), START GAME that unlocks audio inside the press, Retry/Continue/slow/no-JS recovery; SOUND and MUSIC icon buttons under the balance backed by `soundOn`/`musicOn` in the existing settings store; the soundtrack on iOS via the documented Audio Session API ("ambient"), which keeps Q15.
+- **Files created:** `src/ui/startup.ts`, `src/ui/startup-instance.ts`, `src/ui/components/LoadingScreen.tsx`, `src/ui/components/SoundToggles.tsx`; tests `src/ui/startup.test.ts`, `src/ui/audio-host.switches.test.ts`, `src/ui/screen.loading.test.tsx`, `src/ui/session.startup.test.ts`, `src/rendering/assets.test.ts`.
+- **Files modified, LA1 only (clean before LA1):** `src/ui/store/sound-settings-store.ts` (+ test), `src/ui/components/TopBar.tsx`, `src/ui/strings.ts`, `src/routes/index.tsx`, `src/styles.css` (one keyframe block), `src/rendering/assets.ts`, `src/ui/screen.characterization.test.tsx` (inline snapshots: only the two new `[button]` lines in each of 9 outlines), `docs/07_UI_ARCHITECTURE.md` (§24).
+- **Files modified on top of earlier uncommitted work (LA1 hunks are tagged "LA1" in comments):** `src/ui/audio-host.ts`, `src/audio/director.ts`, `src/ui/session.ts`, `src/ui/audio-diagnostics.ts` (music line), `src/audio/director.music.test.ts` (one appended describe), `src/ui/audio-host.music.test.ts` (four test titles), docs 08, 14, 15, 16.
+- **Architectural decisions:** one AudioContext, one media element, one source node (unchanged); the switches are bus gains plus a director-level music hold, not the master mute; both switches off also mutes the manager (suspends the context); page-wide gestures cannot unlock audio while the startup screen is up (`deferGestureUnlock`), so the hidden round is never heard before START; progress is event-driven (one array-length check per frame for the renderer task); audio never blocks READY by more than 8 s after the visuals.
+- **Validation:** see docs/16 "LA1". Real-browser measurements: SOUND OFF/MUSIC ON and ON/ON audible at the output tap; ON/OFF pauses the element; OFF/OFF suspends the context; music resumes from its position; persistence across reload; at 375 × 667 the buttons sit under the balance chip (y 44–72 vs chip bottom 38), header 80 px, no horizontal overflow at 320, 375, 390 and 820 px.
+- **Risks:** not tested on a physical iPhone; WebKit's handling of "ambient" with a playing media element is from source reading; the renderer-freeze exception for `assets.ts` is unratified.
+
 ## A-OWN — Owner-supplied sound effects and ambience (Phase 7)
 
 ### A-OWN — DELIVERED 2026-11-17 (WORKING TREE, UNCOMMITTED); AWAITING THE OWNER'S LISTENING FEEDBACK

@@ -1632,6 +1632,49 @@ For example, 41,543,552,609,738.77 + 654,447.59 is credited as …264,186.37, wh
 - Close M1 with the envelope as a documented, accepted limitation. Not recommended: it knowingly keeps a silent one-cent mis-credit, up or down.
 - Bring B-R back into M1. The owner rejected this on 2026-11-14.
 
+
+## 24. Startup screen and audio switches — LA1 (owner authorization 2026-11-17; working tree, uncommitted)
+
+**Scope.** A premium full-screen loading screen, two audio switches under the balance, and the iPhone soundtrack (the audio side is in docs/08 §1.1 "LA1" and §7.6 "LA1"). Gameplay, RNG, wallet, settlement and artwork are unchanged.
+
+### 24.1 Startup lifecycle
+
+`INITIALIZING → LOADING → READY → (START GAME) → PLAYING`, plus `FAILED` (Retry). Owned by `src/ui/startup.ts` (pure, injectable) and its page singleton `src/ui/startup-instance.ts`; rendered by `LoadingScreen.tsx`; composed in `src/routes/index.tsx` as `<div inert={!playing}><GameScreen/></div><LoadingScreen/>`.
+
+- **Server render:** the loading screen at 0 % and an `inert` game, so the game UI is never seen or reachable half-loaded, and the first paint is near-black (no white flash). The game mounts underneath at once: its canvas renders the first frame before the screen fades.
+- **`begin()`** (after hydration, once): asks the audio host to hold page-wide gesture unlocks, starts the audio downloads (`AudioHost.preload()`), and subscribes to the image loader and the audio loading store.
+- **START GAME** (always shown at READY: every target browser needs a gesture for audio): `startGame()` calls `AudioHost.unlock()` inside the press, then PLAYING; the screen fades out (0.5 s) and unmounts. A remount never shows it again. Taps on the loading screen, including Retry, unlock nothing (`deferGestureUnlock`), so nothing of the round running underneath is heard before START.
+
+### 24.2 Readiness and progress (measured, never timed)
+
+| Task | Weight | Complete when | Blocks READY |
+|---|---|---|---|
+| app | 5 | hydrated; `begin()` ran (session, engine, stores exist) | yes |
+| images (4) | 55 | each artwork file loaded and decoded (`AssetManager` status) | yes |
+| renderer | 10 | a frame drawn after every image was ready (`session.whenFrameRendered`) | yes |
+| audio support | 2 | Web Audio and codec support checked (no context made) | grace |
+| sounds (15) | 25 | each enabled cue's bytes arrived or failed (fetch observed, one request per cue) | grace |
+| music | 3 | the soundtrack's HEAD probe answered (no body) | grace |
+
+Progress = completed weights / 100, monotonic; groups advance by completed files (an `Image` has no byte progress). 100 % appears only with READY. **Grace:** once the visual tasks are done, audio has `AUDIO_GRACE_MS` (8 s) more, then counts as deferred: downloads continue in the background and a quiet notice says so. The soundtrack is never downloaded during loading; it streams after START. Decoding still waits for the unlock (one context).
+
+### 24.3 Failures
+
+- **Image failure** (after no image is still loading): FAILED with **RETRY** (reloads only the failed images, `AssetManager.retry`) and **Continue anyway** (starts on the renderer's vector fallbacks).
+- **Slow load:** after `SLOW_HINT_MS` (12 s) without READY, a hint and Continue.
+- **Scripts never load:** the server markup carries a reload hint that CSS alone reveals after 15 s, and a `<noscript>` line.
+- **Audio:** unsupported Web Audio, failed cues, a missing soundtrack, or iOS without the Audio Session API are one-line notices; never blockers.
+
+### 24.4 SOUND and MUSIC switches
+
+`SoundToggles.tsx` in `TopBar`, under the balance chip, right-aligned: two 28 px icon buttons (Lucide `Volume2`/`VolumeX`, `Music` with a stroke when off), `aria-pressed`, accessible names "Sound effects" and "Music", a visible focus ring, 36 × 44 px touch targets that never overlap. State: `soundOn` / `musicOn` in the existing sound settings store (version-1 record, persisted at once). **Master mute:** a button shows ON only when its switch is on and the master mute is off; a press while muted unmutes, turns that switch on and the other off, so what plays matches what the buttons show. The header grows by 24 px on phones (375 × 667: 56 → 80 px), so the canvas is 24 px shorter there.
+
+### 24.5 Exceptions and limits
+
+- **`src/rendering/assets.ts` changed (loader only; draw code and artwork untouched):** load status, decode-before-ready, `subscribe`, `retry`. `src/rendering` is frozen (§19 gate 4), so this needs the owner's ratification as a renderer exception; its scope is that file and its new test.
+- `session.ts` gains `whenFrameRendered` (one array-length check per frame; no progress runs through the animation loop).
+- Verified in jsdom, node and headless Chrome (desktop, phone and tablet sizes, emulated iPhone); not yet on a physical iPhone.
+
 ---
 
 *This document is the single source of architectural truth for the UI layer. If a UI commit discovers a conflict between this document and reality, the commit stops and the document is corrected first (Master Rules: never guess).*

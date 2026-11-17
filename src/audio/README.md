@@ -37,6 +37,15 @@ gives the manager no media element, so the music stays off there and the
 silent switch is still respected (Q15); see docs/08 §7.6. The three-stem
 adaptive music plan (M1–M3) is deferred and not built.
 
+**LA1 (2026-11-17, working tree, awaiting the owner's iPhone test):** on iOS
+and iPadOS the host now sets `navigator.audioSession.type = "ambient"` and
+then gives the manager the media element, so the soundtrack plays there and
+the silent switch still silences every sound (Q15; docs/08 §7.6 "LA1"). Only
+iOS before 16.4 (no Audio Session API) keeps music off. The director's
+`setMusicEnabled` is the MUSIC switch: off holds the one stream (or never
+requests it), on plays it on inside the press. The SOUND and MUSIC switches
+themselves live in the UI settings store and the host (docs/07 §24).
+
 ## Responsibility
 
 Event-driven sound on the native Web Audio API, with no audio dependency

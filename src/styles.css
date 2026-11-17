@@ -126,3 +126,15 @@
 .crash-shake {
   animation: crashShake 0.35s ease-in-out 2;
 }
+
+/* LA1: the loading screen's no-JavaScript fallback. Hidden at first; shown
+   after 15 s by CSS alone, so a page whose scripts never load still offers a
+   reload. The element exists only before hydration (phase "initializing"). */
+@keyframes loadingReveal {
+  to { opacity: 1; visibility: visible; }
+}
+.loading-stall-hint {
+  opacity: 0;
+  visibility: hidden;
+  animation: loadingReveal 0.4s ease-out 15s forwards;
+}

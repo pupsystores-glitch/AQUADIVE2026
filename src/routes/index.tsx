@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import GameScreen from "@/ui/components/GameScreen";
+import { LoadingScreen } from "@/ui/components/LoadingScreen";
+import { useStore } from "@/ui/hooks/use-store";
+import { gameStartup } from "@/ui/startup-instance";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -20,6 +23,17 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
+// LA1: the game mounts at once (its canvas renders the first frame under the
+// loading screen) but stays `inert` — no focus, no input, hidden from
+// assistive technology — until the player has pressed START GAME.
 function Index() {
-  return <GameScreen />;
+  const playing = useStore(gameStartup, (s) => s.phase === "playing");
+  return (
+    <>
+      <div inert={!playing}>
+        <GameScreen />
+      </div>
+      <LoadingScreen />
+    </>
+  );
 }

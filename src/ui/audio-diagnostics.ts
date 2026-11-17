@@ -323,8 +323,16 @@ export function createAudioDiagnostics(deps: DiagnosticsDeps = {}): AudioDiagnos
 
   const createMediaElementSeam = (): MediaElementLike | null => {
     const element = (deps.createMediaElement ?? browserMusicElement)();
-    if (element) music = "element created (streaming)";
-    else if (isSilentSwitchPlatform(platform)) music = "off: iOS/iPadOS, Q15 (by design)";
+    // LA1: on iOS/iPadOS the music needs the "ambient" audio session (Q15).
+    const ios = isSilentSwitchPlatform(platform);
+    const session = ios
+      ? (platform as { audioSession?: { type?: unknown } } | null)?.audioSession?.type
+      : undefined;
+    const sessionText = ios
+      ? `; audio session ${typeof session === "string" ? session : "n/a"}`
+      : "";
+    if (element) music = `element created (streaming${sessionText})`;
+    else if (ios) music = `off: iOS/iPadOS without navigator.audioSession, Q15${sessionText}`;
     else music = "off: no media element in this browser";
     return element;
   };

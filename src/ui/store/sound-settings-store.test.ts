@@ -7,6 +7,7 @@ import {
   SOUND_CHANNELS,
   SOUND_SETTINGS_STORAGE_KEY,
   SOUND_SETTINGS_VERSION,
+  SOUND_SWITCHES,
   browserStorage,
   clampVolume,
   createSoundSettingsStore,
@@ -14,6 +15,7 @@ import {
   parseSoundSettings,
   sameSoundSettings,
   serializeSoundSettings,
+  switchShown,
   type SoundSettings,
   type SoundSettingsStorage,
 } from "./sound-settings-store";
@@ -48,9 +50,12 @@ const saved = (storage: FakeStorage) => {
   return raw === undefined ? undefined : (JSON.parse(raw) as unknown);
 };
 
+// LA1: a full version-1 record now carries the two switches.
 const v1 = (fields: Partial<Record<keyof SoundSettings | "version", unknown>> = {}) => ({
   version: 1,
   muted: false,
+  soundOn: true,
+  musicOn: true,
   master: 1,
   music: 1,
   ambience: 1,
@@ -64,6 +69,8 @@ describe("sound settings — defaults (D1) and channels (D3)", () => {
   it("defaults to sound on with every volume at 1.0", () => {
     expect(DEFAULT_SOUND_SETTINGS).toEqual({
       muted: false,
+      soundOn: true,
+      musicOn: true,
       master: 1,
       music: 1,
       ambience: 1,
@@ -138,13 +145,29 @@ describe("sound settings — volume helpers (D4)", () => {
 });
 
 describe("sound settings — serialize / parse", () => {
-  it("serializes a version-1 record with all five fields", () => {
-    const settings: SoundSettings = { muted: true, master: 0.8, music: 0.3, ambience: 0.6, sfx: 0 };
+  it("serializes a version-1 record with all seven fields", () => {
+    const settings: SoundSettings = {
+      muted: true,
+      soundOn: false,
+      musicOn: true,
+      master: 0.8,
+      music: 0.3,
+      ambience: 0.6,
+      sfx: 0,
+    };
     expect(JSON.parse(serializeSoundSettings(settings))).toEqual({ version: 1, ...settings });
   });
 
   it("round-trips through parse as valid", () => {
-    const settings: SoundSettings = { muted: true, master: 0.8, music: 0.3, ambience: 0.6, sfx: 0 };
+    const settings: SoundSettings = {
+      muted: true,
+      soundOn: false,
+      musicOn: true,
+      master: 0.8,
+      music: 0.3,
+      ambience: 0.6,
+      sfx: 0,
+    };
     const read = parseSoundSettings(serializeSoundSettings(settings));
     expect(read.status).toBe("valid");
     expect(read.settings).toEqual(settings);
@@ -191,7 +214,15 @@ describe("sound settings — serialize / parse", () => {
       JSON.stringify({ version: 1, muted: "yes", master: 0.4, music: 7, ambience: null, sfx: 0.2 }),
     );
     expect(read.status).toBe("salvaged");
-    expect(read.settings).toEqual({ muted: false, master: 0.4, music: 1, ambience: 1, sfx: 0.2 });
+    expect(read.settings).toEqual({
+      muted: false,
+      soundOn: true,
+      musicOn: true,
+      master: 0.4,
+      music: 1,
+      ambience: 1,
+      sfx: 0.2,
+    });
     expect(Object.isFrozen(read.settings)).toBe(true);
   });
 
@@ -230,8 +261,10 @@ describe("sound settings — serialize / parse", () => {
       "ambience",
       "master",
       "music",
+      "musicOn",
       "muted",
       "sfx",
+      "soundOn",
     ]);
   });
 
@@ -240,7 +273,13 @@ describe("sound settings — serialize / parse", () => {
       JSON.stringify(v1({ master: 0, music: 1, ambience: 0, sfx: 1 })),
     );
     expect(read.status).toBe("valid");
-    expect(read.settings).toEqual({ muted: false, master: 0, music: 1, ambience: 0, sfx: 1 });
+    expect(read.settings).toEqual({
+      ...DEFAULT_SOUND_SETTINGS,
+      master: 0,
+      music: 1,
+      ambience: 0,
+      sfx: 1,
+    });
   });
 });
 
@@ -269,9 +308,11 @@ describe("sound settings store — construction (SSR safety)", () => {
       "get",
       "restore",
       "setMuted",
+      "setSwitch",
       "setVolume",
       "subscribe",
       "toggleMuted",
+      "toggleSwitch",
     ]);
     expect(Object.isFrozen(store)).toBe(true);
     expect("set" in store).toBe(false);
@@ -323,7 +364,14 @@ describe("sound settings store — restore()", () => {
     );
     const store = storeOn(storage);
     expect(store.restore()).toBe("valid");
-    expect(store.get()).toEqual({ muted: true, master: 0.5, music: 0.2, ambience: 0.4, sfx: 0.9 });
+    expect(store.get()).toEqual({
+      ...DEFAULT_SOUND_SETTINGS,
+      muted: true,
+      master: 0.5,
+      music: 0.2,
+      ambience: 0.4,
+      sfx: 0.9,
+    });
   });
 
   it("reads the record from the storage key once", () => {
@@ -807,5 +855,110 @@ describe("sound settings store — a throwing subscriber (A3.1)", () => {
     off();
     store.setMuted(true);
     expect(errors).not.toHaveBeenCalled();
+  });
+});
+
+// ----- LA1: the SOUND and MUSIC switches -----
+
+describe("sound settings — LA1 switches", () => {
+  it("both switches default to on and are listed in order", () => {
+    expect([...SOUND_SWITCHES]).toEqual(["soundOn", "musicOn"]);
+    expect(DEFAULT_SOUND_SETTINGS.soundOn).toBe(true);
+    expect(DEFAULT_SOUND_SETTINGS.musicOn).toBe(true);
+  });
+
+  it("a version-1 record written before LA1 (no switches) is valid, with both on", () => {
+    const pre = { version: 1, muted: false, master: 1, music: 0.4, ambience: 1, sfx: 1 };
+    const read = parseSoundSettings(JSON.stringify(pre));
+    expect(read.status).toBe("valid");
+    expect(read.settings).toEqual({ ...DEFAULT_SOUND_SETTINGS, music: 0.4 });
+  });
+
+  it("a switch of the wrong type is a bad field: salvaged, default on, the rest kept", () => {
+    const read = parseSoundSettings(
+      JSON.stringify(v1({ soundOn: "no", musicOn: false, sfx: 0.2 })),
+    );
+    expect(read.status).toBe("salvaged");
+    expect(read.settings.soundOn).toBe(true);
+    expect(read.settings.musicOn).toBe(false);
+    expect(read.settings.sfx).toBe(0.2);
+  });
+
+  it("sameSoundSettings compares the switches", () => {
+    for (const name of SOUND_SWITCHES) {
+      expect(
+        sameSoundSettings(DEFAULT_SOUND_SETTINGS, { ...DEFAULT_SOUND_SETTINGS, [name]: false }),
+      ).toBe(false);
+    }
+  });
+
+  it("setSwitch changes one switch only, persists it, and never touches mute or volumes", () => {
+    const storage = fakeStorage();
+    const store = storeOn(storage);
+    store.restore();
+    store.setVolume("music", 0.3);
+    store.setSwitch("musicOn", false);
+    expect(store.get()).toEqual({ ...DEFAULT_SOUND_SETTINGS, music: 0.3, musicOn: false });
+    expect(saved(storage)).toEqual(v1({ music: 0.3, soundOn: true, musicOn: false }));
+    store.setSwitch("soundOn", false);
+    expect(store.get()).toMatchObject({ muted: false, soundOn: false, musicOn: false, music: 0.3 });
+  });
+
+  it("setSwitch ignores unknown names and non-boolean values", () => {
+    const store = storeOn(fakeStorage());
+    store.restore();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.setSwitch("master" as never, false);
+    store.setSwitch("soundOn", "off" as never);
+    expect(listener).not.toHaveBeenCalled();
+    expect(store.get()).toEqual(DEFAULT_SOUND_SETTINGS);
+  });
+
+  it("the four states: toggling each switch independently", () => {
+    const store = storeOn(fakeStorage());
+    store.restore();
+    const state = () => [store.get().soundOn, store.get().musicOn];
+    expect(state()).toEqual([true, true]);
+    store.toggleSwitch("musicOn");
+    expect(state()).toEqual([true, false]);
+    store.toggleSwitch("soundOn");
+    expect(state()).toEqual([false, false]);
+    store.toggleSwitch("musicOn");
+    expect(state()).toEqual([false, true]);
+    store.toggleSwitch("soundOn");
+    expect(state()).toEqual([true, true]);
+    expect(store.get().muted).toBe(false);
+  });
+
+  it("switchShown: a button shows on only when its switch is on and the master mute is off", () => {
+    const on = DEFAULT_SOUND_SETTINGS;
+    expect(switchShown(on, "soundOn")).toBe(true);
+    expect(switchShown({ ...on, musicOn: false }, "musicOn")).toBe(false);
+    expect(switchShown({ ...on, muted: true }, "soundOn")).toBe(false);
+    expect(switchShown({ ...on, muted: true }, "musicOn")).toBe(false);
+  });
+
+  it("while muted, a press unmutes, turns that switch on and the other off (what you see is what plays)", () => {
+    const store = storeOn(fakeStorage());
+    store.restore();
+    store.setMuted(true);
+    store.toggleSwitch("musicOn");
+    expect(store.get()).toMatchObject({ muted: false, soundOn: false, musicOn: true });
+    expect(switchShown(store.get(), "musicOn")).toBe(true);
+    expect(switchShown(store.get(), "soundOn")).toBe(false);
+    store.setMuted(true);
+    store.toggleSwitch("soundOn");
+    expect(store.get()).toMatchObject({ muted: false, soundOn: true, musicOn: false });
+  });
+
+  it("the switches persist across a reload (a new store over the same storage)", () => {
+    const storage = fakeStorage();
+    const first = storeOn(storage);
+    first.restore();
+    first.toggleSwitch("soundOn");
+    const second = storeOn(storage);
+    expect(second.restore()).toBe("valid");
+    expect(second.get()).toMatchObject({ soundOn: false, musicOn: true });
   });
 });

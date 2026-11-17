@@ -584,3 +584,80 @@ describe("director — a music failure never disturbs the rest", () => {
     expect(audio.plays).toContain("crash-boom");
   });
 });
+
+describe("director music — LA1, the MUSIC switch", () => {
+  it("disabled before the first frame: no stream is ever requested while off", () => {
+    const t = setup();
+    t.director.setMusicEnabled?.(false);
+    t.run(1);
+    expect(t.audio.streams).toHaveLength(0);
+    expect(t.audio.music).toEqual([]);
+  });
+
+  it("enabling while running requests the one stream at once, not on the next frame", () => {
+    const t = setup();
+    t.director.setMusicEnabled?.(false);
+    t.run(0.1);
+    t.director.setMusicEnabled?.(true);
+    expect(t.audio.music).toEqual(["stream test://music"]);
+  });
+
+  it("off holds the live stream; frames do not play it on; on plays it on, same stream", () => {
+    const t = setup();
+    t.run(0.1);
+    t.director.setMusicEnabled?.(false);
+    t.run(1);
+    t.director.setMusicEnabled?.(true);
+    t.run(0.1);
+    expect(t.audio.streams).toHaveLength(1);
+    expect(t.audio.music.filter((m) => m.startsWith("active"))).toEqual([
+      "active false",
+      "active true",
+    ]);
+    expect(t.audio.music).not.toContain("stop");
+  });
+
+  it("repeated values are no-ops", () => {
+    const t = setup();
+    t.run(0.1);
+    t.director.setMusicEnabled?.(true);
+    t.director.setMusicEnabled?.(false);
+    t.director.setMusicEnabled?.(false);
+    expect(t.audio.music.filter((m) => m.startsWith("active"))).toEqual(["active false"]);
+  });
+
+  it("while paused (detached), enabling waits for the next frame", () => {
+    const t = setup();
+    t.run(0.1);
+    t.director.setMusicEnabled?.(false);
+    t.director.pause();
+    t.director.setMusicEnabled?.(true);
+    expect(t.audio.music.filter((m) => m.startsWith("active"))).toEqual(["active false"]);
+    t.run(DT);
+    expect(t.audio.music.filter((m) => m.startsWith("active"))).toEqual([
+      "active false",
+      "active true",
+    ]);
+  });
+
+  it("the switch never touches effects or loops: a crash still plays its cues", () => {
+    const t = setup();
+    t.director.setMusicEnabled?.(false);
+    t.run(0.1);
+    t.events.emit("crashed", ev.crash());
+    t.run(DT, { phase: "crashed" });
+    expect(t.audio.plays).toContain("crash-boom");
+    expect(t.audio.plays).toContain("chain-snap");
+  });
+
+  it("after dispose it does nothing", () => {
+    const t = setup();
+    t.run(0.1);
+    t.director.dispose();
+    const before = [...t.audio.music];
+    t.director.setMusicEnabled?.(false);
+    t.director.setMusicEnabled?.(true);
+    expect(t.audio.music).toEqual(before);
+    expect(errors).not.toHaveBeenCalled();
+  });
+});

@@ -83,6 +83,14 @@
 // position), the next `update()` plays on, and `dispose()` stops it. Without
 // the option the director plays no music.
 //
+// LA1 (the MUSIC button): `setMusicEnabled(false)` holds the stream exactly
+// as `pause()` does, but frames do not play it on; before the first stream
+// request it means no stream (and no download) is asked for at all.
+// `setMusicEnabled(true)` plays on at once when the director is running, so a
+// button press (a user gesture) is the call that reaches the element's
+// `play()`. The duck keeps advancing either way. Effects, loops and events
+// are not affected.
+//
 // Every number below is a provisional engineering default, pinned by tests
 // and tuned by ear in the A6 listening pass. None is a sound-design decision.
 //
@@ -207,6 +215,12 @@ export interface AudioDirector {
   pause(): void;
   /** Re-applies every live loop's values, so a loop waiting for its cue starts now. Never throws. */
   wake(): void;
+  /**
+   * LA1: the MUSIC switch. false holds the music (or never starts it); true
+   * plays it on at once unless paused. Default true. Never throws. Optional
+   * so that test doubles of the director need not implement it.
+   */
+  setMusicEnabled?(enabled: boolean): void;
   /** Unsubscribes, stops every loop and the music. Every later call is a no-op. Never throws. */
   dispose(): void;
 }
@@ -568,6 +582,8 @@ export function createAudioDirector(
   // Music (M-OWN): one stream handle for the director's life, and its duck.
   const track = options.music ?? null;
   const musicDuck = createMusicDuck();
+  /** LA1: the MUSIC switch. While false the music is held and never started. */
+  let musicEnabled = true;
   let music: {
     readonly handle: StreamHandle;
     /** The gain last sent to the handle; undefined: send the next one. */
@@ -600,7 +616,7 @@ export function createAudioDirector(
 
   /** Starts the one music stream, or plays on after a hold, and sends the duck level. */
   const runMusic = () => {
-    if (!track) return;
+    if (!track || !musicEnabled) return;
     if (!music) {
       guard("music start", () => {
         // A new stream is active at gain 1.
@@ -844,6 +860,16 @@ export function createAudioDirector(
           if (rate !== undefined) guard("loop rate", () => handle.setRate(rate));
           if (filter !== undefined) guard("loop filter", () => handle.setFilter(filter));
         }
+      });
+    },
+    setMusicEnabled(enabled) {
+      if (disposed) return;
+      const next = enabled !== false;
+      if (next === musicEnabled) return;
+      musicEnabled = next;
+      guard("music switch", () => {
+        if (!next) holdMusic();
+        else if (!paused) runMusic(); // at once: inside the caller's gesture
       });
     },
     dispose() {

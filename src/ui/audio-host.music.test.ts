@@ -556,7 +556,7 @@ describe("audio host music — what did not change", () => {
   });
 });
 
-describe("audio host music — Q15 on iOS and iPadOS (simulated)", () => {
+describe("audio host music — Q15 on iOS and iPadOS without the Audio Session API (simulated; LA1 cases in audio-host.switches.test.ts)", () => {
   const IPHONE =
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
   const IPAD_DESKTOP =
@@ -599,7 +599,7 @@ describe("audio host music — Q15 on iOS and iPadOS (simulated)", () => {
     expect(isSilentSwitchPlatform(undefined)).toBe(false);
   });
 
-  it("browserMusicElement gives no element on an iPhone and never constructs Audio there", () => {
+  it("browserMusicElement gives no element on an iPhone without navigator.audioSession and never constructs Audio there", () => {
     const made: unknown[] = [];
     class FakeAudio {
       constructor() {
@@ -618,7 +618,7 @@ describe("audio host music — Q15 on iOS and iPadOS (simulated)", () => {
     expect(browserMusicElement()).toBeNull();
   });
 
-  it("on an iPhone the host plays no music; effects and ambience are untouched, quietly", async () => {
+  it("on an iPhone without navigator.audioSession the host plays no music; effects and ambience are untouched, quietly", async () => {
     vi.stubGlobal("navigator", { userAgent: IPHONE, platform: "iPhone", maxTouchPoints: 5 });
     vi.stubGlobal(
       "Audio",
@@ -641,7 +641,7 @@ describe("audio host music — Q15 on iOS and iPadOS (simulated)", () => {
     expect(warns).not.toHaveBeenCalled();
   });
 
-  it("the host never touches navigator.audioSession", async () => {
+  it("off iOS the host never touches navigator.audioSession (LA1: only iOS sets it, to ambient)", async () => {
     const session = { type: "auto" };
     const reads: string[] = [];
     const nav = new Proxy(
