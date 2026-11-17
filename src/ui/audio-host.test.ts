@@ -13,7 +13,13 @@ import {
   type AudioManager,
   type AudioManagerOptions,
 } from "@/audio/audio-manager";
-import type { AudioDirector, AudioEventSource } from "@/audio/director";
+import {
+  DISABLED_BY_DEFAULT,
+  DISABLED_CUES_BY_DEFAULT,
+  type AudioDirector,
+  type AudioEventSource,
+  type AudioFrame,
+} from "@/audio/director";
 import {
   SOUND_MANIFEST,
   type CueDefinition,
@@ -24,6 +30,8 @@ import { createSoundBank, type SoundBank, type SoundBankOptions } from "@/audio/
 import { FakeAudioContext, fakeBuffer } from "@/audio/test/fake-audio-context";
 import { FakeFetch } from "@/audio/test/fake-fetch";
 import { EventBus, type EngineEventMap } from "@/engine";
+import { CHAIN_MAX_DEPTH } from "@/shared/world";
+import { anchorTouchdownSeconds } from "@/ui/anchor-touchdown";
 import {
   AUDIO_MIX,
   UNLOCK_GESTURES,
@@ -113,6 +121,15 @@ const withTestAssets = (): SoundManifest<CueId> => {
   return manifest;
 };
 
+/** The real manifest with every asset removed: an explicit no-asset fixture (the production manifest has assets since A6). */
+const withoutAssets = (): SoundManifest<CueId> => {
+  const manifest = {} as Record<CueId, CueDefinition>;
+  for (const [id, definition] of Object.entries(SOUND_MANIFEST) as [CueId, CueDefinition][]) {
+    manifest[id] = { ...definition, asset: null };
+  }
+  return manifest;
+};
+
 const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 };
@@ -139,6 +156,7 @@ const recordingManager = (calls: Call[], failures: Partial<Record<string, number
       setMuted: wrap("setMuted"),
       play: wrap("play"),
       loop: wrap("loop"),
+      stream: wrap("stream"),
       decode: (data) => real.decode(data),
       suspend: wrap("suspend"),
       resume: wrap("resume"),
@@ -150,6 +168,8 @@ const recordingManager = (calls: Call[], failures: Partial<Record<string, number
 interface SetupOptions {
   stored?: string;
   assets?: boolean;
+  /** Use the host's default manifest: the production one, with its real asset URLs (A6). */
+  production?: boolean;
   managerFailures?: Partial<Record<string, number>>;
   extra?: Partial<AudioHostOptions>;
   settingsOverride?: (
@@ -179,7 +199,7 @@ function setup(opts: SetupOptions = {}) {
       return context;
     },
     fetch: fetch.fetch,
-    manifest: opts.assets ? withTestAssets() : SOUND_MANIFEST,
+    manifest: opts.production ? undefined : opts.assets ? withTestAssets() : withoutAssets(),
     environment: (): AudioEnvironment => {
       envResolutions++;
       return { window: win, document: doc };
@@ -319,7 +339,10 @@ describe("audio host — settings are restored and applied before the first unlo
     t.host.attach();
     t.calls.length = 0;
     t.store.setVolume("ambience", 0.3);
-    expect(t.calls).toContainEqual({ method: "setBusGain", args: ["ambience", 0.3] });
+    expect(t.calls).toContainEqual({
+      method: "setBusGain",
+      args: ["ambience", AUDIO_MIX.ambience * 0.3],
+    });
     t.store.setMuted(true);
     expect(t.calls).toContainEqual({ method: "setMuted", args: [true] });
   });
@@ -391,6 +414,11 @@ describe("audio host — settings are restored and applied before the first unlo
 
 // ----- loading -----
 
+/** The cues the host loads: every manifest cue except the director's disabled cues (A6.1, A-OWN). */
+const LOADED_CUES = (Object.keys(SOUND_MANIFEST) as CueId[]).filter(
+  (cue) => !DISABLED_CUES_BY_DEFAULT.includes(cue),
+);
+
 describe("audio host — loading is idempotent", () => {
   it("each cue is requested once across attach, detach, re-attach and a StrictMode double mount", async () => {
     const t = setup({ assets: true });
@@ -402,11 +430,81 @@ describe("audio host — loading is idempotent", () => {
     t.host.attach();
     await flush();
     const urls = t.fetch.requests.map((r) => r.url);
-    expect(urls).toHaveLength(Object.keys(SOUND_MANIFEST).length);
+    expect(urls).toHaveLength(LOADED_CUES.length);
     expect(new Set(urls).size).toBe(urls.length);
   });
 
-  it("with the real manifest (no asset) nothing is fetched", async () => {
+  it("by default the host loads the production manifest: every enabled cue's own file, once (A6, A6.1)", async () => {
+    const t = setup({ production: true });
+    t.host.attach();
+    await flush();
+    const urls = t.fetch.requests.map((r) => r.url);
+    const expected = LOADED_CUES.map((cue) => (SOUND_MANIFEST[cue] as CueDefinition).asset?.url);
+    expect([...urls].sort()).toEqual([...expected].sort());
+    expect(new Set(urls).size).toBe(LOADED_CUES.length);
+  });
+
+  it("missing production files leave the host silent: one warning per cue, no error, no retry (A6)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const t = setup({ production: true });
+    const detach = t.host.attach();
+    await flush();
+    for (const request of t.fetch.requests) request.status(404);
+    await flush();
+    expect(warn).toHaveBeenCalledTimes(LOADED_CUES.length);
+    detach();
+    t.host.attach();
+    await flush();
+    expect(t.fetch.requests).toHaveLength(LOADED_CUES.length);
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it("never fetches the disabled tension creaks, whose manifest entries and files stay (A-OWN)", async () => {
+    expect(DISABLED_CUES_BY_DEFAULT).toContain("tension-creak-1");
+    expect(DISABLED_CUES_BY_DEFAULT).toContain("tension-creak-2");
+    const creakUrls = (["tension-creak-1", "tension-creak-2"] as const).map(
+      (cue) => SOUND_MANIFEST[cue].asset?.url,
+    );
+    for (const url of creakUrls) expect(url).toBeTruthy();
+    const t = setup({ production: true });
+    const detach = t.host.attach();
+    await flush();
+    detach();
+    t.host.attach();
+    t.gesture("pointerdown");
+    await flush();
+    const urls = t.fetch.requests.map((r) => r.url);
+    for (const url of creakUrls) expect(urls).not.toContain(url);
+    expect(urls).toHaveLength(LOADED_CUES.length);
+  });
+
+  it("loads exactly the 15 enabled cues: every cue but the rattle and the two creaks", () => {
+    expect(LOADED_CUES).toHaveLength(15);
+    expect(LOADED_CUES).not.toContain("chain-rattle");
+    expect(LOADED_CUES).not.toContain("tension-creak-1");
+    expect(LOADED_CUES).not.toContain("tension-creak-2");
+  });
+
+  it("never fetches the disabled chain-rattle, whose manifest entry and file stay (A6.1)", async () => {
+    expect(DISABLED_BY_DEFAULT).toEqual(["chain-rattle"]);
+    expect(LOADED_CUES).toHaveLength(Object.keys(SOUND_MANIFEST).length - 3);
+    expect(LOADED_CUES).toContain("chain-unspool");
+    expect(LOADED_CUES).toContain("chain-snap");
+    const rattleUrl = SOUND_MANIFEST["chain-rattle"].asset?.url;
+    expect(rattleUrl).toBeTruthy();
+    const t = setup({ production: true });
+    const detach = t.host.attach();
+    await flush();
+    detach();
+    t.host.attach();
+    await flush();
+    const urls = t.fetch.requests.map((r) => r.url);
+    expect(urls).not.toContain(rattleUrl);
+    expect(urls).toContain(SOUND_MANIFEST["chain-unspool"].asset?.url);
+    expect(urls).toContain(SOUND_MANIFEST["chain-snap"].asset?.url);
+  });
+
+  it("with a no-asset manifest nothing is fetched", async () => {
     const t = setup();
     t.host.attach();
     await flush();
@@ -436,7 +534,7 @@ describe("audio host — loading is idempotent", () => {
     t.host.attach();
     t.host.attach();
     await flush();
-    expect(t.fetch.requests).toHaveLength(Object.keys(SOUND_MANIFEST).length);
+    expect(t.fetch.requests).toHaveLength(LOADED_CUES.length);
     expect(errors).toHaveBeenCalledTimes(1);
   });
 
@@ -598,6 +696,50 @@ describe("audio host — frames and exception isolation", () => {
     ]);
     t.host.update(input());
     expect(frames[0]).toBe(frames[1]);
+  });
+
+  it("A-OWN.1: hands the director the landing timing from the scene size and the impact clock", () => {
+    const seen: (AudioFrame["seaFloor"] | "absent")[] = [];
+    const t = setup({
+      extra: {
+        createDirector: (): AudioDirector => ({
+          update: (f) =>
+            seen.push(f.seaFloor === undefined ? "absent" : f.seaFloor && { ...f.seaFloor }),
+          pause: () => {},
+          wake: () => {},
+          dispose: () => {},
+        }),
+      },
+    });
+    t.host.attach();
+    const state = { phase: "cashed", multiplier: 100, boost: 0 } as const;
+    const time = { frameDt: 1 / 60 };
+    // No scene size: no timing, so the thud plays on the event (legacy).
+    t.host.update({
+      render: { depthRatio: 1, worldY: CHAIN_MAX_DEPTH, shipImpact: { elapsed: 0 } },
+      time,
+      state,
+    });
+    // A scene size, before the floor: null (wait).
+    const viewport = { width: 1280, height: 800 };
+    t.host.update({
+      render: { depthRatio: 1, worldY: CHAIN_MAX_DEPTH, shipImpact: null },
+      time,
+      state,
+      viewport,
+    });
+    // On the floor: the renderer's clock and this scene's touchdown.
+    t.host.update({
+      render: { depthRatio: 1, worldY: CHAIN_MAX_DEPTH, shipImpact: { elapsed: 0.25 } },
+      time,
+      state,
+      viewport,
+    });
+    expect(seen).toEqual([
+      "absent",
+      null,
+      { elapsed: 0.25, touchdownS: anchorTouchdownSeconds(1280, 800, CHAIN_MAX_DEPTH) },
+    ]);
   });
 
   it("a director that throws on every call never throws out of the host, and is logged once per kind", () => {

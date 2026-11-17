@@ -13,9 +13,29 @@ filter, and the director fades a bed in only while its `LoopHandle.isAudible()`
 is true (docs/08 §7.2, §7.4).
 A4b (2026-11-15) wires them: `src/ui/audio-host.ts`, the only production UI
 module that imports `src/audio`, constructs the manager, bank and director
-for each game session (docs/08 §7.5); no module here changed in A4b. **No audio asset exists: every manifest entry has `asset: null`, so every
-cue is unavailable and silent.** Each later step needs its own owner
-authorization.
+for each game session (docs/08 §7.5); no module here changed in A4b.
+
+**A6 (2026-11-16, working tree, awaiting the owner's listening approval):**
+every cue has an original sound made for AQUADIVE. The 18 files are in
+`src/assets/audio/` (AAC-LC `.m4a`, mono, 48 kHz; 897 565 bytes in total;
+about 13.9 MB decoded). `manifest.ts` imports their URLs and sets each cue's
+gain and each loop's loop points; `AUDIO_MIX` in `src/ui/audio-host.ts` holds
+the bus mix. Gains and mix are provisional until the listening pass.
+Provenance and rights status: `src/assets/audio/CREDITS.md`. `director.ts`,
+`audio-manager.ts` and `sound-bank.ts` are unchanged. Each later step needs
+its own owner authorization.
+
+**M-OWN (2026-11-17, working tree, awaiting the owner's listening
+acceptance):** the main soundtrack. `music.ts` holds `MUSIC_MAIN`, the
+owner-supplied `src/assets/audio/music-main.mp3` (3 527 200 bytes, unchanged).
+`AudioManager.stream()` plays it through **one** `HTMLAudioElement` and
+**one** `MediaElementAudioSourceNode` into the `music` bus: streamed, never
+decoded as a whole, outside the 16-voice pools, with native looping. The
+director starts it once, keeps it across rounds and ducks it under crash,
+cashout and jackpot. `AUDIO_MIX.music` is 0.5. On iOS and iPadOS the host
+gives the manager no media element, so the music stays off there and the
+silent switch is still respected (Q15); see docs/08 §7.6. The three-stem
+adaptive music plan (M1–M3) is deferred and not built.
 
 ## Responsibility
 
@@ -32,12 +52,16 @@ Event-driven sound on the native Web Audio API, with no audio dependency
   missing or failed asset stays silent and is logged once; its `onReady`
   tells the caller when a pending loop's cue can now start;
 - a typed manifest: one-shot and loop cue ids, bus, gain, priority tier,
-  essential beds, optional loop points, and an `asset` that stays `null` until
-  licensed files are supplied (A6);
+  essential beds, loop points, and an `asset` URL for every cue (A6). A cue
+  with a `null` asset is still allowed: it is unavailable and silent;
 - an `AudioDirector` (A4a), the only place that maps engine events and
   per-frame state to cues: deterministic and frame-based, with one-shots
-  merged per cue id per frame. There is no `MusicController`: music is
-  deferred (Q8), and the `music` bus waits for it;
+  merged per cue id per frame. The continuous `chain-rattle` loop is off
+  by default (A6.1) and plays only with `{ chainRattle: true }`; the
+  tension creaks likewise (A-OWN, `{ tensionCreaks: true }`). The host
+  loads none of the three. The director also owns the one music stream and its
+  ducking (M-OWN). There is no `MusicController`: the three-stem adaptive
+  music (M1–M3) is deferred;
 - depth-based ambience: a low-pass whose cutoff falls as `depthRatio` rises.
 
 Volume and mute settings live in a UI-owned store
@@ -71,6 +95,7 @@ bus gains or mute.
 
 `audio-manager.ts` (A1), `sound-bank.ts` and `manifest.ts` (A2, done),
 `director.ts` (A4a, done; `music.ts` is dropped, Q8),
-`test/fake-audio-context.ts`, `test/fake-fetch.ts` and `*.test.ts`. Licensed
-assets and `CREDITS.md` go in `src/assets/audio/` (A6), supplied by the owner;
-no asset or licence is cleared yet.
+`test/fake-audio-context.ts`, `test/fake-fetch.ts` and `*.test.ts`. The
+assets, `CREDITS.md` and the production scripts (`production/synth.mjs`,
+`production/encode.ps1`) are in `src/assets/audio/` (A6). The rights items
+that still need the owner's confirmation are listed in `CREDITS.md` §6.

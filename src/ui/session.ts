@@ -64,6 +64,7 @@
 // its order); they reach only the renderer currently attached, never throw,
 // and forward nothing while no canvas is attached. V1 adds no visible effect.
 
+
 import {
   BET_SLOTS,
   EngineDriver,
@@ -77,6 +78,7 @@ import {
 import { DEFAULT_BET } from "@/game/constants";
 import { SceneRenderer, type RenderState, type RenderTime } from "@/rendering/scene-renderer";
 import { createAudioHost, type AudioHost, type AudioHostOptions } from "@/ui/audio-host";
+import { audioDiagnostics } from "@/ui/audio-diagnostics-instance";
 import { fitScene, type SceneViewport } from "@/ui/scene-fit";
 import { createBetInputStore, type BetInputStore } from "@/ui/store/bet-input-store";
 import {
@@ -314,7 +316,8 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
           // After the round store: audio cannot delay or break the HUD write.
           if (audioRender && audioTime) {
             try {
-              audio.update({ render: audioRender, time: audioTime, state });
+              // A-OWN.1: the scene size, so the sea-floor thud lands on the anchor's touchdown.
+              audio.update({ render: audioRender, time: audioTime, state, viewport: fit });
             } catch {
               // The host never throws; this keeps rAF safe even if it did.
             }
@@ -334,8 +337,14 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
 // The production singleton. The two engine RNG streams (docs/06 §11, §16):
 // outcome draws go through the RoundAuthority; world draws (creature rolls,
 // spawn jitter) through the injected `world` stream.
+//
+// IOS-AUDIO (temporary): with `?audiodebug=1` in a DEV build, the audio
+// host runs through the diagnostics recorder's seams, which change no
+// behaviour (src/ui/audio-diagnostics.ts). Otherwise `audioDiagnostics` is
+// null and nothing changes.
 export const gameSession: GameSession = createGameSession({
   authority: new LocalRoundAuthority(createMathRandomRng()),
   worldRng: createMathRandomRng(),
   diagnostics: import.meta.env.DEV,
+  ...(audioDiagnostics ? { audio: audioDiagnostics.hostOptions } : {}),
 });

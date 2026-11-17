@@ -26,9 +26,11 @@
 //   playing at the wrong level (docs/08 §14 risk 14). The gesture listeners
 //   stay installed while attached. `unlock()` returns at once once unlocked,
 //   so a later gesture re-unlocks after an interruption (the manager re-locks
-//   itself) or after a refused resume, with no extra callback. A resume that
-//   never settles is not retried: docs/08 §14 risk 17 stays open, and
-//   `unlock()` is unchanged.
+//   itself) or after a refused resume, with no extra callback. IOS-AUDIO
+//   (docs/08 §14 risk 17, resolved): on a touch screen `pointerdown` is not
+//   a user activation, so its resume() stays pending in WebKit; the
+//   `touchend` of the same tap calls `unlock()` again, and the manager
+//   repeats the resume inside that activation.
 // - **Visibility:** hidden → `suspend()`; visible again → `resume()` (the
 //   manager resumes only if unlocked and not muted). `attach()` applies the
 //   current visibility once.
@@ -47,29 +49,56 @@
 // installation is rolled back completely: an attachment never holds half its
 // listeners, and a retry never duplicates one.
 //
-// AUDIO_MIX holds the designed per-bus mix gains. They are neutral (1.0)
-// provisional engineering defaults until the A6 listening pass; they are not
-// a sound-design decision. A bus's gain is AUDIO_MIX[bus] × the user's linear
-// 0..1 volume (docs/08 §3.5, D4).
+// AUDIO_MIX holds the designed per-bus mix gains (A6). They are set from the
+// measured levels of the A6 assets and stay provisional until the owner's
+// listening pass. A bus's gain is AUDIO_MIX[bus] × the user's linear 0..1
+// volume (docs/08 §3.5, D4).
 //
-// Not here: music (Q8), countdown audio (Q9), a sound control (A5), assets
-// (A6), any audio-session override (Q15), any browser-specific resume
-// workaround (risk 17).
+// A6.1 and A-OWN: the director plays no `chain-rattle` and no tension creak
+// (`tension-creak-1`, `tension-creak-2`) by default, so the host never
+// fetches or decodes them: `loadAll` gets the manifest's cues minus the
+// director's DISABLED_CUES_BY_DEFAULT. The manifest entries and files stay.
+//
+// Music (M-OWN, docs/08 §7.6): the host gives the director the soundtrack
+// (`MUSIC_MAIN`) and gives the manager the media element factory. The
+// director asks for the one stream on its first frame; the manager creates
+// the element, and so starts the download, only inside or after the first
+// unlock gesture. Nothing else here changes for music: the settings bridge
+// already drives the `music` bus, and visibility, mute, detach and dispose
+// reach the stream through the manager and the director.
+//
+// Q15 (the iOS silent switch is respected) and music: on iOS and iPadOS a
+// playing media element moves the whole page to the system's "playback"
+// audio category, which ignores the silent switch, even when the element is
+// routed into Web Audio (docs/08 §7.6, "iOS silent switch"). The streamed
+// soundtrack would therefore override Q15 for every sound. Until the owner
+// decides otherwise, `browserMusicElement` returns no element on those
+// devices: the music stays off there, and effects and ambience behave
+// exactly as before. No audio-session API is touched.
+//
+// Not here: adaptive music stems, countdown audio (Q9), a sound control
+// (A5), any audio-session override (Q15), media-session metadata or
+// controls.
 
 import {
   createAudioManager,
+  createBrowserMediaElement,
   type AudioBus,
   type AudioContextLike,
   type AudioManager,
   type AudioManagerOptions,
+  type MediaElementLike,
 } from "@/audio/audio-manager";
 import {
+  DISABLED_CUES_BY_DEFAULT,
   createAudioDirector,
   type AudioDirector,
   type AudioEventSource,
   type AudioFrame,
 } from "@/audio/director";
 import { SOUND_MANIFEST, type CueId, type SoundManifest } from "@/audio/manifest";
+import { anchorTouchdownSeconds } from "@/ui/anchor-touchdown";
+import { MUSIC_MAIN, type MusicTrack } from "@/audio/music";
 import {
   createSoundBank,
   type FetchLike,
@@ -82,14 +111,23 @@ import type { SoundSettings, SoundSettingsStore } from "@/ui/store/sound-setting
 const BUSES: readonly AudioBus[] = ["master", "music", "ambience", "sfx"];
 
 /**
- * Designed per-bus mix gains, multiplied with the user's volumes. Neutral
- * provisional engineering defaults, tuned in the A6 listening pass.
+ * Designed per-bus mix gains, multiplied with the user's volumes (A6;
+ * provisional until the owner's listening pass).
+ *
+ * - `sfx` 0.7 (−3 dB): the crash plays the snap and the boom together, each
+ *   file peaking near −2.5 dBFS; this keeps their sum off the limiter.
+ * - `ambience` 0.2 (−14 dB): owner decision 2026-11-17 (A-OWN), the ocean was
+ *   too loud at 0.5. The owner-supplied beds measure −32.6 LUFS (surface)
+ *   and −23.8 LUFS (underwater), so they sit near −46.6 and −37.8 LUFS in
+ *   the game. Provisional until the owner's listening approval.
+ * - `music` 0.5 (−6 dB): the owner's starting level for the streamed
+ *   soundtrack (M-OWN, D4); provisional until the listening pass.
  */
 export const AUDIO_MIX: Readonly<Record<AudioBus, number>> = Object.freeze({
   master: 1,
-  music: 1,
-  ambience: 1,
-  sfx: 1,
+  music: 0.5,
+  ambience: 0.2,
+  sfx: 0.7,
 });
 
 /** User gestures that may unlock audio (docs/08 §3.3 step 2). */
@@ -126,18 +164,60 @@ export const browserAudioEnvironment = (): AudioEnvironment => {
   };
 };
 
+/** The part of `navigator` that tells an iPhone or iPad from other devices. */
+export interface PlatformHints {
+  readonly userAgent?: string;
+  readonly platform?: string;
+  readonly maxTouchPoints?: number;
+}
+
+/**
+ * True on iOS and iPadOS: the devices with a silent switch (or the matching
+ * silent mode) that Q15 respects. Every browser there is WebKit. An iPad in
+ * desktop mode reports a Mac with a touch screen.
+ */
+export function isSilentSwitchPlatform(hints: PlatformHints | null | undefined): boolean {
+  if (!hints) return false;
+  const userAgent = typeof hints.userAgent === "string" ? hints.userAgent : "";
+  if (/iPhone|iPad|iPod/.test(userAgent)) return true;
+  const mac = hints.platform === "MacIntel" || /Macintosh/.test(userAgent);
+  return mac && typeof hints.maxTouchPoints === "number" && hints.maxTouchPoints > 1;
+}
+
+/**
+ * The production media element factory for the music (M-OWN): the browser's
+ * `Audio`, except on iOS and iPadOS, where it returns `null` so that the
+ * music stays off and Q15 holds (see the header). Reads `navigator` at call
+ * time, never at import.
+ */
+export const browserMusicElement = (): MediaElementLike | null => {
+  const hints = (globalThis as { navigator?: PlatformHints }).navigator;
+  return isSilentSwitchPlatform(hints) ? null : createBrowserMediaElement();
+};
+
 /** The settings surface the host uses: read, subscribe, and the one-time restore. */
 export type AudioSettingsSource = Pick<SoundSettingsStore, "get" | "subscribe" | "restore">;
 
 /** The projections of one rendered frame, as the driver already produced them. */
 export interface AudioFrameInput {
-  readonly render: { readonly depthRatio: number };
+  readonly render: {
+    readonly depthRatio: number;
+    /** A-OWN.1: the dive depth and the impact clock, for the sea-floor thud's timing. */
+    readonly worldY?: number;
+    readonly shipImpact?: { readonly elapsed: number } | null;
+  };
   readonly time: { readonly frameDt: number };
   readonly state: {
     readonly phase: AudioFrame["phase"];
     readonly multiplier: number;
     readonly boost: number;
   };
+  /**
+   * A-OWN.1: the scene size given to `SceneRenderer.resize` this frame. With
+   * it, `floor-thud` is timed on the drawn anchor's touchdown
+   * (`anchor-touchdown.ts`); without it, it plays on `shipImpact` itself.
+   */
+  readonly viewport?: { readonly width: number; readonly height: number };
 }
 
 export interface AudioHostOptions {
@@ -149,10 +229,14 @@ export interface AudioHostOptions {
   readonly createContext?: () => AudioContextLike | null;
   /** Fetch for the sound bank. Default: the global `fetch`, read when a load starts. */
   readonly fetch?: FetchLike;
-  /** Default: the real manifest (every asset `null` until A6). */
+  /** Default: the real manifest, with the A6 assets. */
   readonly manifest?: SoundManifest<CueId>;
   /** Default: `browserAudioEnvironment`, resolved on each attach. */
   readonly environment?: () => AudioEnvironment | null;
+  /** The soundtrack (M-OWN). Default: `MUSIC_MAIN`. `null`: no music. */
+  readonly music?: MusicTrack | null;
+  /** The music's media element factory. Default: `browserMusicElement`, resolved at the first unlock. */
+  readonly createMediaElement?: () => MediaElementLike | null;
   /** Test seams: replace a component, for example to inject failures. */
   readonly createManager?: (options: AudioManagerOptions<CueId>) => AudioManager<CueId>;
   readonly createBank?: (options: SoundBankOptions<CueId>) => SoundBank<CueId>;
@@ -199,19 +283,30 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
   let manager: AudioManager<CueId> | null = null;
   let bank: SoundBank<CueId> | null = null;
   let director: AudioDirector | null = null;
+  /** The cues the host loads: the manifest minus the director's disabled cues (A6.1, A-OWN). */
+  let loadCues: readonly CueId[] = [];
   guard("construct", () => {
     const makeManager = options.createManager ?? createAudioManager;
     const makeBank = options.createBank ?? createSoundBank;
-    const makeDirector = options.createDirector ?? createAudioDirector;
+    const music = options.music === undefined ? MUSIC_MAIN : options.music;
+    const makeDirector =
+      options.createDirector ??
+      ((events: AudioEventSource, cueAudio: AudioManager<CueId>) =>
+        createAudioDirector(events, cueAudio, { music }));
     // Late-bound resolver: the manager needs the bank, the bank the manager (§7.3).
     let resolveBank: SoundBank<CueId> | null = null;
     const audio = makeManager({
       resolveCue: (cue) => (resolveBank ? resolveBank.resolve(cue) : null),
       createContext: options.createContext,
+      createMediaElement: options.createMediaElement ?? browserMusicElement,
     });
     manager = audio;
+    const manifest = options.manifest ?? SOUND_MANIFEST;
+    loadCues = (Object.keys(manifest) as CueId[]).filter(
+      (cue) => !DISABLED_CUES_BY_DEFAULT.includes(cue),
+    );
     const sounds = makeBank({
-      manifest: options.manifest ?? SOUND_MANIFEST,
+      manifest,
       decoder: audio,
       fetch: options.fetch,
     });
@@ -276,7 +371,7 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
     const sounds = bank;
     if (loadStarted || !sounds) return;
     guard("bank load", () => {
-      sounds.loadAll().then(undefined, (error: unknown) => report("bank load", error));
+      sounds.loadAll(loadCues).then(undefined, (error: unknown) => report("bank load", error));
       loadStarted = true;
     });
   };
@@ -377,6 +472,21 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
     multiplier: 1,
     boost: 0,
     dt: 0,
+    seaFloor: undefined,
+  };
+  /** A-OWN.1: the reused landing timing handed to the director. */
+  const seaFloor: { elapsed: number; touchdownS: number } = { elapsed: 0, touchdownS: 0 };
+  /** The landing timing for this input: absent without geometry, null before the floor. */
+  const seaFloorFor = (input: AudioFrameInput): AudioFrame["seaFloor"] => {
+    const { viewport, render } = input;
+    if (!viewport || render.worldY === undefined) return undefined;
+    const impact = render.shipImpact;
+    if (!impact) return null;
+    const touchdown = anchorTouchdownSeconds(viewport.width, viewport.height, render.worldY);
+    if (touchdown === null) return undefined;
+    seaFloor.elapsed = impact.elapsed;
+    seaFloor.touchdownS = touchdown;
+    return seaFloor;
   };
 
   return {
@@ -407,6 +517,7 @@ export function createAudioHost(options: AudioHostOptions): AudioHost {
         frame.boost = input.state.boost;
         frame.depthRatio = input.render.depthRatio;
         frame.dt = input.time.frameDt;
+        frame.seaFloor = seaFloorFor(input);
         cues.update(frame);
       });
     },

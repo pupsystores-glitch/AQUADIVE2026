@@ -3,7 +3,8 @@
 // recording AudioManager and a small event-source fake defined here. The
 // readiness and null-manifest tests use the real AudioManager over the
 // shared FakeAudioContext and the real SoundBank, both unchanged. Every
-// asset URL is a `test://` fixture: no real asset exists (docs/08 §8).
+// asset URL is a `test://` fixture; the production files (A6) are checked in
+// manifest.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { EngineEventMap, EventBus } from "@/engine";
 import {
@@ -14,11 +15,17 @@ import {
   type LoopOptions,
   type PlayOptions,
   type ResolvedCue,
+  type StreamHandle,
 } from "./audio-manager";
 import {
   BED_CROSSFADE_S,
   DETACH_FADE_S,
+  DISABLED_BY_DEFAULT,
+  DISABLED_CUES_BY_DEFAULT,
+  DISABLED_ONE_SHOTS_BY_DEFAULT,
   DUCK,
+  FLOOR_THUD_HIT_S,
+  FLOOR_THUD_MAX_WAIT_S,
   PHASES_MATCH,
   RATTLE_STOP_FADE_S,
   TENSION_THRESHOLDS,
@@ -116,6 +123,11 @@ class RecordingAudio implements AudioManager<CueId> {
   play(cue: CueId, opts?: PlayOptions): void {
     this.log.push(opts?.gain !== undefined ? `play ${cue} gain=${fmt(opts.gain)}` : `play ${cue}`);
   }
+  /** M-OWN: recorded; these tests create no director with music (see director.music.test.ts). */
+  stream(): StreamHandle {
+    this.log.push("stream");
+    return { setGain: () => {}, setActive: () => {}, stop: () => {}, isAudible: () => false };
+  }
   loop(cue: CueId, options?: LoopOptions): LoopHandle {
     const loop: RecordedLoop = {
       id: this.loops.length + 1,
@@ -208,10 +220,18 @@ const ev = {
   }),
 };
 
+/**
+ * A6.1 and A-OWN: the rattle and the tension creaks are off by default.
+ * Every test below that predates them builds its director with both on, so
+ * their own behaviour stays pinned; the "chain rattle disabled by default"
+ * and "tension creaks disabled by default" blocks test the default.
+ */
+const RATTLE_ON = { chainRattle: true, tensionCreaks: true } as const;
+
 function setup() {
   const events = new FakeEvents();
   const audio = new RecordingAudio();
-  const director = createAudioDirector(events, audio);
+  const director = createAudioDirector(events, audio, RATTLE_ON);
   return { events, audio, director };
 }
 
@@ -900,6 +920,7 @@ describe("exception containment", () => {
     setMuted: boom,
     play: boom,
     loop: boom,
+    stream: boom,
     decode: boom,
     suspend: boom,
     resume: boom,
@@ -929,7 +950,7 @@ describe("exception containment", () => {
 
   it("a manager whose every method throws: no entry point throws, each failure kind is logged once", () => {
     const events = new FakeEvents();
-    const director = createAudioDirector(events, throwingManager());
+    const director = createAudioDirector(events, throwingManager(), RATTLE_ON);
     expect(() => fullScript(director, events)).not.toThrow();
     const kinds = errorSpy.mock.calls.map((call) => String(call[0]));
     expect(kinds.sort()).toEqual([
@@ -940,7 +961,7 @@ describe("exception containment", () => {
 
   it("handles whose every method throws: contained, each kind logged once", () => {
     const events = new FakeEvents();
-    const director = createAudioDirector(events, throwingHandles());
+    const director = createAudioDirector(events, throwingHandles(), RATTLE_ON);
     expect(() => fullScript(director, events)).not.toThrow();
     const kinds = errorSpy.mock.calls.map((call) => String(call[0]));
     expect(kinds.sort()).toEqual([
@@ -957,7 +978,7 @@ describe("exception containment", () => {
     const play = audio.play.bind(audio);
     audio.play = (cue, opts) => (cue === "chain-snap" ? boom() : play(cue, opts));
     const events = new FakeEvents();
-    const director = createAudioDirector(events, audio);
+    const director = createAudioDirector(events, audio, RATTLE_ON);
     director.update(frame({ phase: "diving" }));
     events.emit("crashed", ev.crash());
     director.update(frame({ phase: "crashed" }));
@@ -968,7 +989,7 @@ describe("exception containment", () => {
   it("an event source whose subscribe throws, or a frame of garbage, does not throw", () => {
     const events: AudioEventSource = { on: boom };
     const audio = new RecordingAudio();
-    const director = createAudioDirector(events, audio);
+    const director = createAudioDirector(events, audio, RATTLE_ON);
     expect(errorSpy).toHaveBeenCalledTimes(1);
     const garbage = {
       phase: undefined,
@@ -1023,6 +1044,15 @@ const withTestAssets = (): SoundManifest<CueId> => {
   return manifest;
 };
 
+/** The real manifest with every asset removed: an explicit no-asset fixture (the production manifest has assets since A6). */
+const withoutAssets = (): SoundManifest<CueId> => {
+  const manifest = {} as Record<CueId, CueDefinition>;
+  for (const [id, definition] of Object.entries(SOUND_MANIFEST) as [CueId, CueDefinition][]) {
+    manifest[id] = { ...definition, asset: null };
+  }
+  return manifest;
+};
+
 function realStack(manifest: SoundManifest<CueId>) {
   const context = new FakeAudioContext();
   const fetch = new FakeFetch();
@@ -1033,7 +1063,7 @@ function realStack(manifest: SoundManifest<CueId>) {
   });
   bank = createSoundBank({ manifest, decoder: audio, fetch: fetch.fetch });
   const events = new FakeEvents();
-  const director = createAudioDirector(events, audio);
+  const director = createAudioDirector(events, audio, RATTLE_ON);
   return { context, fetch, bank, audio, events, director };
 }
 
@@ -1097,9 +1127,9 @@ describe("pending-loop readiness (docs/08 §14 risk 13)", () => {
   });
 });
 
-describe("null-asset manifest (A6 not done)", () => {
+describe("null-asset manifest (a cue list with no asset)", () => {
   it("full rounds make no fetch, start no source and log nothing", async () => {
-    const stack = realStack(SOUND_MANIFEST);
+    const stack = realStack(withoutAssets());
     await stack.audio.unlock();
     const primed = stack.context.sources.length; // the unlock prime only
     expect(primed).toBe(1);
@@ -1230,7 +1260,7 @@ describe("loop startup values (A4a.1)", () => {
       },
     });
     const events = new FakeEvents();
-    const director = createAudioDirector(events, audio);
+    const director = createAudioDirector(events, audio, RATTLE_ON);
     for (let i = 0; i < 10; i++) director.update(frame({ phase: "idle", dt: 0.3 }));
     events.emit("diveStarted", ev.dive());
     director.update(frame({ phase: "diving" }));
@@ -1254,7 +1284,10 @@ const LOOP_BUFFERS = new Map<CueId, ReturnType<typeof fakeBuffer>>([
 ]);
 
 /** The real manager, with every loop cue resolvable at once (no bank); one-shots are missing. */
-function directStack(options: FakeAudioContextOptions = {}) {
+function directStack(
+  options: FakeAudioContextOptions = {},
+  directorOptions: Parameters<typeof createAudioDirector>[2] = RATTLE_ON,
+) {
   const context = new FakeAudioContext(options);
   const audio = createAudioManager<CueId>({
     resolveCue: (cue): ResolvedCue | null => {
@@ -1271,7 +1304,7 @@ function directStack(options: FakeAudioContextOptions = {}) {
     createContext: () => context,
   });
   const events = new FakeEvents();
-  const director = createAudioDirector(events, audio);
+  const director = createAudioDirector(events, audio, directorOptions);
   const sourcesOf = (cue: CueId) =>
     context.sources.filter((source) => source.buffer === LOOP_BUFFERS.get(cue));
   /** The cue's live voice gain value, rounded; undefined without a live voice. */
@@ -1441,5 +1474,328 @@ describe("bed fade-in follows actual playback (A4a.1, real manager)", () => {
     await settle();
     expect(stack.bank.status("ambience-surface")).toBe("ready");
     expect(stack.context.sources.filter((source) => source.loop)).toEqual([]);
+  });
+});
+
+// ----- A6.1: the continuous chain rattle is off by default -----
+
+describe("chain rattle disabled by default (A6.1)", () => {
+  function defaultSetup(options?: Parameters<typeof createAudioDirector>[2]) {
+    const events = new FakeEvents();
+    const audio = new RecordingAudio();
+    const director =
+      options === undefined
+        ? createAudioDirector(events, audio)
+        : createAudioDirector(events, audio, options);
+    return { events, audio, director };
+  }
+
+  /**
+   * The default crash-round log: without the rattle (its lines go, and the
+   * next handle takes its number) and, since A-OWN, without the tension creak.
+   */
+  const CRASH_ROUND_LOG_NO_RATTLE = [
+    "loop ambience-surface#1 gain=0.000",
+    "#1 ambience-surface gain 0.500",
+    "play bet-clink-1",
+    "play bet-clink-2",
+    "#1 ambience-surface stop 1.200",
+    "loop ambience-underwater#2 gain=0.000 filter=6000",
+    "play chain-unspool",
+    "play water-splash",
+    "#2 ambience-underwater gain 0.500",
+    "#2 ambience-underwater filter 1732",
+    "play chain-snap",
+    "play crash-boom",
+    "#2 ambience-underwater gain 0.625",
+    "#2 ambience-underwater stop 1.200",
+    "loop ambience-surface#3 gain=0.000",
+  ];
+
+  it("lists chain-rattle as the only loop disabled by default", () => {
+    expect(DISABLED_BY_DEFAULT).toEqual(["chain-rattle"]);
+    expect(Object.isFrozen(DISABLED_BY_DEFAULT)).toBe(true);
+  });
+
+  it("keeps the rattle's manifest entry and asset", () => {
+    const rattle = SOUND_MANIFEST["chain-rattle"];
+    expect(rattle.kind).toBe("loop");
+    expect(rattle.category).toBe("sfx");
+    expect(rattle.asset).not.toBeNull();
+  });
+
+  it("a full crash round: every other cue as before, and no rattle loop", () => {
+    const env = defaultSetup();
+    crashRound(env);
+    expect(env.audio.log).toEqual(CRASH_ROUND_LOG_NO_RATTLE);
+    expect(env.audio.log.some((line) => line.includes("chain-rattle"))).toBe(false);
+    // Differs from the all-on golden log only by the rattle's and the creak's lines.
+    const withRattle = setup();
+    crashRound(withRattle);
+    expect(
+      withRattle.audio.log.filter(
+        (line) => !line.includes("chain-rattle") && !line.includes("tension-creak"),
+      ),
+    ).toEqual(
+      CRASH_ROUND_LOG_NO_RATTLE.map((line) =>
+        line === "loop ambience-surface#3 gain=0.000" ? "loop ambience-surface#4 gain=0.000" : line,
+      ),
+    );
+  });
+
+  it("chain-unspool and chain-snap still play", () => {
+    const { events, audio, director } = defaultSetup();
+    director.update(frame({ phase: "idle" }));
+    events.emit("diveStarted", ev.dive());
+    director.update(frame({ phase: "diving" }));
+    events.emit("crashed", ev.crash());
+    director.update(frame({ phase: "crashed" }));
+    expect(audio.plays()).toEqual([
+      "play chain-unspool",
+      "play water-splash",
+      "play chain-snap",
+      "play crash-boom",
+    ]);
+  });
+
+  it("diving wants only the underwater bed, whatever the multiplier, across pause and wake", () => {
+    const { audio, director } = defaultSetup();
+    for (const multiplier of [1, 2, 10, 1000]) {
+      director.update(frame({ phase: "diving", multiplier, depthRatio: 0.5 }));
+    }
+    director.wake();
+    director.pause();
+    director.update(frame({ phase: "diving", multiplier: 5 }));
+    director.dispose();
+    expect(audio.log.some((line) => line.includes("chain-rattle"))).toBe(false);
+    expect(audio.latest("chain-rattle")).toBeUndefined();
+  });
+
+  it("{ chainRattle: false } is the default; { chainRattle: true } restores the rattle", () => {
+    const off = defaultSetup({ chainRattle: false });
+    const def = defaultSetup();
+    crashRound(off);
+    crashRound(def);
+    expect(off.audio.log).toEqual(def.audio.log);
+    const on = defaultSetup({ chainRattle: true, tensionCreaks: true });
+    crashRound(on);
+    expect(on.audio.log).toEqual(CRASH_ROUND_LOG);
+    const rattleOnly = defaultSetup({ chainRattle: true });
+    crashRound(rattleOnly);
+    expect(rattleOnly.audio.log).toEqual(
+      CRASH_ROUND_LOG.filter((line) => !line.includes("tension-creak")),
+    );
+  });
+
+  it("the real manager starts the underwater bed and no rattle voice while diving", async () => {
+    const stack = directStack({}, {});
+    await stack.audio.unlock();
+    stack.director.update(frame({ phase: "idle" }));
+    stack.events.emit("diveStarted", ev.dive());
+    for (let i = 0; i < 5; i++) stack.director.update(frame({ phase: "diving", multiplier: 3 }));
+    expect(stack.sourcesOf("ambience-underwater")).toHaveLength(1);
+    expect(stack.sourcesOf("chain-rattle")).toHaveLength(0);
+  });
+});
+
+// ----- A-OWN: the tension creaks are off by default -----
+
+describe("tension creaks disabled by default (A-OWN)", () => {
+  function defaultSetup(options?: Parameters<typeof createAudioDirector>[2]) {
+    const events = new FakeEvents();
+    const audio = new RecordingAudio();
+    const director =
+      options === undefined
+        ? createAudioDirector(events, audio)
+        : createAudioDirector(events, audio, options);
+    return { events, audio, director };
+  }
+
+  /** Every threshold, one at a time, then a jump past all of them, in two rounds. */
+  function climb(env: { director: AudioDirector }) {
+    const step = (phase: AudioFrame["phase"], multiplier = 1) =>
+      env.director.update(frame({ phase, multiplier }));
+    step("idle");
+    for (const m of [1, ...TENSION_THRESHOLDS, 1e6]) step("diving", m);
+    step("crashed", 1e6);
+    step("idle");
+    step("diving", 1);
+    step("diving", 1e6); // every threshold in one frame
+    step("cashed", 1e6);
+    step("bonus", 1e6);
+  }
+
+  it("lists both creaks as the one-shots disabled by default, and the host's skip list holds all three disabled cues", () => {
+    expect(DISABLED_ONE_SHOTS_BY_DEFAULT).toEqual(["tension-creak-1", "tension-creak-2"]);
+    expect(Object.isFrozen(DISABLED_ONE_SHOTS_BY_DEFAULT)).toBe(true);
+    expect([...DISABLED_CUES_BY_DEFAULT].sort()).toEqual(
+      ["chain-rattle", "tension-creak-1", "tension-creak-2"].sort(),
+    );
+    expect(Object.isFrozen(DISABLED_CUES_BY_DEFAULT)).toBe(true);
+  });
+
+  it("keeps both creaks' manifest entries and assets, and the thresholds", () => {
+    for (const id of DISABLED_ONE_SHOTS_BY_DEFAULT) {
+      expect(SOUND_MANIFEST[id].kind).toBe("oneShot");
+      expect(SOUND_MANIFEST[id].asset).not.toBeNull();
+    }
+    expect(TENSION_THRESHOLDS).toEqual([2, 3, 5, 10, 20, 50]);
+  });
+
+  it("no multiplier, threshold, jump or phase plays a creak", () => {
+    const env = defaultSetup();
+    climb(env);
+    expect(env.audio.log.some((line) => line.includes("tension-creak"))).toBe(false);
+    expect(env.audio.latest("tension-creak-1")).toBeUndefined();
+    expect(env.audio.latest("tension-creak-2")).toBeUndefined();
+  });
+
+  it("no engine event plays a creak, and every other cue of a full crash round still plays", () => {
+    const env = defaultSetup();
+    crashRound(env);
+    expect(env.audio.plays()).toEqual([
+      "play bet-clink-1",
+      "play bet-clink-2",
+      "play chain-unspool",
+      "play water-splash",
+      "play chain-snap",
+      "play crash-boom",
+    ]);
+  });
+
+  it("a goldfish pickup on the frame that crosses a threshold still chimes", () => {
+    const { audio, director } = defaultSetup();
+    director.update(frame({ phase: "diving", multiplier: 1, boost: 0 }));
+    director.update(frame({ phase: "diving", multiplier: 2.5, boost: 1 }));
+    expect(audio.plays()).toEqual(["play goldfish-chime"]);
+  });
+
+  it("{ tensionCreaks: false } is the default; { tensionCreaks: true } restores them exactly", () => {
+    const off = defaultSetup({ tensionCreaks: false });
+    const def = defaultSetup();
+    climb(off);
+    climb(def);
+    expect(off.audio.log).toEqual(def.audio.log);
+    const on = defaultSetup({ tensionCreaks: true });
+    climb(on);
+    expect(on.audio.plays()).toEqual([
+      "play tension-creak-1",
+      "play tension-creak-2",
+      "play tension-creak-1",
+      "play tension-creak-2",
+      "play tension-creak-1",
+      "play tension-creak-2",
+      "play tension-creak-2", // second round: every threshold at once, level 6
+    ]);
+    // Everything but the creaks is identical.
+    expect(on.audio.log.filter((line) => !line.includes("tension-creak"))).toEqual(def.audio.log);
+  });
+});
+
+// ----- A-OWN.1: the sea-floor thud lands on the anchor's touchdown -----
+
+describe("floor-thud timed on the anchor's touchdown (A-OWN.1)", () => {
+  /** A dive to the floor; returns a stepper that advances the impact clock by DT per frame. */
+  function impactRound(touchdownS: number) {
+    const { events, audio, director } = setup();
+    director.update(frame({ phase: "diving", depthRatio: 1, multiplier: 1000, seaFloor: null }));
+    audio.take();
+    let elapsed = 0;
+    const step = (phase: AudioFrame["phase"] = "cashed") => {
+      director.update(
+        frame({ phase, depthRatio: 1, multiplier: 1000, seaFloor: { elapsed, touchdownS } }),
+      );
+      elapsed += DT;
+    };
+    return { events, audio, director, step, elapsedNow: () => elapsed };
+  }
+
+  it("the jackpot stinger plays on the event; the thud waits for touchdown − FLOOR_THUD_HIT_S", () => {
+    const r = impactRound(0.6);
+    r.events.emit("shipImpact", ev.impact());
+    r.step();
+    expect(r.audio.plays()).toEqual(["play jackpot-stinger"]);
+    r.audio.take();
+    let frames = 0;
+    while (!r.audio.plays().includes("play floor-thud") && frames < 200) {
+      r.step();
+      frames++;
+    }
+    // It starts on the first frame whose impact clock reached 0.6 − 0.3 s.
+    expect(FLOOR_THUD_HIT_S).toBe(0.3);
+    expect(r.elapsedNow() - DT).toBeGreaterThanOrEqual(0.6 - FLOOR_THUD_HIT_S - 1e-9);
+    expect(r.elapsedNow() - DT).toBeLessThan(0.6 - FLOOR_THUD_HIT_S + DT);
+    expect(r.audio.plays()).toEqual(["play floor-thud"]);
+    // Exactly once.
+    r.audio.take();
+    for (let i = 0; i < 120; i++) r.step();
+    expect(r.audio.plays()).toEqual([]);
+  });
+
+  it("a touchdown at or before the hit offset plays the thud on the event frame", () => {
+    const r = impactRound(0.3);
+    r.events.emit("shipImpact", ev.impact());
+    r.step();
+    // Same frame; the held thud is added after the event's own cues.
+    expect(r.audio.plays()).toEqual(["play jackpot-stinger", "play floor-thud"]);
+  });
+
+  it("without landing geometry the thud plays on the event, as before", () => {
+    const { events, audio, director } = setup();
+    director.update(frame({ phase: "diving", depthRatio: 1, multiplier: 1000 }));
+    audio.take();
+    events.emit("shipImpact", ev.impact());
+    director.update(frame({ phase: "cashed", depthRatio: 1, multiplier: 1000 }));
+    expect(audio.plays()).toEqual(["play floor-thud", "play jackpot-stinger"]);
+  });
+
+  it("a floor not reached yet (null) holds the thud, at most FLOOR_THUD_MAX_WAIT_S", () => {
+    const { events, audio, director } = setup();
+    director.update(frame({ phase: "diving", depthRatio: 1, seaFloor: null }));
+    events.emit("shipImpact", ev.impact());
+    let frames = 0;
+    do {
+      director.update(frame({ phase: "cashed", depthRatio: 1, seaFloor: null }));
+      frames++;
+    } while (!audio.plays().includes("play floor-thud") && frames < 500);
+    expect(frames * DT).toBeGreaterThanOrEqual(FLOOR_THUD_MAX_WAIT_S);
+    expect(frames * DT).toBeLessThan(FLOOR_THUD_MAX_WAIT_S + 2 * DT);
+  });
+
+  it("a pause or a new betting window drops a held thud; the next round times its own", () => {
+    const paused = impactRound(0.7);
+    paused.events.emit("shipImpact", ev.impact());
+    paused.step();
+    paused.director.pause();
+    for (let i = 0; i < 60; i++) paused.step();
+    expect(paused.audio.plays()).toEqual(["play jackpot-stinger"]);
+
+    const next = impactRound(0.7);
+    next.events.emit("shipImpact", ev.impact());
+    next.step();
+    next.step("idle");
+    for (let i = 0; i < 60; i++) next.step("idle");
+    expect(next.audio.plays().filter((line) => line === "play floor-thud")).toEqual([]);
+    // Repeated rounds: each impact plays its own thud once.
+    for (let round = 0; round < 3; round++) {
+      next.events.emit("shipImpact", ev.impact());
+      for (let i = 0; i < 40; i++) next.step();
+      next.step("idle");
+    }
+    expect(next.audio.plays().filter((line) => line === "play floor-thud")).toHaveLength(3);
+  });
+
+  it("a held thud is not merged with nor blocked by the chest cues that follow", () => {
+    const r = impactRound(0.7);
+    r.events.emit("shipImpact", ev.impact());
+    r.step();
+    for (let i = 0; i < 10; i++) r.step();
+    r.events.emit("chestsRevealed", ev.reveal());
+    for (let i = 0; i < 30; i++) r.step("bonus");
+    expect(r.audio.plays()).toEqual([
+      "play jackpot-stinger",
+      "play treasure-shimmer",
+      "play floor-thud",
+    ]);
   });
 });

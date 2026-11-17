@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>A6 Refinement Listening</title>
+    <style>
+      :root {
+        --bg: #0d1b24;
+        --card: #13283a;
+        --ink: #e8f1f5;
+        --muted: #9db3c0;
+        --accent: #4fc3c8;
+        --line: #24425a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          15px/1.45 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 17px;
+        margin: 0 0 6px;
+      }
+      p,
+      li {
+        color: var(--muted);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px;
+        margin: 16px 0;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin: 8px 0;
+      }
+      .label {
+        min-width: 210px;
+        font-weight: 600;
+      }
+      button {
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+        padding: 6px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover {
+        background: rgba(79, 195, 200, 0.15);
+      }
+      button.stop {
+        border-color: #c87c4f;
+      }
+      .tag {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      label {
+        color: var(--muted);
+      }
+      code {
+        color: var(--ink);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>A6 refinement — listening comparison</h1>
+      <p>
+        <strong>Raw</strong> plays the file as stored. <strong>In game</strong> plays it at its
+        in-game level (manifest gain × sfx bus 0.7; the game's limiter never engages for these
+        sounds). Headphones first, then a phone speaker.
+      </p>
+      <div class="row">
+        <label
+          ><input type="checkbox" id="bed" /> Play the music + ambience bed underneath (in-game
+          levels: music 0.5, ambience 0.2)</label
+        >
+        <button class="stop" onclick="stopAll()">Stop all</button>
+      </div>
+
+      <section class="card">
+        <h2>1 · BET 2 (<code>bet-clink-2</code>)</h2>
+        <p>
+          Both candidates are the approved BET 1 strike, re-pitched. A: up 3 semitones (C5, the
+          music's tonic). B: down 2 semitones (G4).
+        </p>
+        <div class="row">
+          <span class="label">BET 1 (approved reference)</span
+          ><button onclick="one('../../owner/bet-clink-1.mp3', 1)">Raw</button
+          ><button onclick="one('../../owner/bet-clink-1.mp3', 0.2 * SFX, 'surface')">
+            In game
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">BET 2 current</span
+          ><button onclick="one('../../owner/bet-clink-2.mp3', 1)">Raw</button
+          ><button onclick="one('../../owner/bet-clink-2.mp3', 0.58 * SFX, 'surface')">
+            In game
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">Candidate A (C5)</span
+          ><button onclick="one('bet-clink-2-candidate-a.m4a', 1)">Raw</button
+          ><button onclick="one('bet-clink-2-candidate-a.m4a', 0.22 * SFX, 'surface')">
+            In game
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">Candidate B (G4)</span
+          ><button onclick="one('bet-clink-2-candidate-b.m4a', 1)">Raw</button
+          ><button onclick="one('bet-clink-2-candidate-b.m4a', 0.2 * SFX, 'surface')">
+            In game
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">BET 1 → BET 2 sequence</span>
+          <button
+            onclick="
+              seq(
+                [
+                  ['../../owner/bet-clink-1.mp3', 0.2 * SFX],
+                  ['../../owner/bet-clink-2.mp3', 0.58 * SFX],
+                ],
+                'surface',
+              )
+            "
+          >
+            with current
+          </button>
+          <button
+            onclick="
+              seq(
+                [
+                  ['../../owner/bet-clink-1.mp3', 0.2 * SFX],
+                  ['bet-clink-2-candidate-a.m4a', 0.22 * SFX],
+                ],
+                'surface',
+              )
+            "
+          >
+            with A
+          </button>
+          <button
+            onclick="
+              seq(
+                [
+                  ['../../owner/bet-clink-1.mp3', 0.2 * SFX],
+                  ['bet-clink-2-candidate-b.m4a', 0.2 * SFX],
+                ],
+                'surface',
+              )
+            "
+          >
+            with B
+          </button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>2 · Crash (<code>crash-boom</code>, always heard with <code>chain-snap</code>)</h2>
+        <p>
+          The crash in the game is <code>chain-snap</code> (unchanged) plus <code>crash-boom</code>,
+          started together. Compare the pair.
+        </p>
+        <div class="row">
+          <span class="label">crash-boom current alone</span
+          ><button onclick="one('../../crash-boom.m4a', 1)">Raw</button
+          ><button onclick="one('../../crash-boom.m4a', SFX, 'under')">In game</button>
+        </div>
+        <div class="row">
+          <span class="label">Candidate alone</span
+          ><button onclick="one('crash-boom-candidate.m4a', 1)">Raw</button
+          ><button onclick="one('crash-boom-candidate.m4a', SFX, 'under')">In game</button>
+        </div>
+        <div class="row">
+          <span class="label">Full crash: snap + current</span
+          ><button
+            onclick="
+              many(
+                [
+                  ['../../owner/chain-snap.m4a', SFX],
+                  ['../../crash-boom.m4a', SFX],
+                ],
+                'under',
+                true,
+              )
+            "
+          >
+            In game
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">Full crash: snap + candidate</span
+          ><button
+            onclick="
+              many(
+                [
+                  ['../../owner/chain-snap.m4a', SFX],
+                  ['crash-boom-candidate.m4a', SFX],
+                ],
+                'under',
+                true,
+              )
+            "
+          >
+            In game
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">chain-snap alone</span
+          ><button onclick="one('../../owner/chain-snap.m4a', SFX, 'under')">In game</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>3 · Jackpot (<code>jackpot-stinger</code>)</h2>
+        <p>
+          <strong>No candidate.</strong> See <code>README.md</code> in this folder: a premium
+          musical stinger cannot be produced with the tools available here, so it contains the brief
+          and prompts for an external service.
+        </p>
+        <div class="row">
+          <span class="label">Current (for reference)</span
+          ><button onclick="one('../../owner/jackpot-stinger.m4a', 1)">Raw</button
+          ><button onclick="one('../../owner/jackpot-stinger.m4a', 0.62 * SFX, 'under')">
+            In game
+          </button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>4 · Treasure chest (<code>chest-lid-creak</code>)</h2>
+        <p>
+          The candidate is the current recording reworked: soft attack, squeaks tamed, sub clunks
+          removed, 10% slower, small wooden-room tail.
+        </p>
+        <div class="row">
+          <span class="label">Current alone</span
+          ><button onclick="one('../../owner/chest-lid-creak.m4a', 1)">Raw</button
+          ><button onclick="one('../../owner/chest-lid-creak.m4a', 0.51 * SFX, 'under')">
+            In game
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">Candidate alone</span
+          ><button onclick="one('chest-lid-creak-candidate.m4a', 1)">Raw</button
+          ><button onclick="one('chest-lid-creak-candidate.m4a', 0.51 * SFX, 'under')">
+            In game
+          </button>
+        </div>
+        <div class="row">
+          <span class="label">Pick with current lid</span
+          ><button onclick="chest('../../owner/chest-lid-creak.m4a', 0.6)">small prize</button
+          ><button onclick="chest('../../owner/chest-lid-creak.m4a', 1)">big prize</button>
+        </div>
+        <div class="row">
+          <span class="label">Pick with candidate lid</span
+          ><button onclick="chest('chest-lid-creak-candidate.m4a', 0.6)">small prize</button
+          ><button onclick="chest('chest-lid-creak-candidate.m4a', 1)">big prize</button>
+        </div>
+        <p class="tag">
+          A pick plays the lid and the coin burst together (coin gain 0.61 × 0.6 or × 1 by
+          multiplier), with the treasure shimmer already ringing from the reveal.
+        </p>
+      </section>
+    </main>
+    <script>
+      const SFX = 0.7;
+      let playing = [];
+      let bedEls = [];
+      function el(src, vol) {
+        const a = new Audio(src);
+        a.volume = Math.min(1, vol);
+        playing.push(a);
+        return a;
+      }
+      function stopAll() {
+        for (const a of [...playing, ...bedEls]) {
+          a.pause();
+        }
+        playing = [];
+        bedEls = [];
+      }
+      function bed(kind, duck) {
+        for (const a of bedEls) a.pause();
+        bedEls = [];
+        if (!kind || !document.getElementById("bed").checked) return 0;
+        const m = new Audio("../../music-main.mp3");
+        m.currentTime = 30;
+        m.volume = 0.5;
+        m.loop = true;
+        const amb = new Audio(
+          kind === "surface"
+            ? "../../owner/ambience-surface.m4a"
+            : "../../owner/ambience-underwater.m4a",
+        );
+        amb.volume = 0.2;
+        amb.loop = true;
+        bedEls = [m, amb];
+        m.play();
+        amb.play();
+        if (duck)
+          setTimeout(() => {
+            m.volume = 0.5 * 0.4;
+            setTimeout(() => (m.volume = 0.5), 1700);
+          }, 700);
+        return 700;
+      }
+      function one(src, vol, kind) {
+        stopAll();
+        const d = bed(kind);
+        setTimeout(() => el(src, vol).play(), d);
+      }
+      function many(list, kind, duck) {
+        stopAll();
+        const d = bed(kind, duck);
+        setTimeout(() => list.forEach(([s, v]) => el(s, v).play()), d);
+      }
+      function seq(list, kind) {
+        stopAll();
+        const d = bed(kind);
+        list.forEach(([s, v], i) => setTimeout(() => el(s, v).play(), d + i * 900));
+      }
+      function chest(lid, burst) {
+        stopAll();
+        const d = bed("under");
+        setTimeout(() => el("../../owner/treasure-shimmer.m4a", 0.36 * SFX).play(), d);
+        setTimeout(() => {
+          el(lid, 0.51 * SFX).play();
+          el("../../owner/chest-coin-burst.m4a", 0.61 * burst * SFX).play();
+        }, d + 1000);
+      }
+    </script>
+  </body>
+</html>

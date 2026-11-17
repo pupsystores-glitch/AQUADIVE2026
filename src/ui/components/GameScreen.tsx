@@ -40,6 +40,7 @@ import { BettingPanel } from "./BettingPanel";
 import { CanvasStage } from "./CanvasStage";
 import { CrashBanner } from "./CrashBanner";
 import { ChestPicker } from "./ChestPicker";
+import { DevAudioDiagnostics } from "./DevAudioDiagnostics";
 import { DevRejectionBanner } from "./DevRejectionBanner";
 import { HistoryStrip } from "./HistoryStrip";
 import { MultiplierOverlay } from "./MultiplierOverlay";
@@ -113,6 +114,9 @@ export default function GameScreen() {
 
         {/* Dev-only command rejection banner (§12) — compiled out of production */}
         {import.meta.env.DEV && <DevRejectionBanner />}
+
+        {/* IOS-AUDIO: temporary dev-only audio diagnostics (?audiodebug=1), portalled to <body> */}
+        {import.meta.env.DEV && <DevAudioDiagnostics />}
       </div>
 
       {/* BOTTOM CONTROLS */}

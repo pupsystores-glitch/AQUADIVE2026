@@ -1,0 +1,134 @@
+{
+  "bet-clink-1": {
+    "seconds": 0.312,
+    "samples": 14976,
+    "peakDb": -2.5,
+    "rmsDb": -19.3,
+    "lufs": -18.25
+  },
+  "bet-clink-2": {
+    "seconds": 0.372,
+    "samples": 17856,
+    "peakDb": -2.5,
+    "rmsDb": -18.82,
+    "lufs": -17.31
+  },
+  "chain-unspool": {
+    "seconds": 1.262,
+    "samples": 60576,
+    "peakDb": -2.5,
+    "rmsDb": -19.02,
+    "lufs": -17.01
+  },
+  "water-splash": {
+    "seconds": 1.012,
+    "samples": 48576,
+    "peakDb": -2.5,
+    "rmsDb": -22.22,
+    "lufs": -21.85
+  },
+  "tension-creak-1": {
+    "seconds": 0.912,
+    "samples": 43776,
+    "peakDb": -2.5,
+    "rmsDb": -19.64,
+    "lufs": -20.9
+  },
+  "tension-creak-2": {
+    "seconds": 0.942,
+    "samples": 45216,
+    "peakDb": -2.5,
+    "rmsDb": -19.98,
+    "lufs": -20.09
+  },
+  "goldfish-chime": {
+    "seconds": 0.962,
+    "samples": 46176,
+    "peakDb": -2.5,
+    "rmsDb": -15.36,
+    "lufs": -13.82
+  },
+  "cashout-coins": {
+    "seconds": 1.362,
+    "samples": 65376,
+    "peakDb": -2.5,
+    "rmsDb": -16.89,
+    "lufs": -14.06
+  },
+  "chain-snap": {
+    "seconds": 0.462,
+    "samples": 22176,
+    "peakDb": -2.5,
+    "rmsDb": -19.53,
+    "lufs": -17.65
+  },
+  "crash-boom": {
+    "seconds": 2.312,
+    "samples": 110976,
+    "peakDb": -2.5,
+    "rmsDb": -18.14,
+    "lufs": -20.8
+  },
+  "floor-thud": {
+    "seconds": 0.862,
+    "samples": 41376,
+    "peakDb": -2.5,
+    "rmsDb": -20.2,
+    "lufs": -22.37
+  },
+  "jackpot-stinger": {
+    "seconds": 3.512,
+    "samples": 168576,
+    "peakDb": -2.5,
+    "rmsDb": -17.89,
+    "lufs": -17.23
+  },
+  "treasure-shimmer": {
+    "seconds": 1.712,
+    "samples": 82176,
+    "peakDb": -2.5,
+    "rmsDb": -17.09,
+    "lufs": -14.59
+  },
+  "chest-lid-creak": {
+    "seconds": 0.862,
+    "samples": 41376,
+    "peakDb": -2.5,
+    "rmsDb": -23.59,
+    "lufs": -22.85
+  },
+  "chest-coin-burst": {
+    "seconds": 1.612,
+    "samples": 77376,
+    "peakDb": -2.5,
+    "rmsDb": -18.79,
+    "lufs": -15.61
+  },
+  "chain-rattle": {
+    "seconds": 5.1,
+    "samples": 244800,
+    "peakDb": -3,
+    "rmsDb": -19.65,
+    "lufs": -17.91,
+    "loopStart": 0.15,
+    "loopEnd": 4.95
+  },
+  "ambience-surface": {
+    "seconds": 24.3,
+    "samples": 1166400,
+    "peakDb": -7,
+    "rmsDb": -22.21,
+    "lufs": -22,
+    "loopStart": 0.15,
+    "loopEnd": 24.15
+  },
+  "ambience-underwater": {
+    "seconds": 24.3,
+    "samples": 1166400,
+    "peakDb": -7,
+    "rmsDb": -20.19,
+    "lufs": -22.16,
+    "loopStart": 0.15,
+    "loopEnd": 24.15
+  }
+}

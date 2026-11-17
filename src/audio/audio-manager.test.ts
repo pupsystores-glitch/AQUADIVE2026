@@ -2182,3 +2182,76 @@ describe("decode: exactly-once settlement", () => {
     );
   });
 });
+
+describe("IOS-AUDIO: a resume left pending outside a user activation (risk 17)", () => {
+  /** A touch tap: unlock() in `pointerdown` (no activation), then in `touchend` (activation). */
+  const touchTap = async (
+    audio: AudioManager<Cue>,
+    context: () => FakeAudioContext | undefined,
+  ) => {
+    const first = audio.unlock();
+    const ctx = context()!;
+    ctx.userActivation = true;
+    const second = audio.unlock();
+    ctx.userActivation = false;
+    await Promise.all([first, second]);
+  };
+
+  it("a later gesture resumes again, and the one context runs", async () => {
+    const { audio, context, createContext } = setup({ context: { resumeMode: "activation" } });
+    await touchTap(audio, () => context);
+    expect(createContext).toHaveBeenCalledTimes(1);
+    expect(context.resumeCalls).toBe(2);
+    expect(context.state).toBe("running");
+    audio.play("clink");
+    expect(voiceSources(context)).toHaveLength(1);
+    expect(routeOf(voiceSources(context)[0]).at(-1)).toBe(context.destination);
+  });
+
+  it("the second gesture primes again inside the activation", async () => {
+    const { audio, context } = setup({ context: { resumeMode: "activation" } });
+    await touchTap(audio, () => context);
+    expect(primesOf(context)).toHaveLength(2);
+  });
+
+  it("a running context is not resumed again by later gestures", async () => {
+    const { audio, context } = setup({ context: { resumeMode: "activation" } });
+    await touchTap(audio, () => context);
+    await audio.unlock();
+    await audio.unlock();
+    expect(context.resumeCalls).toBe(2);
+    expect(primesOf(context)).toHaveLength(2);
+  });
+
+  it("a mute's suspend is not taken for a stalled resume", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    audio.setMuted(true);
+    expect(context.state).toBe("suspended");
+    const calls = context.resumeCalls;
+    await audio.unlock();
+    expect(context.resumeCalls).toBe(calls);
+    expect(context.state).toBe("suspended");
+  });
+
+  it("a host suspend (hidden page) is not taken for a stalled resume", async () => {
+    const { audio, context } = setup();
+    await audio.unlock();
+    audio.suspend();
+    const calls = context.resumeCalls;
+    await audio.unlock();
+    expect(context.resumeCalls).toBe(calls);
+  });
+
+  it("a waiting loop and a waiting decode start once, not twice", async () => {
+    const { audio, context } = setup({ context: { resumeMode: "activation" } });
+    const handle = audio.loop("bed");
+    const decoded = audio.decode(new ArrayBuffer(8));
+    await touchTap(audio, () => context);
+    expect(voiceSources(context)).toHaveLength(1);
+    expect(context.decodes).toHaveLength(1);
+    context.decodes[0].succeed(fakeBuffer(1));
+    expect(await decoded).not.toBeNull();
+    expect(handle.isAudible()).toBe(true);
+  });
+});

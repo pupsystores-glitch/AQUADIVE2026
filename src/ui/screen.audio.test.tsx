@@ -133,6 +133,10 @@ describe("screen audio — the first gesture", () => {
   });
 
   it("without Web Audio (plain jsdom) the game plays a round silently, with one warning", async () => {
+    // A6: the production manifest has assets and jsdom serves none, so the
+    // asset requests stay pending here. A missing file is covered in
+    // audio-host.test.ts and sound-bank.test.ts.
+    vi.stubGlobal("fetch", () => new Promise<never>(() => {}));
     const h = await bootScreen({ crashPoint: 2 });
     h.mount();
     await h.user.click(slotButton(/^PLACE BET/));

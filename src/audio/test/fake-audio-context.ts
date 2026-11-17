@@ -32,6 +32,11 @@
 // and leaves the state unchanged until the test calls `completeResume()`
 // (state "running", then every pending resume resolves) or `failResume()`
 // (every pending resume rejects; the state is unchanged).
+//
+// IOS-AUDIO: `resumeMode` "activation" models WebKit's gesture rule. While
+// `userActivation` is false, `resume()` stays pending and the state does not
+// change, with no `statechange`. While it is true, the context starts
+// running and every pending resume resolves.
 
 import type {
   AudioBufferLike,
@@ -42,6 +47,7 @@ import type {
   BiquadFilterNodeLike,
   DynamicsCompressorNodeLike,
   GainNodeLike,
+  MediaElementLike,
 } from "../audio-manager";
 
 export type Automation =
@@ -207,6 +213,13 @@ export class FakeAudioBufferSourceNode extends FakeAudioNode implements AudioBuf
   }
 }
 
+/** M-OWN: the node `createMediaElementSource` returns; it remembers its element. */
+export class FakeMediaElementSourceNode extends FakeAudioNode {
+  constructor(readonly element: MediaElementLike) {
+    super("mediaElementSource");
+  }
+}
+
 /** How `decodeAudioData` reports: see the file header. */
 export type FakeDecodeStyle = "both" | "promise" | "callback";
 
@@ -264,7 +277,7 @@ export class FakeDecodeRequest {
 }
 
 /** How `resume()` settles: see the file header (A4a.1). */
-export type FakeResumeMode = "immediate" | "manual";
+export type FakeResumeMode = "immediate" | "manual" | "activation";
 
 export interface FakeAudioContextOptions {
   /** Initial state; a real context created outside a gesture starts "suspended". */
@@ -300,6 +313,10 @@ export class FakeAudioContext implements AudioContextLike {
   readonly compressors: FakeDynamicsCompressorNode[] = [];
   readonly sources: FakeAudioBufferSourceNode[] = [];
   readonly buffers: FakeAudioBuffer[] = [];
+  /** M-OWN: every media element source node created. */
+  readonly mediaSources: FakeMediaElementSourceNode[] = [];
+  /** When true, `createMediaElementSource` throws. */
+  throwOnMediaSource = false;
 
   private readonly stateListeners = new Set<() => void>();
   /** "manual" resume mode: the settlers of every resume still in progress. */
@@ -344,6 +361,17 @@ export class FakeAudioContext implements AudioContextLike {
     return buffer;
   }
 
+  /** Like the browser: an element can have one source node, ever. */
+  createMediaElementSource(element: MediaElementLike): FakeMediaElementSourceNode {
+    if (this.throwOnMediaSource) throw new Error("InvalidStateError: no media element source");
+    if (this.mediaSources.some((node) => node.element === element)) {
+      throw new Error("InvalidStateError: the element already has a source node");
+    }
+    const node = new FakeMediaElementSourceNode(element);
+    this.mediaSources.push(node);
+    return node;
+  }
+
   decodeAudioData(
     audioData: ArrayBuffer,
     successCallback?: (decodedData: AudioBufferLike) => void,
@@ -364,12 +392,26 @@ export class FakeAudioContext implements AudioContextLike {
     this.resumeCalls++;
     if (this.state === "closed") return Promise.reject(new Error("InvalidStateError: closed"));
     if (this.rejectResume) return Promise.reject(new Error("NotAllowedError: no user gesture"));
-    if (this.resumeMode === "manual") {
+    if (
+      this.resumeMode === "manual" ||
+      (this.resumeMode === "activation" && !this.userActivation)
+    ) {
       return new Promise<void>((resolve, reject) => this.pendingResumes.push({ resolve, reject }));
     }
     this.setState("running");
+    if (this.resumeMode === "activation") {
+      // WebKit: the context starts, and every resume still waiting resolves with it.
+      for (const pending of this.pendingResumes.splice(0)) pending.resolve();
+    }
     return Promise.resolve();
   }
+
+  /**
+   * IOS-AUDIO, "activation" resume mode: whether the event being handled is a
+   * user activation. A touch's `pointerdown` is not one (HTML: only a mouse
+   * `pointerdown` is); its `touchend` and `click` are.
+   */
+  userActivation = false;
 
   /** "manual" resume mode: resume() calls not settled yet. */
   get pendingResumeCount(): number {

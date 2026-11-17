@@ -32,7 +32,12 @@
 //   suspend, visible-again resume "if unlocked and not muted").
 // - Unlock (§3.3 step 2, §10): `unlock()` must be called inside a user
 //   gesture. It creates or resumes the context and plays a 1-sample silent
-//   buffer (the iOS prime) synchronously, inside that gesture.
+//   buffer (the iOS prime) synchronously, inside that gesture. IOS-AUDIO
+//   (risk 17): while the manager is unlocked but its resume() has not taken
+//   effect (the context is not running although "running" was asked for), a
+//   later `unlock()` repeats the prime and the resume inside its gesture.
+//   WebKit leaves a resume() outside a user activation pending, and a touch's
+//   `pointerdown` is not an activation.
 // - Interruption (§3.3 step 5): an iOS `interrupted` state, or a suspend
 //   the manager did not ask for, re-locks the manager and calls
 //   `onUnlockRequired`, so the host can re-arm its gesture listeners. If the
@@ -46,6 +51,18 @@
 //   on a decoding error, an unsupported environment or `dispose()`. A
 //   decoder result that arrives after that is ignored.
 //
+// - The music stream (M-OWN, docs/08 §7.6): `stream()` plays one long file
+//   through one media element and one `MediaElementAudioSourceNode` into a
+//   bus. The file is streamed, never decoded into an AudioBuffer, and it
+//   takes no slot of the voice pools. The manager holds at most one stream.
+//   The element and its node are created lazily, the first time the stream
+//   may play: inside `unlock()` (a user gesture) or later. The element plays
+//   only while the manager is unlocked, not muted and not host-suspended, and
+//   the caller has not held it; otherwise it is paused and keeps its
+//   position. A refused `play()` and a loading error are retried inside the
+//   next `unlock()` gesture. A stream failure never throws and never affects
+//   voices.
+//
 // Not here (later steps, docs/08 §12): fetching and caching buffers and the
 // cue manifest (A2 — injected through `resolveCue`), the gesture and
 // visibility listeners and every default sound setting (A4, the session),
@@ -53,7 +70,8 @@
 // It never touches `navigator.audioSession` (Q15 is open; the browser
 // default applies).
 //
-// Clock: only `context.currentTime`. No wall clock, no timers.
+// Clock: only `context.currentTime`. No wall clock, no timers. (A held
+// stream's fade ends on the element's own `timeupdate` event.)
 // Imports: none (docs/08 §6 import rule).
 
 /** The four gain buses (docs/08 §3.2). `master` sums the other three. */
@@ -102,6 +120,12 @@ export const MAX_PLAYBACK_RATE = 4;
 
 /** Lowest low-pass cutoff `LoopHandle.setFilter` accepts, in Hz. The highest is the context's Nyquist frequency. */
 export const MIN_FILTER_HZ = 20;
+
+/** Fade-out of a held stream (`StreamHandle.setActive(false)`) before its element pauses, in seconds. */
+export const STREAM_HOLD_FADE_S = 0.05;
+
+/** How many loading errors of a stream are retried, each inside a later `unlock()` gesture. */
+export const STREAM_MAX_RETRIES = 2;
 
 /** Limiter settings for the `DynamicsCompressor` after `master` (docs/08 §3.2). */
 export const LIMITER_SETTINGS = {
@@ -165,6 +189,24 @@ export interface AudioBufferSourceNodeLike extends AudioNodeLike {
   stop(when?: number): void;
 }
 
+/**
+ * The media element surface the music stream uses (M-OWN). `HTMLAudioElement`
+ * satisfies it; the test fake is `src/audio/test/fake-media-element.ts`.
+ */
+export interface MediaElementLike {
+  src: string;
+  loop: boolean;
+  preload: string;
+  readonly paused: boolean;
+  /** Current browsers return a promise; older ones return nothing. */
+  play(): PromiseLike<void> | void;
+  pause(): void;
+  load(): void;
+  removeAttribute(name: string): void;
+  addEventListener(type: string, listener: () => void): void;
+  removeEventListener(type: string, listener: () => void): void;
+}
+
 export interface AudioContextLike {
   readonly currentTime: number;
   readonly sampleRate: number;
@@ -176,6 +218,8 @@ export interface AudioContextLike {
   createDynamicsCompressor(): DynamicsCompressorNodeLike;
   createBufferSource(): AudioBufferSourceNodeLike;
   createBuffer(numberOfChannels: number, length: number, sampleRate: number): AudioBufferLike;
+  /** M-OWN: the stream's source node. Optional: without it the stream stays silent. */
+  createMediaElementSource?(element: MediaElementLike): AudioNodeLike;
   /**
    * Both forms of the Web Audio API: current browsers return a promise and
    * also call the callbacks; older WebKit only calls the callbacks and
@@ -274,6 +318,40 @@ export interface LoopHandle {
   isAudible(): boolean;
 }
 
+/** A streamed file (M-OWN, docs/08 §7.6): played through a media element, never decoded as a whole. */
+export interface StreamOptions {
+  /** The file's URL. */
+  readonly url: string;
+  readonly bus: VoiceBus;
+  /** The stream's own level, 0..1, default 1. `StreamHandle.setGain` multiplies it. */
+  readonly gain?: number;
+  /** Native media-element looping. Default: false. */
+  readonly loop?: boolean;
+}
+
+/**
+ * Control of the stream (M-OWN, docs/08 §7.6). Every method is a no-op once
+ * the stream has stopped. No method throws.
+ */
+export interface StreamHandle {
+  /** Gain, clamped to 0..1, multiplied with the stream's own gain. Applied smoothly. */
+  setGain(gain: number): void;
+  /**
+   * false: hold the stream. It fades out over `STREAM_HOLD_FADE_S`, then its
+   * element pauses and keeps its position. true: play again from that
+   * position. A new stream is active.
+   */
+  setActive(active: boolean): void;
+  /** Ends the stream and releases its element and nodes. A later `stream()` starts a new one. */
+  stop(): void;
+  /**
+   * True while the element was asked to play and is not paused, and the
+   * context is unlocked, not muted, not host-suspended and "running". Like
+   * `LoopHandle.isAudible()`, a pure status query, not a measurement of sound.
+   */
+  isAudible(): boolean;
+}
+
 export interface AudioManager<CueKey extends string = string> {
   /** Must be called inside a user gesture. Never rejects. */
   unlock(): Promise<void>;
@@ -292,6 +370,15 @@ export interface AudioManager<CueKey extends string = string> {
    * gain 1, rate 1 and a transparent filter, as before.
    */
   loop(cue: CueKey, options?: LoopOptions): LoopHandle;
+  /**
+   * The streamed file (M-OWN, docs/08 §7.6), for music. The manager holds at
+   * most one stream: while one is live, this returns its handle and ignores
+   * `options`. The element is created and starts loading only once the
+   * stream may play (unlocked, not muted, not host-suspended). Inert once
+   * disposed or when Web Audio is unavailable; silent when the environment
+   * has no media element or no `createMediaElementSource`.
+   */
+  stream(options: StreamOptions): StreamHandle;
   /**
    * Decodes compressed audio (for example a fetched `.m4a`) with the
    * manager's single context. Never rejects; resolves `null` on a decoding
@@ -315,6 +402,24 @@ export interface AudioManagerOptions<CueKey extends string> {
   createContext?: () => AudioContextLike | null;
   /** Called when the context is interrupted or suspended by the system, so the host can re-arm its gesture unlock (docs/08 §3.3 step 5). */
   onUnlockRequired?: () => void;
+  /**
+   * M-OWN: the stream's media element factory, called at most once per
+   * stream, when it first may play. `null` means streaming is unavailable
+   * (the stream stays silent). Default: `createBrowserMediaElement`.
+   */
+  createMediaElement?: () => MediaElementLike | null;
+}
+
+/**
+ * The production media element factory (M-OWN). Resolves `Audio` at call
+ * time, so importing this module never touches `window` (SSR). The element
+ * is never added to the document.
+ */
+export function createBrowserMediaElement(): MediaElementLike | null {
+  const Ctor = (globalThis as { Audio?: typeof Audio }).Audio;
+  if (typeof Ctor !== "function") return null;
+  const element: MediaElementLike = new Ctor();
+  return element;
 }
 
 /**
@@ -407,6 +512,43 @@ interface DecodeRequest {
   readonly settle: (buffer: AudioBufferLike | null) => void;
 }
 
+/** The one `stream()` request, from the call until its handle stops (M-OWN). */
+interface Stream {
+  readonly url: string;
+  readonly bus: VoiceBus;
+  /** The stream's own gain; the handle gain multiplies it. */
+  readonly baseGain: number;
+  readonly loop: boolean;
+  /** "idle": no element yet. "failed": a loading error; retried inside a gesture. */
+  status: "idle" | "live" | "failed" | "ended";
+  /** The caller wants it playing (true) or held (false). */
+  active: boolean;
+  /** The handle gain, 0..1. */
+  level: number;
+  element: MediaElementLike | null;
+  source: AudioNodeLike | null;
+  gain: GainNodeLike | null;
+  /** The last request to the element: play (true) or pause (false). */
+  wantsPlay: boolean;
+  /** `play()` was refused, or the system paused the element: retried inside the next gesture. */
+  blocked: boolean;
+  /** Context time at which a hold's fade-out ends; `null` while no hold fades. */
+  holdUntil: number | null;
+  /** Loading errors so far. */
+  errors: number;
+  /** The element's listeners, kept for removal. */
+  listeners: { readonly type: string; readonly listener: () => void }[];
+  /** The one handle of this stream. */
+  handle: StreamHandle | null;
+}
+
+const INERT_STREAM: StreamHandle = Object.freeze({
+  setGain: () => {},
+  setActive: () => {},
+  stop: () => {},
+  isAudible: () => false,
+});
+
 const INERT_HANDLE: LoopHandle = Object.freeze({
   setGain: () => {},
   setRate: () => {},
@@ -456,6 +598,7 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
   private readonly resolveCue: CueResolver<CueKey>;
   private readonly createContext: () => AudioContextLike | null;
   private readonly onUnlockRequired: (() => void) | undefined;
+  private readonly createMediaElement: () => MediaElementLike | null;
 
   private context: AudioContextLike | null = null;
   private graph: Graph | null = null;
@@ -491,6 +634,10 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
   /** Every unsettled `decode()` request, waiting or started, in request order. */
   private readonly decodes = new Set<DecodeRequest>();
 
+  /** The stream (M-OWN): at most one, from `stream()` until its handle stops or `dispose()`. */
+  private currentStream: Stream | null = null;
+  private readonly streamFailuresLogged = new Set<string>();
+
   private resumeFailureLogged = false;
   private readonly resolveFailuresLogged = new Set<string>();
 
@@ -498,10 +645,20 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     this.resolveCue = options.resolveCue;
     this.createContext = options.createContext ?? createBrowserAudioContext;
     this.onUnlockRequired = options.onUnlockRequired;
+    this.createMediaElement = options.createMediaElement ?? createBrowserMediaElement;
   }
 
   unlock(): Promise<void> {
-    if (this.disposed || this.unlocked) return Promise.resolve();
+    if (this.disposed) return Promise.resolve();
+    if (this.unlocked && !this.resumeStalled()) {
+      // Already unlocked: this gesture retries a refused or failed stream (M-OWN).
+      this.syncStream(true);
+      return Promise.resolve();
+    }
+    // Risk 17 (IOS-AUDIO): an earlier unlock() may have run in an event that
+    // is not a user activation (a touch's `pointerdown`), so its resume() is
+    // still pending and the context still suspended. This gesture repeats the
+    // gesture-critical steps below, so the context can start now.
     const context = this.ensureContext();
     if (!context) return Promise.resolve();
 
@@ -521,12 +678,16 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     // gesture-critical prime and resume. So do the waiting loops.
     this.startWaitingDecodes(context);
     this.promotePending();
+    // The stream's play() also runs inside the gesture (M-OWN). It is heard
+    // only once the context runs: the element feeds the graph, not the output.
+    this.syncStream(true);
     return resumed.then(
       () => this.applyRunState(),
       (error: unknown) => {
         if (this.disposed) return;
         this.unlocked = false;
         this.requested = null;
+        this.syncStream();
         this.logResumeFailure(error);
       },
     );
@@ -544,6 +705,7 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     this.muted = muted === true;
     this.applyMasterGain();
     this.applyRunState();
+    this.syncStream();
   }
 
   play(cue: CueKey, opts?: PlayOptions): void {
@@ -574,6 +736,44 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     return this.handleFor(request);
   }
 
+  stream(options: StreamOptions): StreamHandle {
+    if (this.disposed || this.unsupported) return INERT_STREAM;
+    const live = this.currentStream;
+    if (live?.handle) return live.handle; // one stream, one element (M-OWN)
+    if (
+      typeof options !== "object" ||
+      options === null ||
+      typeof options.url !== "string" ||
+      options.url.length === 0 ||
+      !isVoiceBus(options.bus)
+    ) {
+      return INERT_STREAM;
+    }
+    const stream: Stream = {
+      url: options.url,
+      bus: options.bus,
+      baseGain: unitGain(options.gain, 1),
+      loop: options.loop === true,
+      status: "idle",
+      active: true,
+      level: 1,
+      element: null,
+      source: null,
+      gain: null,
+      wantsPlay: false,
+      blocked: false,
+      holdUntil: null,
+      errors: 0,
+      listeners: [],
+      handle: null,
+    };
+    const handle = this.streamHandleFor(stream);
+    stream.handle = handle;
+    this.currentStream = stream;
+    this.syncStream();
+    return handle;
+  }
+
   decode(data: ArrayBuffer): Promise<AudioBufferLike | null> {
     if (this.disposed || this.unsupported) return Promise.resolve(null);
     return new Promise<AudioBufferLike | null>((resolve) => {
@@ -597,12 +797,14 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
     if (this.disposed) return;
     this.hostSuspended = true;
     this.applyRunState();
+    this.syncStream();
   }
 
   resume(): void {
     if (this.disposed) return;
     this.hostSuspended = false;
     this.applyRunState();
+    this.syncStream();
   }
 
   dispose(): void {
@@ -619,6 +821,7 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
       this.finishVoice(voice);
     }
     this.settleAllDecodes();
+    if (this.currentStream) this.endStream(this.currentStream);
     const context = this.context;
     const graph = this.graph;
     this.context = null;
@@ -793,6 +996,7 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
       this.unlocked = false;
       this.interrupted = true;
       this.requested = null;
+      this.syncStream();
       try {
         this.onUnlockRequired?.();
       } catch (error) {
@@ -805,13 +1009,248 @@ class WebAudioManager<CueKey extends string> implements AudioManager<CueKey> {
       this.requested = "running";
       this.applyRunState();
       this.refresh();
+      this.syncStream();
     }
   };
+
+  /**
+   * Risk 17 (IOS-AUDIO): the manager is unlocked and asked the context to
+   * run, but the context is not running. WebKit leaves a resume() made
+   * outside a user activation pending, with the state "suspended" and no
+   * `statechange`. A mute or a host suspend asks for "suspended", so it is
+   * never mistaken for a stalled resume.
+   */
+  private resumeStalled(): boolean {
+    const context = this.context;
+    if (!context || this.requested !== "running") return false;
+    return context.state !== "running" && context.state !== "closed";
+  }
 
   private logResumeFailure(error: unknown): void {
     if (this.resumeFailureLogged) return;
     this.resumeFailureLogged = true;
     console.warn("[audio] the audio context could not be resumed; staying silent.", error);
+  }
+
+  // ----- the music stream (M-OWN, docs/08 §7.6) -----
+
+  private logStreamFailure(kind: string, error: unknown): void {
+    if (this.streamFailuresLogged.has(kind)) return;
+    this.streamFailuresLogged.add(kind);
+    console.warn(`[audio] stream: ${kind}; the stream stays silent.`, error ?? "");
+  }
+
+  /**
+   * Brings the stream's element in line with the run state: play while the
+   * caller wants it and the manager is audible, pause otherwise. Never throws.
+   * `inGesture`: called from `unlock()`, so a refused `play()` and a loading
+   * error may be retried.
+   */
+  private syncStream(inGesture = false): void {
+    const stream = this.currentStream;
+    if (!stream || stream.status === "ended") return;
+    try {
+      const context = this.context;
+      const graph = this.graph;
+      if (!context || !graph) return;
+      if (stream.active && this.audible()) {
+        if (stream.status === "failed" && !this.reloadStream(stream, inGesture)) return;
+        if (stream.status === "idle" && !this.buildStream(stream, context, graph)) return;
+        const element = stream.element;
+        if (!element || !stream.gain) return;
+        if (stream.holdUntil !== null) {
+          // A hold was fading out: fade back in.
+          stream.holdUntil = null;
+          this.rampTo(stream.gain.gain, stream.baseGain * stream.level);
+        }
+        if (!stream.wantsPlay) {
+          // Outside a gesture a blocked stream waits: only a gesture may retry it.
+          if (!stream.blocked || inGesture) this.playStream(stream, element);
+        } else if (inGesture && element.paused) {
+          this.playStream(stream, element);
+        }
+        return;
+      }
+      const element = stream.element;
+      if (!element || !stream.wantsPlay) return;
+      if (!stream.active && this.audible() && context.state === "running") {
+        // Held while sounding: fade out first; `timeupdate` pauses it after the fade.
+        const now = context.currentTime;
+        if (stream.holdUntil === null) {
+          stream.holdUntil = now + STREAM_HOLD_FADE_S;
+          if (stream.gain) {
+            const param = stream.gain.gain;
+            param.cancelScheduledValues(now);
+            param.setValueAtTime(param.value, now);
+            param.setTargetAtTime(0, now, STREAM_HOLD_FADE_S / FADE_TIME_CONSTANTS);
+          }
+        }
+        if (now < stream.holdUntil) return;
+      }
+      stream.wantsPlay = false;
+      stream.holdUntil = null;
+      element.pause();
+    } catch (error) {
+      this.logStreamFailure("a media element call failed", error);
+    }
+  }
+
+  /** Creates the element, its one source node and its gain. False: streaming is unavailable. */
+  private buildStream(stream: Stream, context: AudioContextLike, graph: Graph): boolean {
+    let element: MediaElementLike | null = null;
+    let failure: unknown = null;
+    try {
+      element =
+        typeof context.createMediaElementSource === "function" ? this.createMediaElement() : null;
+    } catch (error) {
+      failure = error;
+    }
+    if (!element || typeof context.createMediaElementSource !== "function") {
+      // No element is the environment's or the host's answer (no `Audio`, or
+      // music held back on purpose): silent, and logged only if it threw.
+      this.endStream(stream);
+      if (failure !== null) this.logStreamFailure("streaming is unavailable", failure);
+      return false;
+    }
+    stream.element = element;
+    try {
+      element.preload = "auto";
+      element.loop = stream.loop;
+      const listen = (type: string, listener: () => void) => {
+        element.addEventListener(type, listener);
+        stream.listeners.push({ type, listener });
+      };
+      listen("error", () => this.onStreamError(stream));
+      listen("pause", () => this.onStreamPaused(stream));
+      listen("timeupdate", () => this.syncStream());
+      // One source node per element, for the element's whole life.
+      const source = context.createMediaElementSource(element);
+      stream.source = source;
+      const gain = context.createGain();
+      stream.gain = gain;
+      gain.gain.value = stream.baseGain * stream.level;
+      source.connect(gain);
+      gain.connect(graph.buses[stream.bus]);
+      element.src = stream.url;
+      stream.status = "live";
+      return true;
+    } catch (error) {
+      this.endStream(stream);
+      this.logStreamFailure("the media element could not be set up", error);
+      return false;
+    }
+  }
+
+  /** After a loading error: loads again, inside a gesture only, at most STREAM_MAX_RETRIES times. */
+  private reloadStream(stream: Stream, inGesture: boolean): boolean {
+    const element = stream.element;
+    if (!inGesture || !element || stream.errors > STREAM_MAX_RETRIES) return false;
+    stream.status = "live";
+    element.load();
+    return true;
+  }
+
+  private playStream(stream: Stream, element: MediaElementLike): void {
+    stream.wantsPlay = true;
+    stream.blocked = false;
+    const refused = (error: unknown) => {
+      if (stream.status === "ended" || !stream.wantsPlay) return; // our own pause() aborted it
+      if ((error as { name?: unknown } | null)?.name === "AbortError") return;
+      // No user activation yet (NotAllowedError) or no playable source: the next gesture retries.
+      stream.blocked = true;
+      stream.wantsPlay = false;
+    };
+    try {
+      const result = element.play();
+      if (result && typeof result.then === "function") result.then(undefined, refused);
+    } catch (error) {
+      refused(error);
+    }
+  }
+
+  private onStreamError(stream: Stream): void {
+    if (stream.status !== "live") return;
+    stream.status = "failed";
+    stream.errors++;
+    stream.wantsPlay = false;
+    stream.holdUntil = null;
+    this.logStreamFailure("the file could not be loaded", stream.url);
+  }
+
+  /** A pause the manager did not ask for (the system, a media key): the next gesture plays again. */
+  private onStreamPaused(stream: Stream): void {
+    const element = stream.element;
+    if (stream.status !== "live" || !stream.wantsPlay || !element || !element.paused) return;
+    stream.wantsPlay = false;
+    stream.blocked = true;
+  }
+
+  /** Releases the element, its listeners and its nodes. The stream never plays again. */
+  private endStream(stream: Stream): void {
+    stream.status = "ended";
+    stream.wantsPlay = false;
+    stream.holdUntil = null;
+    if (this.currentStream === stream) this.currentStream = null;
+    const { element, source, gain } = stream;
+    stream.element = null;
+    stream.source = null;
+    stream.gain = null;
+    const release = (step: () => void) => {
+      try {
+        step();
+      } catch {
+        // releasing is best effort
+      }
+    };
+    if (element) {
+      for (const { type, listener } of stream.listeners.splice(0)) {
+        release(() => element.removeEventListener(type, listener));
+      }
+      release(() => element.pause());
+      // Drops the network request and the decoder.
+      release(() => element.removeAttribute("src"));
+      release(() => element.load());
+    }
+    if (source) release(() => source.disconnect());
+    if (gain) release(() => gain.disconnect());
+  }
+
+  private streamHandleFor(stream: Stream): StreamHandle {
+    return {
+      setGain: (gain) => {
+        if (stream.status === "ended" || typeof gain !== "number" || !Number.isFinite(gain)) {
+          return;
+        }
+        stream.level = clamp(gain, 0, 1);
+        // A hold's fade-out owns the gain until the stream is active again.
+        if (stream.gain && stream.holdUntil === null && stream.active) {
+          this.rampTo(stream.gain.gain, stream.baseGain * stream.level);
+        }
+      },
+      setActive: (active) => {
+        if (stream.status === "ended") return;
+        const next = active === true;
+        if (next === stream.active) return;
+        stream.active = next;
+        if (next && stream.gain && stream.holdUntil === null) {
+          // Back from a completed hold: the gain was faded to 0.
+          this.rampTo(stream.gain.gain, stream.baseGain * stream.level);
+        }
+        this.syncStream();
+      },
+      stop: () => {
+        if (stream.status !== "ended") this.endStream(stream);
+      },
+      isAudible: () =>
+        !this.disposed &&
+        stream.status === "live" &&
+        stream.wantsPlay &&
+        stream.element !== null &&
+        !stream.element.paused &&
+        this.audible() &&
+        this.context !== null &&
+        this.context.state === "running",
+    };
   }
 
   // ----- voices (A1.2, docs/08 §7.2) -----

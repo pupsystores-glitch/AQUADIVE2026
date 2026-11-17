@@ -2,7 +2,8 @@
 // §11). Success, failure, deduplication and concurrency, eviction and
 // disposal with stale completions, SSR safety, and integration with the real
 // AudioManager over the fake context. Node environment; no new dependency.
-// Every asset URL is a `test://` fixture: no real asset exists (docs/08 §8).
+// Every asset URL is a `test://` fixture; the production files (A6) are
+// checked in manifest.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import {
   LOOP_VOICES,
@@ -256,10 +257,14 @@ describe("unavailable cues", () => {
     expect(env.fetch.requests).toHaveLength(0);
   });
 
-  it("with the real manifest, every cue is unavailable and nothing is fetched (A2: no assets)", async () => {
+  it("with a no-asset manifest, every cue is unavailable and nothing is fetched", async () => {
     const fetch = new FakeFetch();
     const decoder = new ManualDecoder();
-    const bank = createSoundBank({ manifest: SOUND_MANIFEST, decoder, fetch: fetch.fetch });
+    // The production cue list with every asset removed (an explicit fixture since A6).
+    const manifest = Object.fromEntries(
+      CUE_IDS.map((id) => [id, { ...SOUND_MANIFEST[id], asset: null }]),
+    ) as Record<CueId, CueDefinition>;
+    const bank = createSoundBank({ manifest, decoder, fetch: fetch.fetch });
     const results = await bank.loadAll();
     expect(results).toHaveLength(CUE_IDS.length);
     expect(new Set(results)).toEqual(new Set(["unavailable"]));
