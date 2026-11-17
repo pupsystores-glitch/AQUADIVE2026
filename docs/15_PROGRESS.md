@@ -70,9 +70,40 @@ M2 (the rest of integer minor units) is still deferred.
 
 ---
 
+## R1 — Phase 7 documentation reconciliation with Git (documentation only)
+
+### R1 — DONE 2026-11-17 (WORKING TREE, UNCOMMITTED)
+
+- **Task:** owner instruction of 2026-11-17 ("Roadmap Reconciliation and V4 Implementation Authorization", step 1).
+- **Verified before any change:** branch `develop`; `HEAD` `d1ccb9b` equal to `origin/develop`; the only local changes were docs 08, 14, 15 and 16 (the start of this reconciliation, kept and completed).
+- **Recorded:**
+
+| Step(s) | Commit | Pushed |
+|---|---|---|
+| A4b | `f668d49` | yes |
+| E-X6 (S1–S3) | `2c4d4bf` | yes |
+| E-X7 | `c66c279` | yes |
+| V1 | `a9bdf35` | yes |
+| V2 | `3878865` | yes |
+| D-T1 | `0bd6ee2` | yes |
+| V3 | `a9e9fdd` | yes |
+| A6, A6.1, A-OWN (A-OWN.1, A-OWN.2), M-OWN, IOS-AUDIO | `6133636` | yes |
+| LA1 | `b5701c6` | yes |
+| CH1, BET-1x2 | `d1ccb9b` | yes |
+
+- **Historical exception:** `6133636` and `d1ccb9b` each combine several logical steps; `d1ccb9b` was made outside this agent's sessions. Pushed history is not rewritten, amended, squashed, reset or rebased (AGENTS.md). Section headings below that say "WORKING TREE, UNCOMMITTED", "COMMITTED LOCALLY" or "NOT PUSHED" for these steps are historical for their Git status only.
+- **Owner acceptance:** CH1 and F8 visually approved 2026-11-17 (CH1 section below).
+- **A5:** the SOUND and MUSIC switches implemented in LA1 satisfy the sound-control interface the owner currently requests; recorded as implemented. Optional volume sliders and the in-app reduced-motion toggle (Q12) stay open, tracked separately. The complete audio QA and the licensing work are **not** closed.
+- **Still pending:** audio listening acceptance; the physical-iPhone test; physical-device and performance QA (Q14); rights confirmations (CREDITS §6, §8, §9.5); ratification of the LA1 `src/rendering/assets.ts` loader change.
+- **Files:** M `docs/08_AUDIO_FX_ARCHITECTURE.md` (Q4, Q10 note, §12 rows V1–V3, A6, A5, change log), `docs/14_TASKS.md` (Phase 7 table; IOS-AUDIO and BET-1x2 rows added; R1 note), `docs/15_PROGRESS.md` (this section and the CH1 approval), `docs/16_CURRENT_TASK.md` (status line, R1 and CH1 sections). No source file.
+
 ## CH1 — Premium bonus chests and centred multiplier reveal (Phase 7)
 
-### CH1 — DELIVERED 2026-11-17 (WORKING TREE, UNCOMMITTED); AWAITING THE OWNER'S VISUAL ACCEPTANCE
+### CH1 — VISUALLY APPROVED BY THE OWNER 2026-11-17; COMMITTED IN `d1ccb9b`, PUSHED
+
+*(Until the approval this heading read: "DELIVERED 2026-11-17 (WORKING TREE, UNCOMMITTED); AWAITING THE OWNER'S VISUAL ACCEPTANCE".)*
+
+- **Owner acceptance (2026-11-17):** the owner reviewed the redesigned chests and approved CH1's visual design and behaviour exactly as implemented: the three chest designs, their colours and positions, the selected-chest opening, the large centred gold multiplier, the reveal animations and gold FX, and the existing settlement behaviour. These are to be preserved unchanged. This approval also covers F8 (docs/08 §4.3, Q10). **Not part of this acceptance:** physical-device testing and performance (frame-time) measurement. Neither was performed or recorded for CH1.
 
 - Summary: the three bonus chests redrawn as one premium SVG family after the owner's references (gold frame, rivets, jewelled shields and lock plate, gold anchor with rope; ruby, sapphire and emerald wood). A pick opens exactly the chosen chest (lid flip, treasure heap, glow, rays, 12-glint burst, halo, pop) while the other two stay closed and dimmed; the multiplier appears large and centred in gold. F8 is delivered here within its docs/08 §4.3 spec.
 - Files: C `src/ui/components/TreasureChestArt.tsx`, `ChestReveal.tsx`, `ChestBurst.tsx`, `chest-fx.ts`, `src/ui/screen.chests.test.tsx`; M `src/ui/components/ChestPicker.tsx`, `icons.tsx` (old chest art removed), `src/ui/strings.ts` (`chests.revealCaption`), `src/styles.css` (CH1 block), `src/ui/screen.characterization.test.tsx` (one outline pin: the two new reveal text nodes).
