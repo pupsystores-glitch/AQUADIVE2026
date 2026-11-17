@@ -70,6 +70,16 @@ M2 (the rest of integer minor units) is still deferred.
 
 ---
 
+## CH1 — Premium bonus chests and centred multiplier reveal (Phase 7)
+
+### CH1 — DELIVERED 2026-11-17 (WORKING TREE, UNCOMMITTED); AWAITING THE OWNER'S VISUAL ACCEPTANCE
+
+- Summary: the three bonus chests redrawn as one premium SVG family after the owner's references (gold frame, rivets, jewelled shields and lock plate, gold anchor with rope; ruby, sapphire and emerald wood). A pick opens exactly the chosen chest (lid flip, treasure heap, glow, rays, 12-glint burst, halo, pop) while the other two stay closed and dimmed; the multiplier appears large and centred in gold. F8 is delivered here within its docs/08 §4.3 spec.
+- Files: C `src/ui/components/TreasureChestArt.tsx`, `ChestReveal.tsx`, `ChestBurst.tsx`, `chest-fx.ts`, `src/ui/screen.chests.test.tsx`; M `src/ui/components/ChestPicker.tsx`, `icons.tsx` (old chest art removed), `src/ui/strings.ts` (`chests.revealCaption`), `src/styles.css` (CH1 block), `src/ui/screen.characterization.test.tsx` (one outline pin: the two new reveal text nodes).
+- Architectural decisions: SVG over image assets (the references show closed chests only and the red one has fringe artifacts; vector keeps every size sharp and gives a real open state); one geometry for all three palettes, with the three-quarter view as a sheared side face and the right-hand view mirrored; motion in CSS on `transform`/`opacity` (the shine sweep animates one `background-position`), keyed off a `data-open` attribute; glint layout fixed in `chest-fx.ts` with the F8 cap of 16 asserted by test; reduced motion via `prefers-reduced-motion` (the V7 settings flag does not exist yet).
+- Risks: the reveal sits over the blurred "CASHED OUT" flash during the bonus (WinFlash is unchanged; the darker overlay keeps it faint); on very short landscape phones the reveal area above the chests is tight.
+- Validation: see docs/16 "Current: CH1".
+
 ## LA1 — Premium loading screen, dual audio controls, iPhone music (Phase 7)
 
 ### LA1 — DELIVERED 2026-11-17 (WORKING TREE, UNCOMMITTED); AWAITING THE OWNER'S iPHONE TEST

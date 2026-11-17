@@ -311,6 +311,7 @@ Each effect is subtle and adds to the scene without replacing anything.
 | F6 | **Crash:** at most 24 metal fragments at the chain break, a short dark vignette pulse, a camera shake of at most 6 px for ≈ 300 ms | Effects + Camera | FX queue, triggered by `crashed` | No shake, no pulse |
 | F7 | **Round-reset dip:** a fade to dark of ≈ 400 ms when betting reopens, replacing today's hard cut from the sea floor to the surface | Effects | FX queue, triggered by `bettingOpened` | Plain crossfade |
 | F8 | **Chest burst:** at most 16 gold glints when the chest opens | **DOM / CSS** in `ChestPicker` (it sits above the canvas) | `transform` / `opacity` animations only | Off |
+| | *F8 as implemented (CH1, 2026-11-17, pulled forward from V6 by the owner; awaiting visual acceptance):* 12 glints burst from the chosen chest (fixed fan over the upper 260°, 300 ms delay, 28 ms stagger, 900 ms each) and 4 twinkle on the centred multiplier: 16 in total (`CHEST_GLINT_CAP`, `src/ui/components/chest-fx.ts`) | DOM / CSS in `ChestBurst` / `ChestReveal` (inside `ChestPicker`) | `transform` / `opacity` only, one-shot | Off (`prefers-reduced-motion`) |
 
 **Explicitly excluded:** sunlight, caustics, extra bubble density, bloom, jackpot zoom (it would change the approved responsive framing), and **any change to the chain, anchor, ship or sea-floor drawing**. Chain tension is expressed through **audio only**, to protect the E-X4 chain.
 

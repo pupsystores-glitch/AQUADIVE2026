@@ -256,10 +256,10 @@ function crashRound(env: { events: FakeEvents; director: AudioDirector }, amount
 const CRASH_ROUND_LOG = [
   // Baseline frame: the surface bed starts silent (its initial gain, A4a.1) and fades in.
   "loop ambience-surface#1 gain=0.000",
-  // Both bets in one frame: two different cues, both play.
+  // Both bets in one frame: both slots play bet-clink-1 (BET-1x2), one play per slot.
   "#1 ambience-surface gain 0.500",
   "play bet-clink-1",
-  "play bet-clink-2",
+  "play bet-clink-1",
   // Dive: crossfade to the underwater bed, the rattle starts, each with its initial values (A4a.1).
   "#1 ambience-surface stop 1.200",
   "loop ambience-underwater#2 gain=0.000 filter=6000",
@@ -389,7 +389,7 @@ describe("golden cue log", () => {
       return audio.take().filter((line) => line.startsWith("play "));
     };
     expect(row(() => events.emit("betPlaced", ev.bet(0)), "idle")).toEqual(["play bet-clink-1"]);
-    expect(row(() => events.emit("betPlaced", ev.bet(1)), "idle")).toEqual(["play bet-clink-2"]);
+    expect(row(() => events.emit("betPlaced", ev.bet(1)), "idle")).toEqual(["play bet-clink-1"]);
     expect(row(() => events.emit("diveStarted", ev.dive()), "diving")).toEqual([
       "play chain-unspool",
       "play water-splash",
@@ -469,13 +469,13 @@ describe("Dual Bet cashouts and merging (Q7)", () => {
     ]);
   });
 
-  it("both bet slots in one frame play both clinks", () => {
+  it("both bet slots in one frame play two clinks, both bet-clink-1 (BET-1x2)", () => {
     const env = setup();
     env.director.update(frame());
     env.events.emit("betPlaced", ev.bet(1));
     env.events.emit("betPlaced", ev.bet(0));
     env.director.update(frame());
-    expect(env.audio.plays()).toEqual(["play bet-clink-2", "play bet-clink-1"]);
+    expect(env.audio.plays()).toEqual(["play bet-clink-1", "play bet-clink-1"]);
   });
 
   it("a repeated identical event in one frame merges (documented, not reachable in the engine today)", () => {
@@ -1498,7 +1498,7 @@ describe("chain rattle disabled by default (A6.1)", () => {
     "loop ambience-surface#1 gain=0.000",
     "#1 ambience-surface gain 0.500",
     "play bet-clink-1",
-    "play bet-clink-2",
+    "play bet-clink-1",
     "#1 ambience-surface stop 1.200",
     "loop ambience-underwater#2 gain=0.000 filter=6000",
     "play chain-unspool",
@@ -1625,11 +1625,15 @@ describe("tension creaks disabled by default (A-OWN)", () => {
     step("bonus", 1e6);
   }
 
-  it("lists both creaks as the one-shots disabled by default, and the host's skip list holds all three disabled cues", () => {
-    expect(DISABLED_ONE_SHOTS_BY_DEFAULT).toEqual(["tension-creak-1", "tension-creak-2"]);
+  it("lists both creaks (and, since BET-1x2, bet-clink-2) as the one-shots disabled by default, and the host's skip list holds every disabled cue", () => {
+    expect(DISABLED_ONE_SHOTS_BY_DEFAULT).toEqual([
+      "tension-creak-1",
+      "tension-creak-2",
+      "bet-clink-2",
+    ]);
     expect(Object.isFrozen(DISABLED_ONE_SHOTS_BY_DEFAULT)).toBe(true);
     expect([...DISABLED_CUES_BY_DEFAULT].sort()).toEqual(
-      ["chain-rattle", "tension-creak-1", "tension-creak-2"].sort(),
+      ["chain-rattle", "tension-creak-1", "tension-creak-2", "bet-clink-2"].sort(),
     );
     expect(Object.isFrozen(DISABLED_CUES_BY_DEFAULT)).toBe(true);
   });
@@ -1655,7 +1659,7 @@ describe("tension creaks disabled by default (A-OWN)", () => {
     crashRound(env);
     expect(env.audio.plays()).toEqual([
       "play bet-clink-1",
-      "play bet-clink-2",
+      "play bet-clink-1",
       "play chain-unspool",
       "play water-splash",
       "play chain-snap",
@@ -1797,5 +1801,87 @@ describe("floor-thud timed on the anchor's touchdown (A-OWN.1)", () => {
       "play treasure-shimmer",
       "play floor-thud",
     ]);
+  });
+});
+
+describe("BET-1x2 — both bet buttons play the approved BET 1 clink", () => {
+  const defaults = () => {
+    const events = new FakeEvents();
+    const audio = new RecordingAudio();
+    const director = createAudioDirector(events, audio);
+    director.update(frame());
+    audio.take();
+    return { events, audio, director };
+  };
+
+  it("BET 1 and BET 2 each play bet-clink-1; neither plays bet-clink-2", () => {
+    const env = defaults();
+    env.events.emit("betPlaced", ev.bet(0));
+    env.director.update(frame());
+    env.events.emit("betPlaced", ev.bet(1));
+    env.director.update(frame());
+    expect(env.audio.plays()).toEqual(["play bet-clink-1", "play bet-clink-1"]);
+  });
+
+  it("same cue, same parameters: no gain, rate or other option on either play", () => {
+    const env = defaults();
+    env.events.emit("betPlaced", ev.bet(0));
+    env.events.emit("betPlaced", ev.bet(1));
+    env.director.update(frame());
+    const lines = env.audio.take().filter((l) => l.startsWith("play "));
+    expect(lines).toEqual(["play bet-clink-1", "play bet-clink-1"]);
+  });
+
+  it("two bets in one frame are two play requests; a duplicate event of one slot is still merged", () => {
+    const env = defaults();
+    env.events.emit("betPlaced", ev.bet(0));
+    env.events.emit("betPlaced", ev.bet(1));
+    env.events.emit("betPlaced", ev.bet(1));
+    env.director.update(frame());
+    expect(env.audio.plays()).toEqual(["play bet-clink-1", "play bet-clink-1"]);
+  });
+
+  it("the clink plays on the frame the bet lands, not later", () => {
+    const env = defaults();
+    env.events.emit("betPlaced", ev.bet(1));
+    env.director.update(frame({ dt: 0 }));
+    expect(env.audio.plays()).toEqual(["play bet-clink-1"]);
+  });
+
+  it("a rejected or invalid bet plays nothing", () => {
+    const env = defaults();
+    for (const slot of [0, 1] as const) {
+      env.events.emit("commandRejected", {
+        roundId: 1,
+        command: {
+          type: "placeBet",
+          slot,
+          amount: 10,
+        } as unknown as EngineEventMap["commandRejected"]["command"],
+        reason: "insufficient",
+      });
+    }
+    env.events.emit("betPlaced", { roundId: 1, slot: 2, amount: 10 } as never);
+    env.director.update(frame());
+    expect(env.audio.plays()).toEqual([]);
+  });
+
+  it("rollback: { betClink2: true } restores bet-clink-2 for BET 2 only", () => {
+    const events = new FakeEvents();
+    const audio = new RecordingAudio();
+    const director = createAudioDirector(events, audio, { betClink2: true });
+    director.update(frame());
+    audio.take();
+    events.emit("betPlaced", ev.bet(0));
+    events.emit("betPlaced", ev.bet(1));
+    director.update(frame());
+    expect(audio.plays()).toEqual(["play bet-clink-1", "play bet-clink-2"]);
+  });
+
+  it("bet-clink-2 is not loaded by default, but its manifest entry is kept", () => {
+    expect(DISABLED_ONE_SHOTS_BY_DEFAULT).toContain("bet-clink-2");
+    expect(DISABLED_CUES_BY_DEFAULT).toContain("bet-clink-2");
+    expect(DISABLED_CUES_BY_DEFAULT).not.toContain("bet-clink-1");
+    expect(SOUND_MANIFEST["bet-clink-2"].asset).not.toBeNull();
   });
 });

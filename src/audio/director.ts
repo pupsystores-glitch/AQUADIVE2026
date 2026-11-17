@@ -61,6 +61,12 @@
 // and both manifest entries and files are kept, so the switch alone restores
 // them; with it off no multiplier, phase or event plays either creak.
 //
+// BET-1x2 (owner decision 2026-11-17): BET 1 and BET 2 both play the
+// approved `bet-clink-1`, same cue, gain and parameters. One-shots are still
+// merged once per frame, but a bet's merge key is its slot, so two bets in
+// one frame are two plays. The rejected `bet-clink-2` is kept (manifest entry
+// and file) behind `{ betClink2: true }` for rollback, and is not loaded.
+//
 // Sea-floor impact timing (A-OWN.1, owner report 2026-11-17): the engine
 // emits `shipImpact` when the ship reaches the floor, but the drawn anchor is
 // still sinking its last stretch then; it stands on the sand 0.3–0.7 s later,
@@ -183,6 +189,14 @@ export interface AudioDirectorOptions {
    * no music. The audio host passes `MUSIC_MAIN` (`music.ts`).
    */
   readonly music?: StreamOptions | null;
+  /**
+   * BET-1x2 (owner decision 2026-11-17): BET 2 plays the approved BET 1
+   * recording, `bet-clink-1`, with the same cue gain and parameters. The
+   * rejected `bet-clink-2` cue, its asset and its manifest entry are kept for
+   * rollback: true restores it for slot 1. Default false, and the host then
+   * neither fetches nor decodes it.
+   */
+  readonly betClink2?: boolean;
 }
 
 /** Loop cues the director never plays unless enabled through its options (A6.1). */
@@ -192,6 +206,7 @@ export const DISABLED_BY_DEFAULT: readonly LoopCueId[] = Object.freeze(["chain-r
 export const DISABLED_ONE_SHOTS_BY_DEFAULT: readonly OneShotCueId[] = Object.freeze([
   "tension-creak-1",
   "tension-creak-2",
+  "bet-clink-2", // BET-1x2: both slots play bet-clink-1
 ]);
 
 /**
@@ -486,15 +501,24 @@ const LISTENED: readonly (keyof EngineEventMap)[] = [
 interface OneShot {
   readonly cue: OneShotCueId;
   readonly opts?: PlayOptions;
+  /**
+   * BET-1x2: the per-frame merge key, when it is not the cue id. Each bet
+   * slot has its own, so two bets in one frame are still two plays now that
+   * both slots share `bet-clink-1`.
+   */
+  readonly key?: string;
 }
 
 /** The one-shots one event plays (docs/08 §5). The bet amount is never read. */
-function cuesFor(event: BufferedEvent): readonly OneShot[] {
+function cuesFor(event: BufferedEvent, betClink2: boolean): readonly OneShot[] {
   switch (event.name) {
     case "betPlaced":
       // Local slots are literal 0 and 1 (`BET_SLOTS` is a value import).
-      if (event.payload.slot === 0) return [{ cue: "bet-clink-1" }];
-      if (event.payload.slot === 1) return [{ cue: "bet-clink-2" }];
+      // BET-1x2: both slots play the approved BET 1 recording, one play per slot.
+      if (event.payload.slot === 0) return [{ cue: "bet-clink-1", key: "bet-slot-0" }];
+      if (event.payload.slot === 1) {
+        return [{ cue: betClink2 ? "bet-clink-2" : "bet-clink-1", key: "bet-slot-1" }];
+      }
       return [];
     case "diveStarted":
       return [{ cue: "chain-unspool" }, { cue: "water-splash" }];
@@ -540,6 +564,7 @@ export function createAudioDirector(
   // A6.1: the phase table with the disabled loops removed, fixed at construction.
   const rattleEnabled = options.chainRattle === true;
   const creaksEnabled = options.tensionCreaks === true;
+  const betClink2 = options.betClink2 === true;
   const loopsByPhase = {} as Record<AudioPhase, readonly LoopCueId[]>;
   for (const phase of Object.keys(LOOPS_BY_PHASE) as AudioPhase[]) {
     loopsByPhase[phase] = LOOPS_BY_PHASE[phase].filter(
@@ -739,16 +764,17 @@ export function createAudioDirector(
 
     // 2. One-shots, merged per cue id: buffered events, then state edges.
     const plays: OneShot[] = [];
-    const seen = new Set<OneShotCueId>();
+    const seen = new Set<string>();
     const add = (shot: OneShot) => {
-      if (seen.has(shot.cue)) return;
-      seen.add(shot.cue);
+      const key = shot.key ?? shot.cue;
+      if (seen.has(key)) return;
+      seen.add(key);
       plays.push(shot);
     };
     const batch = buffer;
     buffer = [];
     for (const event of batch) {
-      for (const shot of cuesFor(event)) {
+      for (const shot of cuesFor(event, betClink2)) {
         // A-OWN.1: with the landing geometry known, the thud waits for the touchdown.
         if (shot.cue === "floor-thud" && frame.seaFloor !== undefined) thudWait = 0;
         else add(shot);

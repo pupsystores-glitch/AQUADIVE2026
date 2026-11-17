@@ -693,6 +693,8 @@ describe("jackpot and bonus chests", () => {
         "at",
         "650.00",
         "×",
+        "Bonus multiplier",
+        "6.50×",
         "Pirate Wreck — Pick a Chest",
         "[button disabled] ???",
         "[button disabled] +6.50×",

@@ -542,7 +542,7 @@ describe("audio host music — what did not change", () => {
     // A-OWN: the two tension creaks are not fetched either.
     expect(urls).not.toContain("test://tension-creak-1");
     expect(urls).not.toContain("test://tension-creak-2");
-    expect(urls).toHaveLength(Object.keys(SOUND_MANIFEST).length - 3);
+    expect(urls).toHaveLength(Object.keys(SOUND_MANIFEST).length - 4); // BET-1x2: bet-clink-2 too
   });
 
   it("one context for the session, with music playing", async () => {
@@ -636,7 +636,7 @@ describe("audio host music — Q15 on iOS and iPadOS without the Audio Session A
     expect(t.contexts).toHaveLength(1);
     expect(t.contexts[0].mediaSources).toHaveLength(0);
     // Every cue but the rattle and the two creaks (A6.1, A-OWN).
-    expect(t.fetch.requests.length).toBe(Object.keys(SOUND_MANIFEST).length - 3);
+    expect(t.fetch.requests.length).toBe(Object.keys(SOUND_MANIFEST).length - 4);
     expect(errors).not.toHaveBeenCalled();
     expect(warns).not.toHaveBeenCalled();
   });

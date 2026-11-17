@@ -19,6 +19,15 @@
 // picker; when the picker closes, focus returns to where it was. Each chest
 // carries a "Chest n of 3" description; its accessible name stays the
 // visible "???" / "+m×" text.
+//
+// CH1 (owner instruction 2026-11-17): premium chest presentation. Each chest
+// has its own look (ruby, sapphire, emerald; the outer two in a three-quarter
+// view turned toward the centre, TreasureChestArt). A pick opens exactly the
+// chosen chest (the one whose id is the engine's `chosenChestId`) with a pop,
+// a gold halo and a glint burst (F8, ChestBurst); the other two stay closed,
+// dimmed and pushed back. The multiplier then appears large and centred in
+// gold (ChestReveal), inside a polite status region so it is also announced.
+// Presentation only: the pick path, the values and the timing are the engine's.
 
 import { useCallback, useEffect, useRef } from "react";
 import { formatMultiplier } from "@/game/presentation";
@@ -26,9 +35,18 @@ import { useStore } from "@/ui/hooks/use-store";
 import { isFocusParked, useFocusRescue } from "@/ui/hooks/use-focus-rescue";
 import { gameSession } from "@/ui/session";
 import { STRINGS } from "@/ui/strings";
-import { TreasureChestArt } from "./icons";
+import { ChestBurst } from "./ChestBurst";
+import { ChestReveal } from "./ChestReveal";
+import { TreasureChestArt, type ChestVariant, type ChestView } from "./TreasureChestArt";
 
 const { round } = gameSession;
+
+/** Per-chest look: colour by chest, the outer two turned toward the centre. */
+const CHEST_LOOKS: Record<0 | 1 | 2, { variant: ChestVariant; view: ChestView }> = {
+  0: { variant: "ruby", view: "right" },
+  1: { variant: "sapphire", view: "front" },
+  2: { variant: "emerald", view: "left" },
+};
 
 export function ChestPicker() {
   const phase = useStore(round, (r) => r.phase);
@@ -73,36 +91,64 @@ export function ChestPicker() {
       aria-label={STRINGS.chests.title}
       tabIndex={-1}
       data-focus-scope=""
-      className="absolute inset-0 z-30 flex flex-col items-center justify-end bg-black/40 pb-8 backdrop-blur-sm"
+      className={`absolute inset-0 z-30 flex flex-col items-center pb-5 backdrop-blur-sm transition-colors duration-500 tab:pb-8 ${
+        chosenChest ? "bg-black/60" : "bg-black/40"
+      }`}
     >
-      <div className="mb-3 text-xs uppercase tracking-[0.3em] text-gold">
+      {chosenChest && (
+        <div
+          aria-hidden="true"
+          className="chest-focus-vignette pointer-events-none absolute inset-0"
+        />
+      )}
+      {/* The centred multiplier: a polite status region, filled by the pick. */}
+      <div
+        role="status"
+        className="relative flex min-h-0 w-full flex-1 items-center justify-center"
+      >
+        {chosenChest && <ChestReveal multiplier={chosenChest.multiplier} />}
+      </div>
+      <div className="relative mb-2 text-xs uppercase tracking-[0.3em] text-gold">
         {STRINGS.chests.title}
       </div>
-      <div className="flex gap-3 px-4 sm:gap-5">
+      <div className="relative flex items-end gap-3 px-4 @lg:gap-6">
         {chests.map((c) => {
           const isChosen = chosenChest?.id === c.id;
+          const isPassed = chosenChest !== null && !isChosen;
+          const look = CHEST_LOOKS[c.id];
           return (
             <button
               key={c.id}
               onClick={() => pickChest(c.id)}
               disabled={!!chosenChest}
               aria-description={STRINGS.chests.position(c.id + 1, chests.length)}
-              className={`group relative w-[6.5rem] rounded-xl border bg-gradient-to-b from-[#2a1a0c]/90 to-[#0d0703]/90 p-2 pt-3 shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-all duration-200 enabled:hover:-translate-y-1 enabled:hover:border-gold/80 enabled:hover:shadow-[0_0_24px_color-mix(in_oklab,var(--gold)_35%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold active:scale-95 sm:w-32 ${
-                isChosen
-                  ? "scale-105 border-gold shadow-[0_0_32px_color-mix(in_oklab,var(--gold)_50%,transparent)]"
-                  : "border-gold/40 disabled:opacity-45 disabled:grayscale-[0.4]"
-              }`}
+              className={`group relative w-[6.5rem] rounded-2xl p-1 transition-[opacity,filter,scale,translate] duration-300 enabled:hover:-translate-y-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold enabled:active:scale-95 @lg:w-40 @3xl:w-48 ${
+                isPassed ? "scale-90 opacity-40 grayscale-[0.5]" : ""
+              } ${isChosen ? "z-10" : ""}`}
             >
-              <div className="relative aspect-[6/5] w-full">
-                <TreasureChestArt
-                  id={`bonus-chest-${c.id}`}
-                  open={isChosen}
-                  className="absolute inset-0 h-full w-full drop-shadow-[0_2px_2px_rgba(0,0,0,0.6)] transition-transform duration-300 group-enabled:group-hover:scale-[1.04]"
-                />
-                {/* The multiplier sits on the chest front, centred and in gold. */}
+              <div className={isChosen ? "chest-pick-pop relative" : "relative"}>
+                {isChosen && (
+                  <span
+                    aria-hidden="true"
+                    className="chest-halo pointer-events-none absolute left-1/2 top-[40%] aspect-square w-[180%] -translate-x-1/2 -translate-y-1/2"
+                  />
+                )}
+                <div className="relative aspect-[5/4] w-full">
+                  <TreasureChestArt
+                    id={`bonus-chest-${c.id}`}
+                    variant={look.variant}
+                    view={look.view}
+                    open={isChosen}
+                    className="absolute inset-0 h-full w-full drop-shadow-[0_6px_8px_rgba(0,0,0,0.55)] transition-transform duration-300 group-enabled:group-hover:scale-[1.05]"
+                  />
+                  {isChosen && <ChestBurst />}
+                </div>
+                {/* The label plate: "???" until the pick, then this chest's multiplier. */}
                 <div
-                  className={`absolute inset-x-0 top-[69%] -translate-y-1/2 text-center font-black leading-none tracking-tight text-gold tabular-nums [-webkit-text-stroke:1px_#2a1306] [paint-order:stroke_fill] [text-shadow:0_2px_0_#1a0e06,0_0_12px_rgba(0,0,0,0.85)] ${
-                    isChosen ? "multiplier-glow text-2xl sm:text-3xl" : "text-xl sm:text-2xl"
+                  className={`relative mx-auto mt-1 w-fit min-w-[4.25rem] rounded-full border px-2.5 py-0.5 text-center text-sm font-black leading-tight tabular-nums text-gold [text-shadow:0_1px_0_#1a0e06] @lg:text-base ${
+                    isChosen
+                      ? "border-gold bg-gradient-to-b from-[#4a2c0c] to-[#1a0e04] shadow-[0_0_14px_color-mix(in_oklab,var(--gold)_45%,transparent)]"
+                      : "border-gold/45 bg-gradient-to-b from-[#2a1a0c]/95 to-[#0d0703]/95"
                   }`}
                 >
                   {isChosen

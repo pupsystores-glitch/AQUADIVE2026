@@ -11,7 +11,7 @@
 // player; what an iPhone then plays with the ringer on or in Silent Mode can
 // only be observed on the device.
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { STREAM_HOLD_FADE_S } from "@/audio/audio-manager";
+import { STREAM_HOLD_FADE_S, createAudioManager } from "@/audio/audio-manager";
 import {
   SOUND_MANIFEST,
   type CueDefinition,
@@ -74,8 +74,8 @@ const flush = async () => {
 };
 
 const DT = 0.01;
-/** The cues the host loads: every manifest cue but the rattle and the two creaks. */
-const LOADED = Object.keys(SOUND_MANIFEST).length - 3;
+/** The cues the host loads: every manifest cue but the rattle, the two creaks and (BET-1x2) bet-clink-2. */
+const LOADED = Object.keys(SOUND_MANIFEST).length - 4;
 
 function setup(
   extra: Partial<AudioHostOptions> = {},
@@ -667,5 +667,69 @@ describe("LA1 — no sound before START GAME", () => {
     const t = setup();
     await t.start();
     expect(t.contexts).toHaveLength(1);
+  });
+});
+
+describe("BET-1x2 — bet sounds through the real host", () => {
+  /** The real manager, with its play() calls recorded. */
+  const recording = () => {
+    const plays: string[] = [];
+    const createManager: AudioHostOptions["createManager"] = (options) => {
+      const real = createAudioManager(options);
+      const play: typeof real.play = (cue, opts) => {
+        plays.push(cue);
+        real.play(cue, opts);
+      };
+      // Every other member is the real manager's, bound to it.
+      return new Proxy(real, {
+        get: (target, key) => {
+          if (key === "play") return play;
+          const value = Reflect.get(target, key, target) as unknown;
+          return typeof value === "function" ? (value as () => unknown).bind(target) : value;
+        },
+      });
+    };
+    return { plays, createManager };
+  };
+  const bet = (t: ReturnType<typeof setup>, slot: 0 | 1) => {
+    t.events.emit("betPlaced", { roundId: 1, slot, amount: 10 });
+    t.events.dispatchQueued();
+    t.frames(DT);
+  };
+
+  it("never fetches bet-clink-2; fetches bet-clink-1 once", async () => {
+    const t = setup({}, { assets: true });
+    t.host.preload();
+    await flush();
+    const urls = t.fetch.requests.map((r) => r.url);
+    expect(urls).not.toContain("test://bet-clink-2");
+    expect(urls.filter((u) => u === "test://bet-clink-1")).toHaveLength(1);
+  });
+
+  it("BET 1 and BET 2 both request bet-clink-1, one play each", async () => {
+    const r = recording();
+    const t = setup({ createManager: r.createManager });
+    await t.start();
+    bet(t, 0);
+    bet(t, 1);
+    expect(r.plays).toEqual(["bet-clink-1", "bet-clink-1"]);
+  });
+
+  it("SOUND OFF silences both bet sounds (sfx bus 0); MUSIC OFF leaves them as they are", async () => {
+    const r = recording();
+    const t = setup({ createManager: r.createManager });
+    await t.start();
+    t.store.toggleSwitch("musicOn"); // MUSIC OFF
+    bet(t, 0);
+    bet(t, 1);
+    expect(t.buses().sfx).toBeCloseTo(0.7);
+    expect(r.plays).toEqual(["bet-clink-1", "bet-clink-1"]);
+    t.store.toggleSwitch("musicOn"); // MUSIC ON
+    expect(t.buses().sfx).toBeCloseTo(0.7);
+    t.store.toggleSwitch("soundOn"); // SOUND OFF
+    bet(t, 0);
+    bet(t, 1);
+    expect(t.buses().sfx).toBe(0);
+    expect(t.buses().music).toBeCloseTo(0.5);
   });
 });

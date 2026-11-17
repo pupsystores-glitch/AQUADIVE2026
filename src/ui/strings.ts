@@ -58,6 +58,8 @@ export const STRINGS = {
     title: "Pirate Wreck — Pick a Chest",
     hidden: "???",
     revealed: (multiplier: string) => `+${multiplier}`,
+    /** CH1: caption over the large centred multiplier after a pick. */
+    revealCaption: "Bonus multiplier",
     /** Accessible description telling the three chests apart (QA fix; not rendered as text). */
     position: (n: number, of: number) => `Chest ${n} of ${of}`,
   },

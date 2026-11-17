@@ -478,16 +478,18 @@ describe("audio host — loading is idempotent", () => {
     expect(urls).toHaveLength(LOADED_CUES.length);
   });
 
-  it("loads exactly the 15 enabled cues: every cue but the rattle and the two creaks", () => {
-    expect(LOADED_CUES).toHaveLength(15);
+  it("loads exactly the 14 enabled cues: every cue but the rattle, the two creaks and (BET-1x2) bet-clink-2", () => {
+    expect(LOADED_CUES).toHaveLength(14);
     expect(LOADED_CUES).not.toContain("chain-rattle");
     expect(LOADED_CUES).not.toContain("tension-creak-1");
     expect(LOADED_CUES).not.toContain("tension-creak-2");
+    expect(LOADED_CUES).not.toContain("bet-clink-2");
+    expect(LOADED_CUES).toContain("bet-clink-1");
   });
 
   it("never fetches the disabled chain-rattle, whose manifest entry and file stay (A6.1)", async () => {
     expect(DISABLED_BY_DEFAULT).toEqual(["chain-rattle"]);
-    expect(LOADED_CUES).toHaveLength(Object.keys(SOUND_MANIFEST).length - 3);
+    expect(LOADED_CUES).toHaveLength(Object.keys(SOUND_MANIFEST).length - 4); // BET-1x2: bet-clink-2 too
     expect(LOADED_CUES).toContain("chain-unspool");
     expect(LOADED_CUES).toContain("chain-snap");
     const rattleUrl = SOUND_MANIFEST["chain-rattle"].asset?.url;
@@ -601,7 +603,7 @@ describe("audio host — attach-scoped browser listeners", () => {
     t.emit("betPlaced", { roundId: 1, slot: 1, amount: 1 });
     t.host.update(input());
     expect(t.calls.filter((c) => c.method === "play").map((c) => c.args[0])).toEqual([
-      "bet-clink-2",
+      "bet-clink-1", // BET-1x2: slot 1 plays the BET 1 recording
     ]);
     detach();
     t.host.attach();

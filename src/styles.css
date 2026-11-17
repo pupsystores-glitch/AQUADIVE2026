@@ -138,3 +138,209 @@
   visibility: hidden;
   animation: loadingReveal 0.4s ease-out 15s forwards;
 }
+
+/* CH1 (owner instruction 2026-11-17): premium bonus chests and the centred
+   multiplier reveal. Includes F8, the chest burst (docs/08 §4.3), pulled
+   forward from V6: at most 16 glints (chest-fx.ts), transform and opacity
+   only, none under reduced motion. One-shot animations timed inside the
+   2.2 s result window (CHEST_RESULT_TO_IDLE_MS); nothing loops. */
+
+/* The chest art: lid flip, inner lid, treasure, glow and rays. */
+.chest-art .chest-lid,
+.chest-art .chest-lid-inner,
+.chest-art .chest-glow,
+.chest-art .chest-rays {
+  transform-box: fill-box;
+}
+.chest-art .chest-lid {
+  transform-origin: 50% 0%;
+}
+.chest-art .chest-lid-inner {
+  transform-origin: 50% 100%;
+  transform: scaleY(0);
+}
+.chest-art .chest-glow,
+.chest-art .chest-rays {
+  transform-origin: 50% 70%;
+}
+.chest-art[data-open] .chest-lid {
+  animation: chestLidFlip 340ms cubic-bezier(0.55, 0, 0.8, 0.4) 120ms both;
+}
+.chest-art[data-open] .chest-lid-inner {
+  animation: chestLidRise 420ms cubic-bezier(0.2, 0.9, 0.3, 1.25) 300ms both;
+}
+.chest-art[data-open] .chest-glow {
+  animation: chestBloom 700ms ease-out 320ms both;
+}
+.chest-art[data-open] .chest-rays {
+  animation: chestRays 1100ms ease-out 360ms both;
+}
+
+@keyframes chestLidFlip {
+  0% { transform: none; opacity: 1; }
+  30% { transform: translateY(-4px); opacity: 1; }
+  100% { transform: translateY(-6px) scaleY(0.05); opacity: 0; }
+}
+@keyframes chestLidRise {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+@keyframes chestBloom {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes chestRays {
+  0% { opacity: 0; transform: scale(0.4); }
+  45% { opacity: 1; }
+  100% { opacity: 0.6; transform: none; }
+}
+
+/* The chosen chest: anticipation squash, then a pop that settles enlarged. */
+.chest-pick-pop {
+  animation: chestPop 620ms cubic-bezier(0.3, 0.7, 0.4, 1.2) both;
+}
+@keyframes chestPop {
+  0% { transform: none; }
+  18% { transform: scale(0.94, 0.9); }
+  55% { transform: scale(1.14) translateY(-4%); }
+  100% { transform: scale(1.1) translateY(-3%); }
+}
+.chest-halo {
+  background: radial-gradient(closest-side, rgb(255 226 140 / 0.7), rgb(255 190 60 / 0.28) 45%, transparent 100%);
+  animation: chestHalo 800ms ease-out 260ms both;
+}
+@keyframes chestHalo {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: none; }
+}
+.chest-focus-vignette {
+  background: radial-gradient(ellipse 75% 70% at 50% 45%, transparent 40%, rgb(0 0 0 / 0.55) 100%);
+  animation: chestFade 500ms ease-out both;
+}
+@keyframes chestFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Glints: a four-point star in white gold. */
+.chest-glint {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  background: radial-gradient(circle, #fff 0 18%, #ffe9a0 40%, #f4b934 70%);
+  clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%);
+  opacity: 0;
+  pointer-events: none;
+}
+.chest-glint--burst {
+  left: 50%;
+  top: 45%;
+  animation: chestGlint 900ms cubic-bezier(0.15, 0.7, 0.3, 1) var(--glint-delay) both;
+}
+.chest-glint--twinkle {
+  animation: chestTwinkle 700ms ease-in-out var(--glint-delay) both;
+}
+@keyframes chestGlint {
+  0% { opacity: 0; transform: translate(0, 0) scale(0) rotate(0deg); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--glint-x), var(--glint-y)) scale(var(--glint-s)) rotate(90deg); }
+}
+@keyframes chestTwinkle {
+  0%, 100% { opacity: 0; transform: scale(0) rotate(0deg); }
+  50% { opacity: 1; transform: scale(calc(var(--glint-s) * 1.6)) rotate(45deg); }
+}
+
+/* The centred multiplier. */
+.chest-reveal {
+  animation: chestFade 300ms ease-out 260ms both;
+}
+.chest-reveal-glow {
+  background: radial-gradient(closest-side, rgb(255 214 110 / 0.42), rgb(255 170 40 / 0.16) 55%, transparent 100%);
+  animation: chestBloomCentered 700ms ease-out 260ms both;
+}
+.chest-reveal-rays {
+  background: repeating-conic-gradient(from 0deg, rgb(255 222 140 / 0.2) 0deg 5deg, transparent 5deg 18deg);
+  -webkit-mask-image: radial-gradient(closest-side, #000 15%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 15%, transparent 100%);
+  animation: chestRevealRays 1800ms ease-out 300ms both;
+}
+@keyframes chestBloomCentered {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes chestRevealRays {
+  0% { opacity: 0; transform: scale(0.6) rotate(-12deg); }
+  40% { opacity: 1; }
+  100% { opacity: 0.75; transform: scale(1) rotate(8deg); }
+}
+.chest-reveal-caption {
+  text-shadow: 0 1px 0 #1a0e06, 0 0 10px rgb(0 0 0 / 0.8);
+  animation: chestFade 400ms ease-out 520ms both;
+}
+.chest-reveal-value {
+  position: relative;
+  color: transparent;
+  background: linear-gradient(180deg, #fffbe2 0%, #ffe68f 20%, #ffc93d 46%, #d58b12 64%, #ffe39a 80%, #b06c0b 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-stroke: 1px rgb(110 58 4 / 0.85);
+  filter: drop-shadow(0 2px 0 #3d1f00) drop-shadow(0 6px 14px rgb(0 0 0 / 0.65)) drop-shadow(0 0 22px rgb(255 196 64 / 0.45));
+  animation: chestValueIn 640ms cubic-bezier(0.2, 1.35, 0.35, 1) 300ms both;
+}
+/* One shine sweep across the value, after it lands. */
+.chest-reveal-value::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  -webkit-text-stroke: 0;
+  background: linear-gradient(105deg, transparent 38%, rgb(255 255 255 / 0.95) 50%, transparent 62%);
+  background-size: 250% 100%;
+  background-position: 120% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: chestShine 900ms ease-in-out 900ms both;
+}
+@keyframes chestValueIn {
+  0% { opacity: 0; transform: scale(0.35) translateY(18%); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes chestShine {
+  from { background-position: 120% 0; }
+  to { background-position: -20% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chest-glint,
+  .chest-reveal-value::after {
+    display: none;
+  }
+  .chest-art[data-open] .chest-lid {
+    animation: none;
+    opacity: 0;
+  }
+  .chest-art[data-open] .chest-lid-inner {
+    animation: none;
+    transform: none;
+  }
+  .chest-art[data-open] .chest-glow,
+  .chest-art[data-open] .chest-rays,
+  .chest-reveal,
+  .chest-reveal-caption,
+  .chest-reveal-value,
+  .chest-focus-vignette {
+    animation: none;
+  }
+  .chest-pick-pop {
+    animation: none;
+    transform: scale(1.1) translateY(-3%);
+  }
+  .chest-halo,
+  .chest-reveal-glow,
+  .chest-reveal-rays {
+    animation: none;
+    transform: none;
+  }
+}
