@@ -32,3 +32,6 @@ dist-ssr
 *.sw?
 
 .claude/settings.local.json
+
+# Local V4 review captures (screenshots, reports); never committed
+qa/v4-silt-plume/

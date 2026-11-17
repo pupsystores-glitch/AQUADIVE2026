@@ -199,6 +199,40 @@ function applyLanding(p: AnchorPose, t: number, camera: Camera): number {
   return dropSeconds;
 }
 
+/** Where and when the landing anchor first touches the sand (anchorTouchdown). */
+export interface AnchorTouchdown {
+  /** Seconds after impact (RenderState.shipImpact.elapsed) at which the anchor stands on the sand. */
+  seconds: number;
+  /** Screen point of the contact: the sand under the anchor's bottom tip. */
+  x: number;
+  y: number;
+}
+
+// Reused across calls; the scratch pose keeps anchorPose's own object untouched.
+const touchdownPose: AnchorPose = { ...pose };
+const touchdown: AnchorTouchdown = { seconds: 0, x: 0, y: 0 };
+
+/**
+ * Phase 7 step V4 (F5): the landing's touchdown for the current camera — the
+ * moment applyLanding's drop ends (the same instant the audio host times the
+ * floor-thud hit on, src/ui/anchor-touchdown.ts) and the sand point under the
+ * anchor's tip. Computed by applyLanding itself on a scratch pose that starts
+ * from the pinned diving pose, so there is no second landing formula. Reads
+ * only; the drawn landing is unchanged. The returned object is reused.
+ */
+export function anchorTouchdown(camera: Camera): Readonly<AnchorTouchdown> {
+  const { w, h } = camera.viewport;
+  touchdownPose.x = w / 2;
+  touchdownPose.y = anchorPinY(h);
+  touchdownPose.swayAngle = 0;
+  touchdown.seconds = applyLanding(touchdownPose, 0, camera);
+  const floorScreenY = camera.worldToScreenY(CHAIN_MAX_DEPTH + ANCHOR_WORLD_OFFSET_PX);
+  const rest = seaFloorRestPoint(w, h, floorScreenY);
+  touchdown.x = rest.x;
+  touchdown.y = rest.y;
+  return touchdown;
+}
+
 /** Seconds since the anchor reached the sea floor, or -1 while it has not (or betting is open). */
 export function landingSeconds(state: RenderState): number {
   if (state.phase === "idle" || state.shipImpact === null) return -1;

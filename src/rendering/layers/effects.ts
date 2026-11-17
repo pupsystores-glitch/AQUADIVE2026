@@ -15,11 +15,20 @@
 // involved. They vanish on the first crashed, cashed or bonus frame, at the
 // sea floor (shipImpact set) and under reduced motion. The jackpot block
 // below is unchanged.
+//
+// Phase 7 step V4 (owner decisions D1–D4, 2026-11-17): on the jackpot
+// sea-floor landing — and only there — F5, the silt plume (draw/landing-fx.ts),
+// is drawn under the jackpot burst. Its clock starts when the drawn anchor
+// touches the sand (the Actor layer's anchorTouchdown, the instant the
+// floor-thud hit is timed on), not at shipImpact. It needs shipImpact, so a
+// normal crash (including the snapped anchor landing on the sand), a cashout
+// mid-dive, betting and diving never show it.
 
 import { SHIP_WORLD_Y } from "@/shared/world";
 import { SHIP_CHAIN_ATTACH_DY, SHIP_IMPACT_FX_SECONDS } from "../constants";
 import type { Camera } from "../camera";
 import { drawShipImpact } from "../draw/impact-fx";
+import { drawSiltPlume, SILT_PLUME_LIFE } from "../draw/landing-fx";
 import {
   ANCHOR_WAKE_LAUNCH_START,
   DEFAULT_FX_SETTINGS,
@@ -30,7 +39,7 @@ import {
 } from "../draw/particles";
 import { shipScale } from "../draw/ship";
 import type { FxSettings, RenderLayer, RenderState, RenderTime } from "../render-state";
-import { anchorPose, landingSeconds } from "./actor";
+import { anchorPose, anchorTouchdown, landingSeconds } from "./actor";
 import { launchProgress } from "./presentation";
 
 /** V3: F3 and F4 for one diving frame. Issues no call when neither is active. */
@@ -72,6 +81,16 @@ export const effectsLayer: RenderLayer = {
     // V3 — anchor wake and release splash, while diving only.
     if (state.phase === "diving" && !state.crashed && state.shipImpact === null) {
       drawDiveFx(ctx, state, camera, time, fx ?? DEFAULT_FX_SETTINGS);
+    }
+
+    // V4 — the silt plume where the landed anchor touches the sand.
+    const landing = state.crashed ? -1 : landingSeconds(state);
+    if (landing >= 0) {
+      const touch = anchorTouchdown(camera);
+      const age = landing - touch.seconds;
+      if (age >= 0 && age < SILT_PLUME_LIFE) {
+        drawSiltPlume(ctx, age, touch.x, touch.y, fx ?? DEFAULT_FX_SETTINGS);
+      }
     }
 
     // Ship impact burst — pink jackpot lightning for ~1.4s after hit

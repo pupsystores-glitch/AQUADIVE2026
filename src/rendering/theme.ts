@@ -184,3 +184,17 @@ export const WAKE_FX_THEME = {
   /** F4 waterline ripple ring: a water blue, so it reads on the white hull. */
   ripple: "rgb(78, 136, 196)",
 } as const;
+
+// ----- Landing silt plume (draw/landing-fx.ts; Phase 7 step V4, docs/08 §4.3 F5) -----
+// A soft, desaturated sand tone that reads as stirred-up sediment against the
+// blue-lit seabed artwork. Provisional until the owner's visual review.
+// Alpha arrives from the draw module (gradient stops, then globalAlpha).
+
+/** F5 silt tone, rgb. */
+export const SILT_FX_TONE: readonly number[] = [208, 200, 178];
+
+export const SILT_FX_THEME = {
+  /** F5 silt puff gradient stop at a given alpha. */
+  silt: (alpha: number) =>
+    `rgba(${SILT_FX_TONE[0]}, ${SILT_FX_TONE[1]}, ${SILT_FX_TONE[2]}, ${alpha})`,
+} as const;

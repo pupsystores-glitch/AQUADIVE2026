@@ -45,7 +45,8 @@ import particlesSource from "./particles.ts?raw";
 // V3 — F3 anchor wake, F4 release splash and the Effects layer.
 import { SHIP_WORLD_Y } from "@/shared/world";
 import { SHIP_CHAIN_ATTACH_DY, SHIP_IMPACT_FX_SECONDS } from "../constants";
-import { anchorPose } from "../layers/actor";
+import { anchorPose, anchorTouchdown } from "../layers/actor";
+import { drawSiltPlume } from "./landing-fx";
 import { effectsLayer } from "../layers/effects";
 import { launchProgress, presentationOffsetY } from "../layers/presentation";
 import { WAKE_FX_THEME } from "../theme";
@@ -1298,6 +1299,9 @@ describe("Effects layer with V3", () => {
           effectsLayer.render(now.ctx, state, camera, TIME, HIGH);
           seed = 0;
           const before = recorder();
+          // V4 (F5): the jackpot landing now also draws the silt plume, under the burst.
+          const touch = anchorTouchdown(camera);
+          drawSiltPlume(before.ctx, elapsed - touch.seconds, touch.x, touch.y, HIGH);
           if (elapsed < SHIP_IMPACT_FX_SECONDS) {
             const p = anchorPose(worldY, camera, TIME.animTime, Math.max(0, elapsed));
             const life = Math.min(1, elapsed / SHIP_IMPACT_FX_SECONDS);
