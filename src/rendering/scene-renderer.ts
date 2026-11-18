@@ -73,6 +73,7 @@ export class SceneRenderer {
   private readonly fxFlags: { -readonly [K in keyof FxSettings]: FxSettings[K] } = {
     reducedMotion: false,
     quality: "high",
+    reset: null,
   };
 
   // Canonical layer order, bottom → top (§5).
@@ -117,6 +118,8 @@ export class SceneRenderer {
     const view = this.withChainSnap(presentState(state), time.animTime);
     // V1: stamp queued FX on this frame's animTime; the crash entry shares the break time.
     this.fx.update(time.animTime, view.chainSnap?.startedAt ?? null);
+    // V6 (F7): hand the layers the queue's own reset entry — no copy, no second clock.
+    this.fxFlags.reset = this.fx.active("reset");
     this.camera.setViewport(w, h);
     this.camera.follow(view.worldY);
     this.camera.setPresentationOffset(presentationOffsetY(view.worldY, w, h));

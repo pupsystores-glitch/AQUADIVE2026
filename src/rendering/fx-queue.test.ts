@@ -3,6 +3,8 @@
 // animation clock, one shared crash timestamp), the camera's shake offset,
 // and a draw-call equivalence check through the real layers: V1's calls
 // change no pixel of normal gameplay or of the E-X7 Chain Snapped animation.
+// Since V6 a reset trigger is visible as F7 (one appended fill on the next
+// betting frame, layers/reset-fade.test.ts); the check allows exactly that.
 import { describe, expect, it } from "vitest";
 import { Camera } from "./camera";
 import { cameraShakeOffset, FX_LIFETIME_SECONDS, FxQueue } from "./fx-queue";
@@ -235,11 +237,30 @@ function drawLogs(withV1: boolean, withFlags: boolean = withV1): string[] {
 }
 
 describe("V1 is invisible", () => {
-  it("draws exactly the same calls, frame by frame, with triggers, under either motion / quality setting", () => {
+  it("draws exactly the same calls, frame by frame, with triggers, under either motion / quality setting (since V6: plus only the F7 reset fill)", () => {
     const plain = drawLogs(false, false);
     const fx = drawLogs(true, false);
     expect(fx).toHaveLength(plain.length);
-    for (let i = 0; i < plain.length; i++) expect(fx[i]).toBe(plain[i]);
+    // Since V6 the reset entry is visible as F7 (layers/effects.ts): one appended
+    // translucent fill on the betting frame after each reset trigger, nothing
+    // else. Every other call of every frame is unchanged; crash triggers stay
+    // invisible (V5 draws from the chain-snap clock, not the trigger).
+    const f7 = (alpha: number) =>
+      [
+        "ctx.save([])",
+        `ctx.globalAlpha=${alpha}`,
+        'ctx.fillStyle="rgb(2, 12, 34)"',
+        "ctx.fillRect([0,0,390,844])",
+        "ctx.restore([])",
+      ].join("\n");
+    const f7Frames: number[] = [];
+    for (let i = 0; i < plain.length; i++) {
+      if (fx[i] === plain[i]) continue;
+      f7Frames.push(i);
+      expect(fx[i]).toBe(`${plain[i]}\n${f7(0.14)}`);
+    }
+    expect(f7Frames).toEqual([0, 18]); // the first betting frame of each round (18 frames per round)
+    // With reduced motion F7 is off, so the triggers are invisible again (below).
     // V2: the same with reduced motion and low quality on both sides.
     const plainLow = drawLogs(false, true);
     const fxLow = drawLogs(true, true);

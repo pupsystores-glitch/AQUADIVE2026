@@ -33,10 +33,22 @@
 // so there is no second crash clock. The break point is the E-X7 split
 // itself: the upper chain's free end at elapsed 0 (crashBreakPoint below).
 // No camera shake (D1): the camera is never touched here.
+//
+// Phase 7 step V6 (owner authorization F7, 2026-11-18): when betting reopens,
+// F7, the round-reset fade, softens the cut to the surface scene. The FX
+// queue's reset entry (stamped by `bettingOpened` on the first frame of the
+// surface view) reaches this layer as FxSettings.reset — the queue's own
+// object, so the queue is the only reset clock. The surface scene starts
+// darkened under one translucent solid fill (RESET_FADE_COLOR at
+// RESET_FADE_MAX_ALPHA) and eases out to nothing over the entry's 0.40 s
+// lifetime: no fade-in, no second dip, no crossfade. Drawn last, so it covers
+// the whole canvas and nothing else; the DOM controls above the canvas are
+// not touched. Same at High and Low; reduced motion draws nothing.
 
 import { SHIP_WORLD_Y } from "@/shared/world";
 import { SHIP_CHAIN_ATTACH_DY, SHIP_IMPACT_FX_SECONDS } from "../constants";
 import type { Camera } from "../camera";
+import { FX_LIFETIME_SECONDS } from "../fx-queue";
 import { crashFxActive, drawCrashFx } from "../draw/crash-fx";
 import { drawShipImpact } from "../draw/impact-fx";
 import { drawSiltPlume, SILT_PLUME_LIFE } from "../draw/landing-fx";
@@ -53,6 +65,44 @@ import type { FxSettings, RenderLayer, RenderState, RenderTime } from "../render
 import { anchorPose, anchorTouchdown, landingSeconds } from "./actor";
 import { chainSnapBreak, layoutUpperChain, upperChainPoints } from "./chain-snap";
 import { launchProgress } from "./presentation";
+
+/** V6 (F7): the reset fade's lifetime (seconds) — the FX queue's reset entry lifetime. */
+export const RESET_FADE_LIFE = FX_LIFETIME_SECONDS.reset;
+/** V6 (F7): the fade's colour, a deep-water navy. */
+export const RESET_FADE_COLOR = "rgb(2, 12, 34)";
+/** V6 (F7): the fade's opacity on the first reset frame. */
+export const RESET_FADE_MAX_ALPHA = 0.14;
+
+/**
+ * V6 (F7): the fade's opacity `elapsed` seconds after betting reopened —
+ * RESET_FADE_MAX_ALPHA at 0, easing out (quadratic) to exactly 0 at
+ * RESET_FADE_LIFE and after. Continuous and strictly decreasing, with a
+ * zero slope at the end, so there is no visible step after the first frame.
+ */
+export function resetFadeAlpha(elapsed: number): number {
+  if (!(elapsed >= 0) || elapsed >= RESET_FADE_LIFE) return 0;
+  const rest = 1 - elapsed / RESET_FADE_LIFE;
+  return RESET_FADE_MAX_ALPHA * rest * rest;
+}
+
+/** V6 (F7): one translucent solid fill over the viewport while the reset entry is active. */
+function drawResetFade(
+  ctx: CanvasRenderingContext2D,
+  state: RenderState,
+  camera: Camera,
+  fx: FxSettings | undefined,
+) {
+  const reset = fx?.reset;
+  if (reset == null || fx?.reducedMotion || state.phase !== "idle") return;
+  const alpha = resetFadeAlpha(reset.elapsed);
+  if (!(alpha > 0)) return;
+  const { w, h } = camera.viewport;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = RESET_FADE_COLOR;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
 
 /** V5: the break point of the current chain snap, cached per break (reused object). */
 const breakPoint = {
@@ -171,12 +221,25 @@ export const effectsLayer: RenderLayer = {
     }
 
     // Ship impact burst — pink jackpot lightning for ~1.4s after hit
-    if (state.shipImpact === null) return;
-    const { elapsed } = state.shipImpact;
-    if (elapsed >= SHIP_IMPACT_FX_SECONDS) return;
-    const life = Math.min(1, elapsed / SHIP_IMPACT_FX_SECONDS);
-    const { w, h } = camera.viewport;
-    const p = anchorPose(state.worldY, camera, time.animTime, landingSeconds(state));
-    drawShipImpact(ctx, p.x, p.y, w, h, elapsed, life);
+    drawJackpotBurst(ctx, state, camera, time);
+
+    // V6 — the round-reset fade, last: it covers the whole canvas.
+    drawResetFade(ctx, state, camera, fx);
   },
 };
+
+/** The ship-impact burst block, unchanged; a function since V6 so F7 can follow it. */
+function drawJackpotBurst(
+  ctx: CanvasRenderingContext2D,
+  state: RenderState,
+  camera: Camera,
+  time: RenderTime,
+) {
+  if (state.shipImpact === null) return;
+  const { elapsed } = state.shipImpact;
+  if (elapsed >= SHIP_IMPACT_FX_SECONDS) return;
+  const life = Math.min(1, elapsed / SHIP_IMPACT_FX_SECONDS);
+  const { w, h } = camera.viewport;
+  const p = anchorPose(state.worldY, camera, time.animTime, landingSeconds(state));
+  drawShipImpact(ctx, p.x, p.y, w, h, elapsed, life);
+}

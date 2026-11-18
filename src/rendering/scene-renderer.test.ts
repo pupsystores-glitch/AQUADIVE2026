@@ -234,7 +234,7 @@ describe("SceneRenderer FX settings forwarding (V2)", () => {
       "effectsLayer",
     ]);
     const first = fxSeen[0].fx;
-    expect(first).toEqual({ reducedMotion: false, quality: "high" });
+    expect(first).toEqual({ reducedMotion: false, quality: "high", reset: null });
     frame(r, engineState("diving"), 1.016);
     frame(r, engineState("crashed"), 1.032);
     expect(fxSeen).toHaveLength(15);
@@ -250,11 +250,11 @@ describe("SceneRenderer FX settings forwarding (V2)", () => {
     (r as unknown as { setQuality(q: string): void }).setQuality("ultra"); // ignored
     frame(r, engineState("diving"), 1.016);
     expect(fxSeen[fxSeen.length - 1].fx).toBe(fx);
-    expect(fx).toEqual({ reducedMotion: true, quality: "low" });
+    expect(fx).toEqual({ reducedMotion: true, quality: "low", reset: null });
     expect(r.fxSettings()).toEqual({ reducedMotion: true, quality: "low", shakeOffset: 0 });
     r.setMotion({ reducedMotion: false });
     r.setQuality("high");
-    expect(fx).toEqual({ reducedMotion: false, quality: "high" });
+    expect(fx).toEqual({ reducedMotion: false, quality: "high", reset: null });
   });
 
   it("carries no engine state: the RenderState passes through untouched", () => {

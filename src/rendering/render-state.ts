@@ -79,6 +79,14 @@ export interface FxSettings {
   readonly reducedMotion: boolean;
   /** Render quality (docs/05 §14 item 9). */
   readonly quality: FxQuality;
+  /**
+   * V6 (F7): the FX queue's active reset entry, or null. SceneRenderer
+   * forwards the queue's own entry object each frame (fx-queue.ts
+   * FxQueue.active("reset")), so the queue stays the only reset clock.
+   * Renderer-owned presentation data, never engine state; optional so FX
+   * settings built without it (layer tests, defaults) mean "no reset".
+   */
+  readonly reset?: { readonly elapsed: number } | null;
 }
 
 /**
