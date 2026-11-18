@@ -88,10 +88,20 @@ export function generateChainSeed(random: SecureRandomSource): SecretBytes {
   return seed;
 }
 
-/** Applies SHA-256 `times` times to a copy of `start`. */
+/**
+ * Applies SHA-256 `times` times to a copy of `start`. Each superseded intermediate link is zeroed
+ * as soon as its successor exists (P8-3b-0): between x_N and the returned link they are the seeds
+ * of later rounds. `start` belongs to the caller and is never modified; the result is a fresh
+ * buffer the caller owns.
+ */
 function iterate(provider: FairnessHashProvider, start: Uint8Array, times: number): Uint8Array {
   let x = start;
-  for (let i = 0; i < times; i++) x = sha256(provider, x);
+  for (let i = 0; i < times; i++) {
+    const next = sha256(provider, x);
+    // A provider that hands back the buffer it was given must not lose its own output.
+    if (x !== start && next !== x) x.fill(0);
+    x = next;
+  }
   return x === start ? Uint8Array.from(start) : x;
 }
 

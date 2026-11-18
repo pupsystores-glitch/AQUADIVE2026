@@ -35,14 +35,21 @@ export function sha256(provider: FairnessHashProvider, data: Uint8Array): Uint8A
 }
 
 /**
- * Prepares HMAC-SHA256 keyed by a secret. The provider receives a copy of the key; the returned
- * function validates every tag it produces.
+ * Prepares HMAC-SHA256 keyed by a secret. The provider receives a temporary copy of the key, which
+ * is zeroed as soon as the provider returns or throws (P8-3b-0; the provider contract requires it
+ * to copy a key it keeps). The returned function validates every tag it produces.
  */
 export function keyedHmac(provider: FairnessHashProvider, key: SecretBytes): KeyedHmac {
   if (!(key instanceof SecretBytes)) {
     throw new FairnessError("invalid-bytes", "HMAC key must be a SecretBytes");
   }
-  const mac = provider.hmacSha256(key.reveal());
+  const copy = key.reveal();
+  let mac: KeyedHmac;
+  try {
+    mac = provider.hmacSha256(copy);
+  } finally {
+    copy.fill(0);
+  }
   if (typeof mac !== "function") {
     throw new FairnessError("crypto-provider-failed", "provider returned no keyed HMAC");
   }

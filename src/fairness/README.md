@@ -1,6 +1,6 @@
 # `src/fairness` — fairness cryptographic foundation (P8-3a, fv = 1 EXPERIMENTAL)
 
-**Status: P8-3a, internal and experimental (2026-11-18). Accepted by the owner for local development with the limitations in §7, §9, §10 and §11 (docs/09 §38.1); not production fairness certification. Not frozen, not published, not activated, not connected to gameplay.** The owner authorized P8-3a only (seed chain and domain-separated derivation) with decisions D1 – D12 (docs/09 §38). P8-3b (`SeededRoundAuthority`, distribution tests), P8-3c (server crypto adapter, chain store) and every later milestone are **not** authorized. AQUADIVE is **PLAY-MONEY ONLY**.
+**Status: P8-3a, internal and experimental (2026-11-18). Accepted by the owner for local development with the limitations in §7, §9, §10 and §11 (docs/09 §38.1); not production fairness certification. Not frozen, not published, not activated, not connected to gameplay.** The owner authorized P8-3a only (seed chain and domain-separated derivation) with decisions D1 – D12 (docs/09 §38). **2026-11-18, P8-3b-0:** the owner authorized the secret lifecycle hardening R1 – R4 (§7) together with P8-3b (`SeededRoundAuthority`, distribution tests; a separate commit); the hardening is implemented and awaits the owner's acceptance. P8-3c (server crypto adapter, chain store) and every later milestone are **not** authorized. AQUADIVE is **PLAY-MONEY ONLY**.
 
 This is a pure TypeScript module. Production files import only each other (relative `./*.ts`), never the engine, UI, rendering, audio, shared floor, protocol, zod, Fastify, Node built-ins or the DOM. Cryptography is injected. Nothing in the application or the server imports it, so it has no effect on the running game. It does not change the engine RNG, any probability, RTP, the wallet or settlement.
 
@@ -104,18 +104,28 @@ Every output is checked to be a 32-byte `Uint8Array` (`crypto-provider-failed` o
 
 ## 7. Secret handling (defense in depth only)
 
-`SecretBytes` holds its bytes in a private field. JSON, `String()`, template literals, concatenation, `util.inspect` and `util.format`, `Object.entries`, spreading, `Reflect.ownKeys`, `structuredClone` and error messages show `[redacted secret]` or nothing. Its constructor refuses use outside `fromBytes` at runtime too. `reveal()` returns a caller-owned copy, `equals` is constant-time, and `dispose()` zeroes the wrapper's own buffer. `RoundDerivation` and `SeededStream` serialize only public bookkeeping, and the stream zeroes each cached block when it moves on.
+`SecretBytes` holds its bytes in a private field. JSON, `String()`, template literals, concatenation, `util.inspect` and `util.format`, `Object.entries`, spreading, `Reflect.ownKeys`, `structuredClone` and error messages show `[redacted secret]` or nothing. Its constructor refuses use outside `fromBytes` at runtime too. `reveal()` returns a caller-owned copy, `equals` is constant-time, and `dispose()` zeroes the wrapper's own buffer. `RoundDerivation` serializes only its public fields; the stream zeroes each cached block when it moves on.
 
-**Not protected:** memory inspection, heap snapshots, debuggers (browser devtools display private fields), copies made by `reveal()` or held by the crypto provider (for example, the OpenSSL key behind a `KeyObject`), and deliberate extraction. JavaScript cannot guarantee that memory is wiped.
+**Draw counts are secret before the reveal (P8-3b, D-B4).** `SeededStream.toJSON()` shows `drawsUsed`, and a draw count leaks outcome information (one crash draw means a 1.00× crash; the world count tracks the dive length). The method is unchanged for compatibility; a live stream must therefore never reach a public message, snapshot or log.
 
-**Open hardening requirements (owner, 2026-11-18; before production server integration):**
+**Lifecycle hardening (P8-3b-0, owner decision D-B2; requirements R1 – R4).** No algorithm, encoding, domain separation, purpose, draw limit or output changed; the vector corpus and the full per-purpose dump are byte-identical before and after (docs/15).
 
-- Clear temporary revealed HMAC key copies where technically possible.
-- Define and implement a `RoundDerivation` disposal lifecycle.
-- Clear intermediate seed-chain links.
-- Avoid retaining secret derived blocks longer than necessary.
-- Never log, transmit or persist unrevealed secret material.
-- Review secret handling in Node.js and in the future server crypto adapter (P8-3c).
+| #   | Requirement                              | As implemented                                                                                                                                                                                                                                                                                                                                                           |
+| --- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| R1  | Clear temporary revealed HMAC key copies | `keyedHmac` zeroes the copy it hands the provider in `finally` (also when the provider throws); `RoundDerivation.create` zeroes its seed probe in `finally`. A provider must copy a key it keeps (contract, §6; node:crypto `createSecretKey` and the test-only reference HMAC do)                                                                                       |
+| R2  | `RoundDerivation` disposal               | `dispose()` is idempotent: it drops the prepared HMAC function, zeroes the context's copies of the chain id and salt, and disposes every stream it opened. Afterwards `block`, `openStream` and `next()` on its streams throw `secret-disposed` (before any other check); `fv`, `chainIndex` and `toJSON()` stay available. `deriveBlock` disposes its temporary context |
+| R3  | `SeededStream` disposal                  | `dispose()` is idempotent: it zeroes the cached block and drops the block source; later `next()` throws `secret-disposed` (also after exhaustion). `drawsUsed` stays readable to its owner                                                                                                                                                                               |
+| R4  | Clear intermediate chain links           | The chain iteration zeroes each superseded link as soon as its successor exists (they are the seeds of later rounds); `computeRoundSeed` also zeroes the final link after wrapping it. Caller-supplied buffers (a revealed seed under verification) are never modified                                                                                                   |
+
+Tests: `lifecycle.test.ts` (19 tests) observes the buffers the module hands out or allocates.
+
+**Not protected:** memory inspection, heap snapshots, debuggers (browser devtools display private fields), copies made by `reveal()` or held by the crypto provider (for example, the OpenSSL key behind a `KeyObject`, which is released only when the garbage collector frees it), copies the JavaScript engine itself makes (strings, JIT spills, moved heap objects), a caller that never calls `dispose()`, and deliberate extraction. **Zeroing is best effort. JavaScript cannot guarantee that memory is wiped.**
+
+**Still open (before production server integration):**
+
+- Not retaining secret derived blocks longer than necessary is now bounded by `dispose()`; whether a caller disposes promptly is the caller's responsibility.
+- Never log, transmit or persist unrevealed secret material (draw counts included, D-B4).
+- Review secret handling in Node.js and in the future server crypto adapter (P8-3c), including `KeyObject` lifetime.
 
 These are defense in depth. None of them makes memory erasure a guarantee.
 
@@ -160,7 +170,7 @@ Verification needs a controlled benchmark on the chosen reference hardware.
 
 ## 11. Limitations and open items
 
-- Secret lifecycle hardening (§7), controlled performance verification (§10) and the CommonJS server build of this source (P8-3c proposal) are open.
+- The remaining secret-handling items (§7, "Still open"), controlled performance verification (§10) and the CommonJS server build of this source (P8-3c proposal) are open. R1 – R4 are implemented (P8-3b-0, awaiting the owner's acceptance).
 - The public-salt source (D1), the fairness-version freeze (D11), the per-round beacon (D3), the Node reference version (D4), OD-5 world disclosure and OD-18 float determinism of the engine path are open.
 - No `SeededRoundAuthority`, distribution test, verifier for a full round, server adapter, chain store, persistence, endpoint or message handler exists.
 - Selective voiding and cashout receipt honesty (D10) are open high-priority risks; cryptographic commitments alone do not solve them.

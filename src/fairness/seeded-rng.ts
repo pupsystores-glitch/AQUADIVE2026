@@ -41,11 +41,14 @@ export type BlockSource = (counter: number) => Uint8Array;
  * One purpose's stream for one round. It draws at most `drawLimit` values; the next call after
  * that throws `draw-limit-exceeded` and every later call throws again (it never wraps, repeats or
  * falls back to another source). Not safe to share between purposes.
+ *
+ * Lifecycle (P8-3b-0): `dispose()` zeroes the cached block and drops the block source; it is
+ * idempotent, and every later `next()` throws `secret-disposed`. Erasure is best effort only.
  */
 export class SeededStream {
   readonly purpose: string;
   readonly drawLimit: number;
-  #source: BlockSource;
+  #source: BlockSource | null;
   #block: Uint8Array | null = null;
   #draws = 0;
 
@@ -71,8 +74,17 @@ export class SeededStream {
     return this.drawLimit - this.#draws;
   }
 
-  /** The next value in [0, 1). */
+  /** True once `dispose()` has run. */
+  get disposed(): boolean {
+    return this.#source === null;
+  }
+
+  /** The next value in [0, 1). Throws `secret-disposed` after `dispose()`. */
   next(): number {
+    const source = this.#source;
+    if (source === null) {
+      throw new FairnessError("secret-disposed", `purpose ${this.purpose} stream was disposed`);
+    }
     if (this.#draws >= this.drawLimit) {
       this.#clear();
       throw new FairnessError(
@@ -83,14 +95,24 @@ export class SeededStream {
     const word = this.#draws % DRAWS_PER_BLOCK;
     if (word === 0) {
       this.#clear();
-      this.#block = this.#source(this.#draws / DRAWS_PER_BLOCK);
+      this.#block = source(this.#draws / DRAWS_PER_BLOCK);
     }
     const value = unitFromBlock(this.#block as Uint8Array, word);
     this.#draws++;
     return value;
   }
 
-  /** Serialization shows only public bookkeeping, never block material. */
+  /** Zeroes the cached block and drops the block source (idempotent). */
+  dispose(): void {
+    this.#clear();
+    this.#source = null;
+  }
+
+  /**
+   * Serialization shows bookkeeping, never block material. The draw count is outcome-relevant and
+   * therefore SECRET until the round's reveal (P8-3b, D-B4): a live stream must never reach a
+   * public message, snapshot or log, so a consumer keeps its live streams private.
+   */
   toJSON(): { purpose: string; drawsUsed: number; drawLimit: number } {
     return { purpose: this.purpose, drawsUsed: this.#draws, drawLimit: this.drawLimit };
   }
