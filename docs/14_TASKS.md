@@ -272,6 +272,19 @@ Status:
 | P8-1 | Exact scope, decisions P1-D1 … P1-D13 and acceptance gates prepared; **not started**. Blocking: phase gate (B1), documentation commits (B2), P8-1 contract approval (B3) |
 | Unchanged | No source, test, dependency or configuration change; docs/09 not edited. Phase 7 **IN PROGRESS**; Phase 8 **not started** |
 
+## P8-0E — P8-0 review acceptance and safe roadmap preparation (documentation only, 2026-11-18)
+
+*Separate from the P8-0 and P8-0 review entries above, which are preserved unchanged.*
+
+| Item | Status |
+|---|---|
+| Authorization | **Owner, 2026-11-18:** preserve the economy evidence, correct docs/09 as clearly marked errata, prepare the documentation commit separation and the P8-1 approval table. No staging, commit or push. Not an approval of any P8-0 decision |
+| Owner decision recorded | The owner acknowledged the review's economic findings (≈ 130.5×, ≥ 117.4× rigorous, P(floor) ≈ 16.12 %) with their assumptions. **The existing economic model is NOT approved for real-money operation; AQUADIVE stays PLAY-MONEY ONLY** until a separately authorized economic redesign, independent verification and compliance reviews. Game mathematics not modified |
+| Evidence | `qa/p8-0-review/` (local, Git-ignored, new `.gitignore` rule): the original analysis scripts, seeds, engine bundle (byte-identical to a fresh build of `01b061e`) and results; re-runs of the three deterministic scripts whose output was never saved; SHA-256 checksums; no sensitive data beyond a local user path |
+| docs/09 | Original P8-0 text preserved unchanged (331 lines added, 0 removed). Adds a banner, "▶ P8-0E" pointers, **§34 corrections register C1 – C12** (fact vs recommendation) and **§35 P8-1 authorization preparation** (phase gate, P1-D1 … P1-D13 approval table) |
+| Gates | Phase 7 **IN PROGRESS** (P7-C not closed); Phase 8 planning authorized, implementation **not**; P8-1 needs an explicit phase-gate exception (docs/09 §35.1); full E-A not started; OD-1 … OD-21 not approved |
+| Next | Owner review; then, if authorized, the documentation commits and the P8-1 decisions. **Stop condition:** no staging, commit, push or implementation without the owner's approval |
+
 ---
 
 Only one task may be active at a time.

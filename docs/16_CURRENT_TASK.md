@@ -54,6 +54,14 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **Git:** unchanged: `HEAD` `01b061e`, five local commits not pushed; nothing staged or committed.
 - **Stop condition:** await the owner's review.
 
+## Also current: P8-0E — P8-0 review acceptance and safe roadmap preparation — DELIVERED (2026-11-18, documentation only, uncommitted), AWAITING THE OWNER'S REVIEW
+
+- **Owner decision (2026-11-18):** the review's economic findings are acknowledged (≈ 130.5×, ≥ 117.4× rigorous, P(floor) ≈ 16.12 %, under the documented assumptions). **The existing economic model is NOT approved for real-money operation. AQUADIVE stays PLAY-MONEY ONLY** until a separately authorized economic redesign, independent verification and the applicable compliance reviews are complete. Game mathematics are not modified.
+- **Delivered:** the evidence in `qa/p8-0-review/` (local, Git-ignored); docs/09 errata (banner, pointers, §34 C1 – C12, §35 P8-1 table; original text unchanged); a proposed sequence of separate documentation-only commits (not executed).
+- **Gates:** Phase 7 **IN PROGRESS**, TASK 008 stays the active task, P7-C not closed. Phase 8 **planning authorized, implementation not authorized**. **P8-1 may start only with an explicit owner phase-gate exception** while Phase 7 is open (docs/09 §35.1), plus approval of P1-D1 … P1-D13 and the documentation commits first. Full E-A not started. OD-1 … OD-21 not approved.
+- **Git:** `HEAD` `01b061e`, five local commits not pushed; nothing staged, committed or pushed.
+- **Stop condition:** await the owner's review.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.

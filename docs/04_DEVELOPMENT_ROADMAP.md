@@ -181,6 +181,8 @@ Immersive player experience.
 
 Status: Pending — **not started.** *2026-11-18, P8-0: the owner authorized Phase 8 architecture planning as an explicit documentation-only exception while the Phase 7 close-out gates stay open. The proposal is `docs/09_BACKEND_ARCHITECTURE.md` (P8-0 PROPOSAL, not approved). It authorizes no implementation; every milestone P8-1 … P8-14 (docs/09 §29) and the economy analysis E-A (docs/09 §17.4) needs its own authorization. Phase 7 remains In Progress; no Phase 7 gate is waived. Open high-priority risk E-RISK-1 (the economy, docs/09 §17) is recorded.*
 
+*2026-11-18, P8-0E (documentation only): Phase 8 **planning** is authorized; Phase 8 **implementation** is not. Phase 7 remains **In Progress** and P7-C is not closed. P8-1 adds source files, so it would need an explicit owner **phase-gate exception** while Phase 7 is open ("Never skip phases", above), or the Phase 7 close first (docs/09 §35.1). Neither has been granted, and P8-1 has not started. E-RISK-1 is corrected to **Critical**: the never-cash-out return is ≈ 130.5× (≥ 117.4× rigorous) (docs/20 §2, docs/09 §34.1). **Owner directive:** the existing economic model is not approved for real-money operation, and AQUADIVE stays **play-money only** until a separately authorized economic redesign, independent verification and the applicable compliance reviews are complete.*
+
 Objectives
 
 - WebSocket

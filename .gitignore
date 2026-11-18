@@ -41,3 +41,5 @@ qa/v5-crash-fx/
 qa/v6-reset-transition/
 # Local V7 review captures (screenshots, reports); never committed
 qa/v7-reduced-motion/
+# Local P8-0 review economy-analysis evidence (scripts, results); never committed
+qa/p8-0-review/

@@ -2,6 +2,8 @@
 
 **P8-0 PROPOSAL — DOCUMENTATION ONLY — NOT APPROVED — PHASE 8 NOT STARTED.**
 
+> **⚠ P8-0E POST-REVIEW CORRECTIONS (2026-11-18): READ §34 FIRST.** The independent review `docs/20_P8-0_REVIEW_AND_EA_PRELIMINARY.md` found errors in this proposal. The most serious is that E-RISK-1 is understated by about 18×. **The original P8-0 text below is preserved unchanged as the historical record.** Each affected passage carries a short "▶ P8-0E" pointer to §34. §34 separates **corrected facts** (verified by the review) from **recommendations** (binding only on the owner's authorization). §35 prepares the P8-1 owner-approval table. **None of the 21 owner decisions OD-1 … OD-21 (§31.3) is approved.** **Owner directive (2026-11-18):** the existing economic model is **not approved for real-money operation**. AQUADIVE stays **play-money only** until a separately authorized economic redesign, independent verification and the applicable compliance reviews are complete.
+
 - **Date:** 2026-11-18
 - **Authorization:** the owner's P8-0 instruction of 2026-11-18. P8-0 is an explicit, documentation-only exception: Phase 8 *planning* may happen while the Phase 7 close-out gates stay open. It does not authorize any Phase 8 implementation.
 - **Phase status, unchanged by this document:** Phase 7 is **IN PROGRESS** (TASK 008 active; P7-C not authorized; see `docs/19_PHASE7_CLOSEOUT_READINESS.md`). No Phase 7 gate is waived or completed by P8-0. Phase 8 is **not started**. Phase 2 stays **In Progress**: this document drafts its remaining "server protocol design" portion, and that portion counts as delivered only after the owner accepts it.
@@ -47,12 +49,18 @@ This document does **not** claim that AQUADIVE is licensed, certified, audited, 
 
 **What is reused.** The engine was designed for this (docs/06 §16). Its domain functions (outcome distributions, multiplier curve, descent, creature tables, tuning) and its deterministic fixed-tick simulation run **unchanged** on the server through the public `GameEngine` facade, with two server-side implementations of existing interfaces: a seeded `Rng` and a seeded `RoundAuthority`. No engine, domain or settlement file needs to change for the server to *decide* rounds (§10.2).
 
+> ▶ **P8-0E C10 (§34.10):** true at runtime, with limits. A RoundScript also depends on how the engine is constructed and advanced, a server type-check pulls in DOM types through one `import type`, and OD-10b is unnecessary.
+
 **What does not carry over unchanged — two contract gaps found by P8-0.**
 
 1. **Client replica mode needs an engine change.** `RoundAuthority` is synchronous and is called at the transition (`sampleCrashPoint()` at entry(diving), `state-machine.ts:324`). A client cannot be handed the crash point at dive start without disclosing it. docs/06 §16's "swap two injected modules" is therefore true for the *server*, but not sufficient for the *client*: replica mode needs an owner-approved engine freeze exception (proposed **E-X8**, §27.3).
 2. **The world stream is outcome-relevant.** Goldfish (world stream) add up to +0.4 to the multiplier and speed the descent (`simulation.ts:126-162`). Whether a round crashes or reaches the sea floor, and the multiplier at any cashout tick, depend on the world seed as well as the crash point. The provably-fair commitment must therefore cover **both** streams (§16).
 
+> ▶ **P8-0E C11 (§34.11):** the replica-mode gap is larger than item 1 states. Under W-A it also reaches `simulation.ts`, and E-X8 is not ready. **P8-0E C3 (§34.3):** item 2 is confirmed and quantified. Overall, goldfish *raise* the floor probability (0.1544 → 0.1612).
+
 **The open economic risk.** A conservative calculation from the code (§17.2) shows that a player who never cashes out reaches the sea floor in at least ≈ 14.5 % of rounds and is then paid at least 50× the stake. That alone implies an expected return of **at least ≈ 7.26× the stake for that strategy**, before the jackpot and chest averages are applied. This is recorded as **OPEN HIGH-PRIORITY RISK E-RISK-1**. No RTP is asserted or chosen here; a separate economy-analysis task (**E-A**, §17.4) is proposed. **No real-value operation is possible before E-A is completed and an economic model is approved.**
+
+> ▶ **P8-0E C1 (§34.1) — CORRECTED MAGNITUDE.** The "≥ ≈ 7.26×" bound is true but materially understated. Under the uniform-RNG model A0 and the current tuning, the never-cash-out return is **≥ 117.4× (rigorous lower bound)**, **≈ 130.5× (estimate, 2.4 M real-engine paths)**, and **130.35× ± 0.77 end to end (1.2 M real-engine rounds)**. P(floor) ≈ 16.12 %. Severity: **Critical** for anything of value. Owner directive 2026-11-18: play money only.
 
 **Recommended first implementation.** Play-money only; one region; one active round authority with a fenced standby; identity and wallet behind ports so that both business models (independent platform, B2B operator integration) stay open without being built (§4). Protocol and a money-free server skeleton come first; money comes only after the round loop, the protocol and the provably-fair module are proven (§29).
 
@@ -279,11 +287,15 @@ The repository is a Lovable-connected single package at the root. Lovable expect
 
 The server importing `src/engine/domain/*` crosses docs/06 §4's "facade is the only public surface" rule. Only `src/fairness` needs it (to bind `sampleCrashPoint`, `sampleJackpot`, `rollBonusChests` to per-purpose streams, §16.5). **OD-10b:** either approve this read-only use, or export these three functions (or a `createRoundAuthority(rngs)` factory) from the engine facade in a one-line freeze exception. Recommended: the facade export (keeps §4's rule intact).
 
+> ▶ **P8-0E C10 (§34.10):** OD-10b is unnecessary. Three facade-exported `LocalRoundAuthority` instances, each over its own seeded stream, give the same per-purpose separation with no domain import and no facade change. Withdrawing OD-10b / E-X9 is a recommendation for the owner.
+
 ### 6.4 Code reuse summary
 
 | Reused unchanged | Added beside it | Changed only by an owner-approved exception |
 |---|---|---|
 | `domain/*`, `simulation.ts`, `state-machine.ts`, `game-engine.ts`, `events.ts`, `commands.ts`, `rng.ts` interface, `round-authority.ts` interface, `src/shared/stake.ts`, `world.ts` | `SeededRng`, `SeededRoundAuthority`, `RoundScript` precompute, server driver, protocol schemas | Client replica mode (E-X8, §27.3); facade export of outcome functions (OD-10b) |
+
+> ▶ **P8-0E C10, C11 (§34.10, §34.11):** the "changed only by exception" column is incomplete. A server `tsc` meets `state-machine.ts:44` (`import type { Phase } from "@/rendering/scene-renderer"`). E-X8 under W-A also reaches `simulation.ts`. The OD-10b entry is unnecessary.
 
 ---
 
@@ -334,6 +346,8 @@ The server importing `src/engine/domain/*` crosses docs/06 §4's "facade is the 
 
 - Max frame size: **4 KiB** client → server, **64 KiB** server → client (snapshots). Larger frames close the connection with code 1009.
 - `seq` lets the client detect gaps (§13.3).
+
+> ▶ **P8-0E C12 (§34.12):** `id` means a request id from the client and a message id from the server, while responses repeat `reqId` in the payload. A separate envelope correlation field (`re`) is recommended. §8.1 item 6 ("unknown fields rejected" at both ends) conflicts with §8.3's additive rule. Recommended: strict server inbound, tolerant client decoding.
 
 ### 8.3 Version negotiation
 
@@ -387,6 +401,8 @@ Not in v1 (OD-19): bet cancellation, auto-cashout, chat. Bet cancellation does n
 | `feed.bets` | `{roundId, entries: [{alias, slot, amountMinor, cashoutMultiplier?}]}` | batched ≤ 4 Hz, capped list (privacy: alias only) |
 | `server.notice` | `{kind: "drain"\|"maintenance", retryAfterMs?}` | before planned shutdown |
 
+> ▶ **P8-0E C7, C8 (§34.7, §34.8):** `welcome` is listed above as a public broadcast, but it carries `PlayerPrivateState`. It is a **session** message. `sync.snapshot` (the answer to `sync.request`, §8.5), `auth.ok` and `pong` are used but never defined here. All of them are session messages.
+
 **Private (to the owning player only):**
 
 | Type | Payload |
@@ -404,6 +420,8 @@ Not in v1 (OD-19): bet cancellation, auto-cashout, chat. Bet cancellation does n
 ### 8.7 Error and rejection codes (stable strings; never user-facing text)
 
 Engine-compatible: `not-in-betting`, `already-participating`, `invalid-amount`, `invalid-slot`, `not-diving`, `not-participating`, `already-cashed-out`, `not-bonus-eligible` (docs/06 §12–§13.2). Server additions: `ROUND_MISMATCH`, `INSUFFICIENT_FUNDS`, `STAKE_LIMIT`, `ROUND_EXPOSURE_LIMIT`, `DUPLICATE_REQUEST` (returns the original result), `RATE_LIMITED`, `AUTH_REQUIRED`, `AUTH_EXPIRED`, `PROTOCOL_UNSUPPORTED`, `MALFORMED`, `SERVER_BUSY`, `ROUND_VOIDED`, `INTERNAL`. Wording stays in `src/ui/strings.ts` (docs/07 §14).
+
+> ▶ **P8-0E C9, C12 (§34.9, §34.12):** `DUPLICATE_REQUEST` is listed as an error but defined as success (remove it). The engine codes `not-in-bonus` and `chest-already-picked` are missing (FACT, `state-machine.ts`). The two naming styles (kebab-case engine codes, SCREAMING_CASE server codes) need one style.
 
 ### 8.8 Example sequence (one jackpot round, one player, two slots)
 
@@ -455,6 +473,8 @@ JSON, permessage-deflate **off** by default (CPU and compression-oracle concerns
 7. Only then is a typed command handed to the round module, stamped with the **server receipt time** (monotonic, §11.1) and the player context.
 
 The engine's own validation (E-X2 `isValidStake` on the major-unit amount derived from `amountMinor`, phase guards) runs again inside the round module. Defence in depth: the gateway's checks never replace the engine's.
+
+> ▶ **P8-0E C9 (§34.9):** the money pattern `^[1-9][0-9]{0,15}$` cannot express zero (payouts, balances), and it is narrower than PostgreSQL `BIGINT`.
 
 ### 9.2 Identity models (OD-13)
 
@@ -521,12 +541,16 @@ Cost: ≤ 300 betting ticks + ≤ 1290 dive ticks of closed-form math per round 
 
 **What the server does not use from the engine:** its local participant slots, its E-X1 local bonus rule, its countdown as the source of wall-clock timing. The orchestrator owns those globally (§10.4).
 
+> ▶ **P8-0E C10 (§34.10):** chests are rolled at entry(bonus), 84 ticks after impact (`state-machine.ts:371-372`). So the precompute must run through entry(bonus), not stop at `shipImpact`. The script is a function of the seeds **and** of the engine's construction and advance pattern, because the dive time base is a floating-point difference of absolute tick times. That reference must be pinned in the fairness specification. Measured cost: ≈ 0.6–0.7 ms per full dive (informational). Creature ids restart at 1 per fresh engine.
+
 ### 10.3 Server tick scheduler
 
 - Round time is tick-indexed: dive tick *k* has the scheduled wall instant `T_k = T_dive + k × 16.667 ms` on the **monotonic** clock (`process.hrtime.bigint()`).
 - The scheduler wakes on a timer (target 4 ms granularity), computes the current tick from monotonic time, and processes every tick it has passed **in order** — it never drops ticks (unlike the client driver's catch-up cap, which exists for tab-switch behaviour, docs/06 §7).
 - Ticks are processed by looking up the `RoundScript`; there is no live simulation step to be late.
 - Event-loop lag is measured continuously (§23). If lag exceeds a threshold (OD-default 250 ms), the orchestrator stops accepting new bets for the next round and alerts; an in-flight round continues on schedule because decisions are tick-indexed by receipt time (§11).
+
+> ▶ **P8-0E C6 (§34.6):** outcomes cannot change, but **cashouts can**. Receipt time is captured when JavaScript reads the frame, which comes *after* any event-loop delay (§11.2). Lag near a crash therefore moves cashouts to later boundaries and turns would-be wins into losses. A paused process can also broadcast ticks after it has lost its lease.
 
 ### 10.4 Global timeline (default durations from `domain/tuning.ts`; changing any is an owner decision)
 
@@ -577,6 +601,8 @@ The engine applies commands at the next tick boundary, **before** that tick's st
 - On the floor tick, a manual cashout at boundary `terminalTick` is a manual cashout (not bonus-eligible), matching the engine's per-slot rule (docs/06 §13.2).
 
 Ties are impossible to resolve unfairly: two cashouts with the same boundary get the same multiplier; ordering inside a tick does not change any amount.
+
+> ▶ **P8-0E C4 (§34.4):** the rule leaves the **first boundary** (k = 1, before dive tick 1) unspecified. In the engine, a cashout applied there uses `m₀ = 1.00` (the multiplier is reset at entry(diving)), and it **succeeds even in an instant-crash round**. FACT (run): `cashedOut 1`, then `crashed 1`, both on tick 301. Whether the server allows or rejects it is an owner decision.
 
 ### 11.4 Latency policy (OD-8)
 
@@ -654,6 +680,8 @@ A spectator or player joining during a dive receives the PublicSnapshot at the c
 
 If the client sees a `seq` gap, or no `round.sync` for 2 s while diving, it sends `sync.request` and resumes from the returned snapshot. The server keeps no per-connection replay buffer in Phase 8 (snapshots are cheap; buffers are memory and complexity).
 
+> ▶ **P8-0E C8 (§34.8):** the "returned snapshot" is `sync.snapshot`, which §8.6 never defines. There is no replay buffer, so a private acknowledgement lost in a gap can only be recovered from that reply. It must therefore carry `PlayerPrivateState` for authenticated sessions, as well as the PublicSnapshot.
+
 ### 13.4 Server restart
 
 Clients receive `server.notice {drain}` (planned) or a dropped socket (unplanned), and reconnect. Round continuity across authority failure is governed by §21.4.
@@ -676,6 +704,8 @@ Clients receive `server.notice {drain}` (planned) or a dropped socket (unplanned
 ### 15.1 Goldfish
 
 Goldfish placement and consumption are server facts derived from the world stream and the simulation (`simulation.ts:141-158`). They change the multiplier path (+ up to 0.4) and the descent speed, hence the floor-reach tick and every cashout multiplier. They are therefore **outcome-relevant** and covered by the commitment (§16.2). The server emits `round.boost {tick, creatureId}` at consumption so that every client shows the same boost, even if its local float simulation drifts (§16.9).
+
+> ▶ **P8-0E C3 (§34.3):** confirmed and quantified. Goldfish shorten the dive and lower the path maximum, so their net effect is to **raise** P(floor) from 0.1544 to 0.1612. P(floor | world path) ranges over ≈ 0.145 – 0.209.
 
 ### 15.2 Jackpot
 
@@ -722,6 +752,8 @@ Consequences:
 1. The outcome stream alone does not determine the round. **Crash vs floor is a function of `crashAt` and the world path**: the floor is reached iff `crashAt` exceeds the maximum multiplier the path attains before tick `terminalTick`. That maximum depends on goldfish timing.
 2. Because one sequential `outcome` stream serves three purposes, the crash point's variable draw count (1 or 2) shifts the positions of the jackpot and chest draws. A verifier must replay the exact draw order. Per-purpose sub-streams remove this coupling (§16.5) without changing any distribution.
 3. Today both streams are `Math.random` (`rng.ts`): not seedable, not committable, not verifiable — the accepted TASK 001 flaw.
+
+> ▶ **P8-0E C3 (§34.3):** the spawn interval is `52 − 18·U` px, i.e. **34–52 px (mean 43)**, not "≈ 43–52" (`simulation.ts:143-146`, `tuning.ts`). Consequence 1, stated precisely: the floor is reached iff `crashAt` exceeds the path maximum **including the floor tick itself**, because the crash check precedes the floor check within a tick.
 
 ### 16.2 Requirements
 
@@ -781,6 +813,8 @@ The "nonce" is the pair `(roundNumber, purpose-counter)`. `roundNumber` is a str
 | W-B Disclose the world seed at dive start | Client simulates the world locally | Minimal bandwidth | Any client can compute the whole multiplier path and the floor threshold of the round before it happens (partial information about the outcome: "if crashAt > m_max, floor"); requires bit-identical float behaviour across browsers to agree with the server |
 | W-C Disclose at betting open | — | — | Rejected: discloses the floor threshold before bets |
 
+> ▶ **P8-0E C3 (§34.3):** the world stream is **materially** outcome-relevant, so W-C must stay rejected. Under the *current* economy, foresight adds nothing (holding dominates). Under a rebalanced model it may: W-B discloses the path maximum at dive start, and W-A discloses the path ≈ 900 px (≈ 3–7 s) ahead. **OD-5 must be re-checked against whatever model E-A proposes.**
+
 ### 16.8 Secret storage and handling
 
 - Chains are generated offline or by the authority at chain creation with `crypto.randomBytes(32)`.
@@ -813,6 +847,8 @@ The "nonce" is the pair `(roundNumber, purpose-counter)`. `roundNumber` is a str
 
 ### 17.1 Status
 
+> ▶ **P8-0E C1, C2 (§34.1, §34.2):** §17 is superseded in magnitude by docs/20 §2. Severity is raised to **CRITICAL** for anything of value. The text below is the original P8-0 record.
+
 **OPEN. HIGH PRIORITY. NOT RESOLVED BY PHASE 8.** Recorded since TASK 001 ("jackpot economics far above intended RTP (~1 in 6 rounds reaches the sea floor)", docs/15) and carried verbatim through the engine extraction on purpose (docs/06 §1, §20). P8-0 does **not** assert an RTP, does **not** select a target RTP and does **not** change `src/engine`, outcome distributions or settlement.
 
 ### 17.2 Conservative evidence (Verified, code + calc)
@@ -826,6 +862,8 @@ The following uses only facts read from the code and worst-case (smallest) value
 5. **Lower bound.** A player who places a bet and never cashes out manually receives, in expectation, **at least 0.145 × 50 ≈ 7.26× the stake per round** (Verified, calc).
 
 This bound ignores: rounds with `crashAt ≤ 6.62` that still reach the floor (path-dependent, raising the floor probability toward TASK 001's "~1 in 6"); the jackpot's mean (142.5× from the band means) and the chest's mean (5.68× per chest from the band means), both computed from the code but **not** combined into a claim here because the combination, rounding (`toFixed(2)`), boost dynamics and pick behaviour must be verified by E-A. Whatever the exact figure, the conservative bound alone shows the current economy returns far more than the stake under a trivial strategy. **The game in its current economic form must not be operated with anything of value.**
+
+> ▶ **P8-0E C1, C2 (§34.1, §34.2).** Item 3 holds for `1.01 ≤ x < 200` only. At x = 200 the clamp leaves an atom: P(crashAt = 200) = 0.004802 and P(crashAt > 200) = 0. Item 1's supremum is 6.6143 (it is not "≈ 6.6183"). Item 5's arithmetic gives 7.253, and a lower bound is rounded **down**, so it reads **≥ 7.25×** (or ≥ 7.259× with the exact supremum). That bound is far from tight. The corrected never-cash-out return is **≥ 117.4× (rigorous) and ≈ 130.5× (estimate)**.
 
 ### 17.3 What Phase 8 does about it (RECOMMENDED)
 
@@ -933,6 +971,8 @@ ledger_transactions(id uuid pk, seq bigserial unique, tenant_id, kind text,   --
 ledger_entries     (id bigserial pk, tx_id uuid fk, account_id uuid fk, currency text,
                     amount_minor bigint not null check (amount_minor <> 0))
 -- deferred constraint trigger: per tx_id and currency, sum(amount_minor) = 0
+-- ▶ P8-0E C9 (§34.9): when payout = stake, the house leg -(payout - stake) is 0 and violates
+--   amount_minor <> 0 (m = 1.00, or small stakes after rounding down). Zero legs must be omitted.
 -- triggers + privileges: no UPDATE/DELETE on ledger_transactions / ledger_entries
 
 -- fairness
@@ -983,6 +1023,8 @@ audit_log          (id bigserial pk, at timestamptz, actor text, action text, su
 
 Every transaction that writes rounds, bets or ledger rows also asserts the fencing epoch (§21.2).
 
+> ▶ **P8-0E C9 (§34.9):** "Crash loss: one tx per round (`loss:{roundId}`), chunked if large" reuses one *unique* idempotency key for several transactions. Use `loss:{roundId}:{chunk}` or per-bet keys. A database-enforced betting close is recommended over the SETTLE-IN compensating voids (§10.4).
+
 ---
 
 ## 20. Idempotency and concurrency (RECOMMENDED)
@@ -993,6 +1035,8 @@ Every transaction that writes rounds, bets or ledger rows also asserts the fenci
 - Ledger: `ledger_transactions.idempotency_key` is derived deterministically from the business fact (`stake:{betId}`, `cashout:{betId}`, `loss:{roundId}`, `jackpot:{betId}`, `void:{betId}`), so a retried settlement can never create a second transaction, whoever retries it.
 - Bets: natural key `(roundId, playerId, slot)`.
 - Rounds: `round_number` unique; `(chain_id, chain_index)` unique.
+
+> ▶ **P8-0E C9 (§34.9):** several cases are undefined: the same request id with a *different* payload, which results are stored for replay (and which may be retried), and the retention window.
 
 ### 20.2 Per-player serialization
 
@@ -1034,6 +1078,8 @@ Leadership protects money writes, and PostgreSQL is where those writes happen. A
 - Standby polls the lease every 1 s and acquires only after expiry.
 - Clock dependence: `now()` is the database's clock only; process clocks are not compared.
 
+> ▶ **P8-0E C6, C9 (§34.6, §34.9):** `FOR SHARE` on the one lease row in every money transaction, plus a renewing `UPDATE` every second, queues locks on a single hot row. Self-fencing covers database writes, but not broadcasts: a paused process that wakes up can emit round ticks before its renewal loop notices the lost lease.
+
 ### 21.3 Deterministic recovery state
 
 On acquiring the lease, the new authority reads the last round with state ∉ {`settled`, `voided`}. Because outcomes are a function of the committed chain seed, it can rebuild that round's `RoundScript` exactly.
@@ -1048,6 +1094,8 @@ On acquiring the lease, the new authority reads the last round with state ∉ {`
 | Settlement batch partially committed | Re-run: idempotency keys make every step safe to repeat |
 
 Alternative (OD-11 option): resume a `diving` round from the script at the current wall time. Not recommended (unfair to players who were disconnected; complicates audit). Every recovery action writes an `audit_log` row with the epoch, round, and the decision taken.
+
+> ▶ **P8-0E C5 (§34.5) — SELECTIVE VOIDING.** The authority knows every future outcome (the chain), and the `diving` row above voids with refunds. A malicious or pressured operator could therefore turn a known floor round (≈ 809× per open bet) into a refund by forcing a failover. Provable fairness does not detect this.
 
 ### 21.5 Planned deploys
 
@@ -1239,6 +1287,8 @@ Options:
 
 R-A keeps docs/06's "one engine core, two modes" goal and is the honest completion of the §16 contract. It must be specified and approved before P8-6 starts; P8-0 does not authorize it.
 
+> ▶ **P8-0E C11 (§34.11) — R-A IS UNDER-SCOPED; E-X8 NOT READY.** Under W-A the client must not draw world randomness or run its own collision and boost, so R-A changes `simulation.ts` (spawner and collision), not only "state machine + facade". R-A as scoped here works only with W-B, which this document rejects. R-A must also define several things: multipliers displayed above an unknown crash point, with a snap-back on `round.crashed`; holding at the floor until `round.impact`; jumping forward when the server is ahead; and the long-lived client engine's different floating-point time base.
+
 ### 27.4 Client wallet in network mode
 
 The wallet store's listeners are replaced by appliers of server messages (`bet.accepted`, `bet.cashedOut`, `bet.settled`, `wallet.balance`), as docs/07 §10 and §18 planned. M1's local guards remain as tripwires. M2 / B-R (integer-cent client ledger) becomes largely moot for network mode — the server ledger is integer — but the client must parse `amountMinor` strings exactly (BigInt) and format them for display; that work is part of P8-10.
@@ -1280,6 +1330,8 @@ Order principle: **protocol and money-free skeleton first; fairness and the roun
 8. **Rollback:** revert the commit (no consumer yet).
 9. **Owner decisions:** approve §8; OD-19 (bet cancel excluded).
 10. **Commit:** `feat(protocol): add versioned protocol v1 schemas (P8-1)`.
+
+> ▶ **P8-0E C12 (§34.12), §35:** OD-7 and OD-19 do not block P8-1. The format is neutral, and cancellation can be added later as a new type. `src/shared/README.md` does not need to change. The revised P8-1 scope is docs/20 §5. The owner-approval table and the phase-gate condition are in §35. **P8-1 is not authorized.**
 
 ### P8-2 — Server skeleton (no game, no money)
 
@@ -1490,6 +1542,8 @@ Native WebSocket (§7); one Fastify service, modular, no microservices (§5); pr
 | OD-20 | Jackpot settlement timing | One settlement at bonus resolution / two-step (impact + chest) | One settlement | P8-10 |
 | OD-21 | Data protection and log retention | Retention periods, player-data handling | Legal review | P8-8 |
 
+> ▶ **P8-0E (§34.14):** **none of OD-1 … OD-21 is approved.** The review recommends withdrawing OD-10b (C10) and extending OD-11 (selective voiding, C5) and OD-8 (receipt lag, C6). It re-raises OD-16 (full E-A, C1) and asks for OD-5 to be re-checked after E-A (C3). It adds four owner decisions: the first-boundary cashout rule (C4), the `Phase` type-import exception (C10), the root ESLint scope for `server/` (C12) and the P8-1 phase gate (§35.1).
+
 ---
 
 ## 32. Risks
@@ -1507,6 +1561,8 @@ Native WebSocket (§7); one Fastify service, modular, no microservices (§5); pr
 | R-9 | Scope creep into admin, payments or real money | Medium | §3.2 non-goals; one milestone at a time |
 | R-10 | Phase 7 gates remain open while Phase 8 planning proceeds | Low (documentation only) | P8-0 changes no source; Phase 7 records preserved |
 
+> ▶ **P8-0E (§34.13):** R-1 is **Critical** (≈ 130.5×, not ≥ 7.26×). R-2 is understated (C11). New risks from the review: selective voiding (C5), receipt lag (C6), a construction-pinned fairness reference (C10), lease-row lock contention (C9), and minimum-stake rounding (§34.1).
+
 ---
 
 ## 33. Repository state at P8-0 (Verified)
@@ -1514,6 +1570,281 @@ Native WebSocket (§7); one Fastify service, modular, no microservices (§5); pr
 - Branch `develop`, `HEAD` = `01b061e` (`feat(a11y): honor reduced motion preferences (V7)`), five local commits ahead of `origin/develop` (`d1ccb9b`): R1 `cede9be`, V4 `9bc714d`, V5 `dfe3342`, V6 `232c554`, V7 `01b061e`. Not pushed by P8-0.
 - Uncommitted before P8-0 and preserved: `docs/14_TASKS.md`, `docs/16_CURRENT_TASK.md` (the P7-C readiness-audit entries) and the untracked `docs/19_PHASE7_CLOSEOUT_READINESS.md`.
 - P8-0 adds this file and appends clearly separated P8-0 entries to docs 04, 14, 15 and 16. No source, dependency, build, deployment, `AGENTS.md`, `vite.config.ts`, `package.json` or lockfile change. Nothing staged, committed or pushed.
+
+---
+
+## 34. P8-0E — Post-review corrections register (2026-11-18)
+
+**CORRECTIONS ONLY — §0 – §33 ABOVE ARE THE ORIGINAL P8-0 TEXT, PRESERVED UNCHANGED (ONLY "▶ P8-0E" POINTERS WERE ADDED) — NO OWNER DECISION APPROVED — PHASE 8 IMPLEMENTATION NOT AUTHORIZED.**
+
+- **Authorization:** the owner's instruction "P8-0 Review Acceptance and Safe Roadmap Preparation" (2026-11-18), Task 2. Documentation only.
+- **Source:** `docs/20_P8-0_REVIEW_AND_EA_PRELIMINARY.md` §2 – §4 (its corrections register K1 – K14). docs/20 itself is unchanged.
+- **Evidence:** `qa/p8-0-review/`. This is local and Git-ignored: the original analysis scripts, seeds, bundle and results, re-runs of the deterministic scripts, and checksums. The engine bundle analysed is byte-identical to a fresh build of `HEAD` `01b061e`.
+- **Owner acknowledgement (2026-11-18):** the owner acknowledged the economic finding (C1) as the verified findings of that analysis, with its documented assumptions and limitations. The other corrections of fact are verified by the review and await the owner's acceptance of this register.
+
+| Label | Meaning |
+|---|---|
+| **CORRECTED FACT** | Verified by the review (FACT code/run, MATH or ESTIMATE in docs/20's sense). It replaces the original statement as a matter of fact |
+| **RECOMMENDATION** | A proposal. **Binding only on the owner's authorization** |
+| **OWNER DECISION** | Needs the owner. Not decided here |
+
+### 34.0 Map
+
+| # | Topic | docs/09 places | docs/20 | Kind |
+|---|---|---|---|---|
+| C1 | Economic risk magnitude | §1, §17.1, §17.2 item 5, §32 R-1; docs 14/15/16 P8-0 entries | §2, K1 | Fact + owner directive |
+| C2 | Crash distribution boundary | §17.2 items 1, 3, 5 | §2.2, §2.5, K2 | Fact |
+| C3 | Goldfish and world RNG | §1 item 2, §15.1, §16.1, §16.7 | §2.1, §2.3, §3.4, K3 | Fact + recommendation |
+| C4 | Cashout first-tick behaviour | §11.3 | §2.2 item 9, §3.6 F1, F3 | Fact + owner decision |
+| C5 | Selective round voiding | §16, §21.4 | §3.5 E1, E2, K13 | Fact + owner decision |
+| C6 | Server event-loop lag | §10.3, §11.2, §21.2 | §3.6 F2, §3.7 G4 | Fact + recommendation |
+| C7 | Public vs session-private messages | §8.6 | §3.8 H1, H3, K8 | Fact + recommendation |
+| C8 | Undefined `sync.snapshot` | §8.5, §8.6, §13.3 | §3.8 H2, K8 | Fact + recommendation |
+| C9 | Idempotency and ledger | §8.7, §9.1, §10.4, §19.2, §19.3, §20.1, §21.2 | §3.6 F4, §3.7 G1–G3, §3.9 I3, I4, I6, K11, K12 | Fact + recommendation |
+| C10 | Engine reuse limitations | §1, §6.3, §6.4, §10.2, OD-10b | §3.1 A1–A4, §3.2 B1–B3, K4–K6 | Fact + recommendation |
+| C11 | Client replica-mode scope | §1 item 1, §6.4, §27.3, §32 R-2 | §3.3 C1, C2, K7 | Fact + recommendation |
+| C12 | Other protocol, fairness and repository items | §8.1–§8.3, §8.7, §9.1, §16.3, §26, §29 P8-1 | §3.5 E3–E5, §3.9 I1, I2, I5, §3.10, K9, K10, K14 | Fact + recommendation |
+
+### 34.1 C1 — Economic risk magnitude (E-RISK-1)
+
+**Original (P8-0, preserved in §1 and §17.2):** a never-cash-out player reaches the floor in "at least ≈ 14.5 %" of rounds and receives "at least ≈ 7.26× the stake per round". Severity "High" (§32 R-1).
+
+**CORRECTED FACT** (all gross, stake included; 1.00 = break-even):
+
+| Quantity | Value | Kind |
+|---|---|---|
+| P(floor) | **0.161239** (1 in 6.20), SE 0.000004. Rigorous bracket [0.14518, 0.31716] | ESTIMATE (2.4 M real-engine paths); MATH |
+| Never cash out | **≥ 117.40×** rigorous; **≈ 130.51×** (path SE 0.003; E[F] bracket gives 130.39 – 130.63); end to end **130.35× ± 0.77** (1.2 M real `GameEngine` + wallet rounds) | MATH; ESTIMATE |
+| Floor payout E[F] | ∈ [808.654, 810.146] (≈ 809.40); min 50.00, max 25,000 | MATH |
+| Any cashout rule | Cashout part ≤ **0.9603**, even with perfect foresight of the world path. Only the floor beats it | MATH |
+| Fixed targets ≤ 4 | ≈ 0.959 – 0.960 (a classic 3.97 % edge) | ESTIMATE |
+| Best response | Never cash out, on both slots (Dual Bet is linear: ≈ 2 × 130.5 stakes) | ESTIMATE |
+| House break-even | Lost as soon as more than ≈ **0.03 %** of all stake is held to the floor | Derived |
+| Informed chest pick | ≈ 258× (the local client exposes all three chest values today) | MATH |
+| Minimum stake | Stake 0.01 returns 0.63 – 0.95 on cashout targets (rounding down) | ESTIMATE |
+
+**Root cause (MATH):** ≈ 15 – 16 % of the crash distribution lies above the highest multiplier a dive can reach (≈ 6.6). The game turns that tail into an automatic payout averaging ≈ 809×. No crash-point retuning alone fixes this while the floor pays ≥ 50×.
+
+**Assumptions and limitations (preserved from docs/20):** A0, i.e. `Math.random` treated as i.i.d. U[0,1) (V8's generator is not a certified RNG); the current tuning; the bet is accepted and held; credits stay below the W11 envelope (2^44 units). Cross-engine float behaviour (OD-18) is not settled. That the path maximum is the floor-tick value was observed on 2.4 M paths, not proved (no result depends on it). This is a **preliminary** analysis, not the full E-A.
+
+**OWNER DIRECTIVE (2026-11-18, recorded):** the existing economic model is **NOT approved for real-money operation**. AQUADIVE remains **PLAY-MONEY ONLY** until a separately authorized economic redesign, independent verification and the applicable compliance reviews are complete. The game mathematics are **not** modified now.
+
+**Severity:** **Critical** for anything of value; contained by play money.
+
+**RECOMMENDATION:** authorize the full E-A (OD-16, re-raised). Remedies belong to E-A9 and are not proposed here.
+
+### 34.2 C2 — Crash distribution boundary
+
+**Original (§17.2):** item 3, "For 1.01 ≤ x ≤ 200, P(crashAt > x) = 0.97 × 0.99 / x"; item 1, "never exceeds ≈ 6.6183 < 6.62"; item 5, "≈ 7.26×".
+
+**CORRECTED FACT (MATH under A0; FACT run for the dive):**
+
+- P(crashAt = 1.00) = 0.03; P(crashAt = 1.01) = 0.019208.
+- **P(crashAt > x) = 0.9603 / x for 1.01 ≤ x < 200.** At x = 200 the clamp leaves an atom: P(crashAt = 200) = 0.004802 and P(crashAt > 200) = 0. Median ≈ 1.92.
+- No-boost floor on dive tick 1290, `m₁₂₉₀ = 6.218321`. The boost bonus is at most 0.396 (decay is applied before use) and boost only shortens the dive. So the tight supremum is **6.614321** (it is not "≈ 6.6183"). The fastest conceivable floor is tick 782 (path maximum ≥ 3.0278).
+- Item 5's arithmetic: `0.9603 / 6.62 × 50 = 7.253`. A lower bound is rounded down, so it reads **≥ 7.25×** (≥ 7.259× with the exact supremum). It is true but not tight; see C1.
+- §18.5's cashout cap "≤ 6.62 under current tuning" stays valid (6.6143 < 6.62).
+
+### 34.3 C3 — Goldfish and world RNG implications
+
+**Original:** §16.1 "creatures spawn every ≈ 43–52 world px"; §1 item 2 and §15.1 say goldfish make the multiplier reach `crashAt` earlier; §16.1 consequence 1 describes the path maximum "before tick `terminalTick`".
+
+**CORRECTED FACT:**
+
+- The spawn interval is `52 − 18·U` px: **34–52 px (mean 43)** (`simulation.ts:143-146`, `tuning.ts`). Goldfish are 4 % of creatures in every depth band. 45 % of goldfish lie on the anchor's line, and the anchor (2–9 px per tick) cannot skip the 56 px pickup window.
+- Goldfish consumed per full dive: mean 1.75 (0: 17.2 %, 1: 30.5 %, 2: 26.9 %, 3: 15.6 %, 4: 6.7 %, ≥ 5: 3.1 %).
+- Goldfish do make the multiplier reach `crashAt` earlier, but they also shorten the dive and lower the path maximum. **Net effect: P(floor) rises from 0.15443 (no goldfish, exact) to 0.16124.**
+- The world stream is **materially** outcome-relevant: P(floor | world path) ranges over ≈ 0.145 – 0.209 across observed paths. The world path does not depend on `crashAt`; `crashAt` only stops it.
+- The floor is reached iff `crashAt` exceeds the path maximum **including the floor tick** (the crash check precedes the floor check within a tick).
+
+**RECOMMENDATION:** W-C stays rejected. W-A stays recommended for OD-5 under the current economy, where foresight adds nothing because holding dominates. **OD-5 must be re-checked against any model E-A proposes:** if the floor value comes close to the path-maximum range (≈ 4.6 – 6.6), W-B (path maximum known at dive start) and W-A (path ≈ 900 px ahead) become profitable signals. Server-emitted `round.boost` facts plus the reference verifier (OD-18 (a)) stay the recommended approach.
+
+### 34.4 C4 — Cashout first-tick behaviour
+
+**Original (§11.3):** "A cashout received in `(T_{k−1}, T_k]` is applied at boundary k with multiplier `m_{k−1}`; it succeeds iff `k − 1 < terminalTick`." The first boundary (k = 1, `m₀`) is not discussed.
+
+**CORRECTED FACT (FACT run, real engine):** a cashout applied at the first dive boundary uses `m₀ = 1.00` (`simulation.ts` resets the multiplier at entry(diving)). It **succeeds even in an instant-crash round**: `diveStarted` on tick 300, then `cashedOut 1` and `crashed 1` on tick 301. The strategy "always cash out at the first boundary" returns **exactly 1.0000**. It is not profitable; it only removes the 3 % instant-crash loss for that bet. §11.3's rule (with terminalTick = 1) already implies this, but does not say so.
+
+**OWNER DECISION (F1, not decided):** allow it, for parity with the engine, or reject cashouts until dive tick 1. Economic effect: none beyond removing the instant-crash loss for that bet.
+
+**RECOMMENDATION (F3):** a rejection caused by the crash must never reach a client before the public `round.crashed`.
+
+### 34.5 C5 — Selective round voiding
+
+**Original (§21.4):** a round in `diving` at a failure is voided, cashed bets stand and open bets are refunded; "Players could not act during the outage".
+
+**CORRECTED FACT (design analysis):** the authority knows every future outcome (the pre-generated chain, §16.3). A floor round pays ≈ 809× per open bet in expectation. A malicious or pressured operator can therefore convert a known floor round into a refund by forcing a failover. **Provable fairness proves the seeds; it does not detect selective voiding.** Likewise (E2), the commitment proves outcomes but not that a cashout's receipt tick was assigned honestly.
+
+**OWNER DECISION (extends OD-11; not decided).** RECOMMENDATION:
+
+- an outcome-independent incident policy;
+- a public void log that lists each voided round's revealed outcome;
+- void-rate monitoring split by outcome (crash vs floor);
+- server-signed `bet.cashedOut` receipts carrying the receipt tick, and a statement of this limitation on the verification page.
+
+### 34.6 C6 — Server event-loop lag
+
+**Original (§10.3):** "an in-flight round continues on schedule because decisions are tick-indexed by receipt time"; the 250 ms lag threshold stops bets for the *next* round. §21.2 self-fences database writes.
+
+**CORRECTED FACT:** by §11.2's own definition, receipt time is captured when JavaScript reads the frame, which is **after** any event-loop delay. Outcomes cannot change, but lag near a crash moves cashouts to later boundaries and turns would-be wins into losses. A paused process that wakes up can emit round broadcasts before its renewal loop notices the lost lease, because self-fencing covers writes, not broadcasts.
+
+**RECOMMENDATION (extends OD-8; not decided):**
+
+- a `receipt_lag` metric;
+- a policy for rounds whose lag exceeds a threshold (flag, void or hold the crash broadcast); any void must respect C5's outcome independence;
+- precompute and other heavy work kept off the gateway's event loop (a worker thread for socket reading is an option);
+- every broadcast gated on monotonic time since the last successful lease renewal (G4).
+
+### 34.7 C7 — Public versus session-private message separation
+
+**Original (§8.6):** `welcome { …, player?: PlayerPrivateState, … }` is listed under "Public (broadcast to every connection)".
+
+**CORRECTED FACT:** `welcome` carries private state. It is a **session** message, and so are `auth.ok`, `sync.snapshot`, `pong` and `error`. Today `chestsRevealed` and the local public state carry all three chest values (H3). So §15.4's "no values until the window closes" is necessary, not optional.
+
+**RECOMMENDATION (P1-D5, §35):** three typed unions, `ClientMessage`, `PublicServerMessage` and `SessionServerMessage`. Session: `welcome`, `auth.ok`, `sync.snapshot`, `pong`, `error`, every `bet.*`, `bonus.pick*` and `wallet.*`. The gateway's broadcast path accepts only `PublicServerMessage` (type-enforced, with a type-level test). P8-5's runtime allow-list builders (§12.4) remain required.
+
+### 34.8 C8 — The undefined `sync.snapshot` message
+
+**Original:** §8.5 acknowledges `sync.request` with `sync.snapshot`; §13.3 resumes "from the returned snapshot". §8.6 never defines `sync.snapshot`, `auth.ok` or `pong`.
+
+**CORRECTED FACT:** there is no per-connection replay buffer (§13.3). A private acknowledgement lost in a `seq` gap can therefore only be recovered from the resync reply.
+
+**RECOMMENDATION (P1-D13 draft):** `sync.snapshot` is a session message `{ snapshot: PublicSnapshotV1, player?: PlayerPrivateStateV1 }`, with `player` present for authenticated sessions. It also defines `auth.ok { player }` and `pong { clientTs, serverTimeMs }`.
+
+### 34.9 C9 — Idempotency and ledger issues
+
+| Item | Original | CORRECTED FACT | RECOMMENDATION (needs authorization) |
+|---|---|---|---|
+| I3 | §8.7 lists `DUPLICATE_REQUEST` as an error; §20.1 defines it as success | Self-contradictory | Remove the code; a duplicate replays the original final response |
+| I4 | §20.1 | Undefined: same id with a different payload; what is stored; retention | P1-D8: scope `(playerId, id)`; at most one effect per id; same id + same canonical payload → original response; different payload → `idempotency-conflict` (not stored); business results stored, pre-processing errors not stored; retention ≥ settlement + 24 h |
+| I6 | §9.1 `^[1-9][0-9]{0,15}$` | Cannot express zero (payouts, balances); narrower than `BIGINT` | P1-D9: stakes `^[1-9][0-9]{0,17}$`, amounts `^(0\|[1-9][0-9]{0,17})$`, `bigint` only |
+| F4 | §19.2 `amount_minor <> 0` | The house leg `−(payout − stake)` is 0 when payout = stake (m = 1.00, or tiny stakes after rounding down) | Omit zero legs |
+| G2 | §19.3 `loss:{roundId}`, "chunked if large" | One unique key for several transactions | `loss:{roundId}:{chunk}` or per-bet keys |
+| G1 | §21.2 `FOR SHARE` on the lease row in every money transaction + renewing `UPDATE` each second | Lock queueing and MultiXact churn on one hot row | Money transactions `FOR KEY SHARE` + epoch check; renewal a non-key `UPDATE`; acquisition `SELECT … FOR UPDATE` first; load-test in P8-7 |
+| G3 | §10.4 SETTLE-IN barrier with compensating voids | Works, but relies on after-the-fact voids | Database-enforced close: each bet transaction share-locks the `rounds` row and requires `state = 'betting'` |
+| G5 | Double entry, append-only, `BIGINT`, deterministic keys, conditional updates, reconciliation | Sound | — |
+
+### 34.10 C10 — Engine reuse limitations
+
+**Original:** §1 and §6.4 "No engine, domain or settlement file needs to change"; §10.2 precompute "until `crashed` or `shipImpact` fires"; §6.3 OD-10b.
+
+**CORRECTED FACT:**
+
+- **A1, construction pinning (FACT run):** dive time is `ticks·(1/60) − diveStartedAt`, a floating-point difference that depends on the absolute tick count. 1,204 of 1,290 dive-tick times differ in the last bits between a dive starting at tick 300 and one starting at tick 500,000. A RoundScript is a function of the seeds **and** of the engine's construction and advance pattern. `BETTING_WINDOW_SECONDS`, `TICK_SECONDS` and every tuning constant become fairness-relevant.
+- **A2:** chests are rolled at entry(bonus), 84 ticks after impact (`state-machine.ts:371-372`), not at impact.
+- **A3:** a full 1,290-tick dive costs ≈ 0.6 – 0.7 ms in Node on the dev machine (informational; not saved as an output file).
+- **A4:** creature ids restart at 1 in each fresh engine; a long-lived client engine continues them.
+- **B1:** per-purpose streams need no domain import: three facade-exported `LocalRoundAuthority` instances, each over its own seeded stream, give the same separation. **OD-10b / E-X9 is unnecessary.**
+- **B2:** `state-machine.ts:44` is `import type { Phase } from "@/rendering/scene-renderer"`. Runtime bundling erases it, but a server `tsc` then needs the DOM lib and `vite/client` types.
+- **B3:** the public `events.emit`, the live references from `getPublicState()`, and `snapshot()` exposing `crashAt` are harmless inside the authority process, provided the script copies values.
+
+**RECOMMENDATION:** the fairness specification (`fv`) pins the reference construction: a fresh engine per round, a 300-tick betting countdown, and `advance(TICK_SECONDS)` per tick. Precompute through entry(bonus). Protocol creature ids are server ids. Withdraw OD-10b. **OWNER DECISION (before P8-2/P8-3):** a one-line engine freeze exception importing `Phase` from `@/rendering/render-state` (recommended), or DOM + `vite/client` types in `server/tsconfig.json`.
+
+### 34.11 C11 — Client replica-mode scope limitations
+
+**Original (§27.3):** R-A changes the "state machine + facade"; "The world is fed from `round.world` (W-A)".
+
+**CORRECTED FACT:** under W-A the client must not draw world randomness and must not run its own collision or boost. It must take creatures and boost facts from the server. That changes `simulation.ts` (spawner and collision) as well. R-A as scoped works only with W-B, which §16.7 rejects. R-A is also missing these definitions:
+
+- displayed multipliers above an unknown crash point, and the snap-back on `round.crashed`;
+- holding at the floor until `round.impact`;
+- jumping forward when the server is ahead;
+- the long-lived client engine's different float time base (C10 A1).
+
+**RECOMMENDATION:** do not approve E-X8 now. Before P8-6, run a design spike that compares a correctly scoped R-A with R-B. R-B is a client replica driver that projects server samples into `RenderState`; it needs `multiplierAt` / `descentSpeed` exported from the facade, or no extrapolation. P8-1 carries what both need: tick-stamped samples `(tick, multiplier, boost, worldY)`, creature DTOs with server ids, and boost facts. **E-X8 does not block P8-1.** Severity of §32 R-2: High and understated.
+
+### 34.12 C12 — Other protocol, fairness and repository items
+
+| Item | CORRECTED FACT | RECOMMENDATION |
+|---|---|---|
+| I1 envelope `id` (§8.2) | `id` means a request id from the client and a message id from the server; responses repeat `reqId` in the payload | A separate correlation field `re` (P1-D3) |
+| I2 strictness (§8.1 item 6 vs §8.3) | Strict unknown-field rejection in both directions conflicts with "add optional fields within a major version" | Strict server inbound; tolerant client decoding (P1-D4) |
+| I5 codes (§8.7) | `not-in-bonus` and `chest-already-picked` are missing; two naming styles | One kebab-case registry (P1-D11) |
+| Depth limit (§9.1 "> 4") | A choice, not an error | P1-D4 proposes ≤ 6 to fit snapshot nesting (a deviation for approval) |
+| E3 chain storage (§16.3) | Deriving `x_j` from `x_N` costs N − j hashes (up to 10⁷) | Encrypted checkpoints (e.g. every 10⁴ links) |
+| E4 / E5 (§16) | The reference computation must include C10's pinned construction; betting cannot open until the public salt exists | State both in the spec and the chain-activation runbook |
+| J2 root ESLint (§26) | The root `eslint.config.js` lints `**/*.{ts,tsx}` with browser globals and would lint `server/`; root `tsconfig.json` and `vitest.config.ts` include only `src/**` | **OWNER DECISION at P8-2:** an ignore entry (a Lovable-root file) or accept root lint over `server/` |
+| J3 | `src/protocol/` lies inside the root `tsc`, Vitest and ESLint scope | P8-1 needs no configuration change |
+| K14 P8-1 dependencies (§29) | OD-7 and OD-19 do not block P8-1 (format-neutral multipliers; cancellation addable as a new type); `src/shared/README.md` need not change | Use docs/20 §5 as P8-1's scope (§35) |
+
+### 34.13 Risk register update (severity changes and additions to §32)
+
+| # | Risk | Severity | Status |
+|---|---|---|---|
+| R-1 | E-RISK-1: never-cash-out ≈ 130.5× (≥ 117.4× rigorous) | **Critical** (was High) for anything of value; contained by play money | Open; full E-A needed (OD-16) |
+| R-2 | E-X8 scope understated (C11) | High | Design spike before P8-6 |
+| R-11 | Selective voiding of known floor rounds (C5) | High (real value) | New; owner policy (OD-11) |
+| R-12 | Event-loop lag decides cashouts (C6) | Medium–High | New; OD-8 extension |
+| R-13 | Engine construction and float time base are part of the fairness reference (C10) | Medium | New; P8-3 specification item |
+| R-14 | Lease-row lock contention (C9 G1) | Medium | New; P8-7 load test |
+| R-15 | Root ESLint covers `server/` (C12 J2) | Low | New; P8-2 decision |
+| R-16 | Minimum-stake rounding (C1) | Low (economic) | New; E-A / OD-12 |
+| R-17 | Local mode exposes chest values (C7 H3) | Low (local, play money) | Recorded; fixed by design on the server |
+
+### 34.14 What P8-0E does not do
+
+- It approves **none** of OD-1 … OD-21. OD-2's recommendation ("play-money only") matches the owner's directive of 2026-11-18, but OD-2 is **not** marked approved, by the owner's instruction.
+- It changes no game rule, payout, RNG, engine, wallet, UI, renderer, audio or production source file. It does not modify the game mathematics.
+- It leaves docs/20 unchanged. It does not start the full E-A, does not start P8-1 and does not close P7-C.
+- It stages, commits and pushes nothing.
+
+---
+
+## 35. P8-1 authorization preparation (NOT APPROVED)
+
+**Prepared for the owner's decision. P8-1 is NOT STARTED and NOT AUTHORIZED.** The full proposal (scope, security tests, acceptance gates and commit boundary) is docs/20 §5. This section condenses it for approval.
+
+### 35.1 Phase gate
+
+- docs/04 sets "Never skip phases" and "Never work ahead without approval". **Phase 7 is IN PROGRESS** (TASK 008 active). P7-C is not authorized and is blocked on audio commercial rights and physical-device QA (docs/19).
+- P8-0, docs/20 and P8-0E are documentation-only exceptions. **P8-1 would add source files** (`src/protocol/**`), so it is Phase 8 *implementation*.
+- **P8-1 therefore needs an explicit owner phase-gate exception** while Phase 7 stays open, or Phase 7 must close first. Neither has been granted.
+- A possible exception for the owner to grant, reject or edit: "P8-1 only: a pure library under `src/protocol/` with no runtime effect on the game, proven by a production build output identical to `HEAD`. Phase 7 stays In Progress. No Phase 7 gate is waived. No other Phase 8 milestone is authorized."
+
+### 35.2 Owner-approval table — P1-D1 … P1-D13
+
+"Reversible?" asks whether the decision can still change at low cost before the first network client release (no earlier than P8-6). That holds for all thirteen: nothing consumes the protocol until then, and P1-D2 keeps it a draft. The cost of a change grows with every consumer milestone (P8-2 … P8-5). After the release, the items marked † become breaking changes (major version + 1).
+
+| ID | Proposed choice | Reason | Risks | Reversible? | Approval now? |
+|---|---|---|---|---|---|
+| **P1-D1** Location | `src/protocol/`, pure TypeScript; imports only `zod` (3.25.76 installed, v3 API); no engine, UI, rendering, React, DOM or Node import; nothing in the app imports it | Shared by client and server; already inside the root `tsc` / Vitest / ESLint scope, so no configuration change; production bundle unchanged | Lovable editor can edit it (review rule §26.2); a later move to `packages/` (Stage S2) is mechanical; a zod v4 upgrade would touch every schema | Yes | **Yes**, if P8-1 is to start |
+| **P1-D2** Status | Protocol major `1`, status **draft**, changeable without a version bump until the first network client release | No client exists; lets OD-5/6/7/9/19/20 stay open without blocking P8-1 | P8-2 … P8-5 may build on a moving draft; the switch to "released" must be an explicit step at P8-6 | Yes | **Yes** — it is what makes the deferrals safe |
+| **P1-D3** Envelope † | One UTF-8 JSON object per frame. C→S `{ v: 1, t, id, p }`; S→C `{ v: 1, t, seq, ts, re?, p }`; `ts` a decimal string, informational only | Fixes the overloaded `id` (C12 I1); a transport-neutral frame that fits native WebSocket directly | Depends on the pending transport choice. Over Socket.io it still works but duplicates `t`/event name and `seq`/acks (rework, not a break) | Yes | **Yes** |
+| **P1-D4** Validation | Never-throwing `decodeClientFrame` / `decodeServerFrame`; size check before `JSON.parse` (≤ 4 KiB C→S, ≤ 64 KiB S→C); depth ≤ 6; server inbound `.strict()`; client decoding tolerant; encoders validate their own output | Robustness and DoS limits; resolves the strict-vs-additive conflict (C12 I2) | Depth 6 deviates from §9.1's 4; tolerant decoding could hide server bugs (mitigated by the golden corpus); validation cost (measured, P8-1 gate 8) | Yes | **Yes** |
+| **P1-D5** Audiences | Three typed unions: `ClientMessage`, `PublicServerMessage`, `SessionServerMessage`; the broadcast path accepts only public messages | Prevents private-state leaks by construction (C7) | A type guarantee can be bypassed by casts; P8-5's runtime allow-lists stay required | Yes | **Yes** |
+| **P1-D6** Identifiers † | `roundId`, `betId`: lowercase UUID (server-generated); `roundNumber`: decimal string (bigint); request `id`: UUID v4/v7; `tick`: integer 0 … 2³¹−1 (dive tick, 0 = dive start); `chestId` 0–2, `slot` 0–1 as integers | Canonical forms make idempotency comparisons exact; bigint-safe round numbers | Excludes ULIDs, which §8.2's example shows (deviation); clients need `crypto.randomUUID` (available in target browsers) | Yes | **Yes** |
+| **P1-D7** Sequencing | `seq` starts at 1 per connection and increases by exactly 1; a gap triggers `sync.request`; public messages in engine order (§8.9) | Gap detection without a replay buffer (§13.3) | No cross-connection ordering: recovery relies on `sync.snapshot` (C8) | Yes | **Yes** |
+| **P1-D8** Idempotency | Scope `(playerId, id)` for `bet.place`, `bet.cashout`, `bonus.pick`; at most one effect per id; same id + same canonical payload → the original final response; different payload → `idempotency-conflict` (not stored); business results stored; pre-processing errors not stored; retention ≥ settlement + 24 h | Closes C9 I3/I4 | Canonical payload equality must be exact (fixture test); storage and enforcement arrive only in P8-10 | Yes | **Yes** (semantics now; enforcement P8-10) |
+| **P1-D9** Money † | Integer minor units as canonical decimal strings, ≤ 18 digits (always fits `BIGINT`). Stakes `^[1-9][0-9]{0,17}$`; balances and payouts `^(0\|[1-9][0-9]{0,17})$`; `bigint` only, never a JSON number or float; currency code `^[A-Z][A-Z0-9]{2,7}$`; exponents (OD-15) outside P8-1 | Fixes C9 I6 (zero, range); exact money end to end; consistent with play money (e.g. `AQC`) | The hardest format to change after release; it implies no real-money semantics, and none is authorized | Yes | **Yes** |
+| **P1-D10** Multipliers † | Decimal strings; the settlement value is the shortest round-trip decimal of the server's double (`String(m)`, as `payout.ts` uses); valid iff `String(Number(s)) === s`, no exponent, ≥ 1; no economic cap encoded | Lets a client check `payout = ⌊stake × m̄⌋`; neutral to OD-7 (P-B's two-decimal values are also valid) | Must not be read as fixing OD-7; extreme doubles would print exponents, which the schema rejects (not reachable today: maximum 25,000) | Yes | **Yes** |
+| **P1-D11** Errors † | One lowercase kebab-case registry matching the engine (adds `not-in-bonus`, `chest-already-picked`; server codes such as `round-mismatch`, `insufficient-funds`, `idempotency-conflict`, `malformed` …; no `DUPLICATE_REQUEST`); append-only; `stored` / `retryable` / audience flags; never user-facing text | Fixes C9 I3 and C12 I5 | Renames §8.7's SCREAMING_CASE codes (deviation); append-only means a mistake is deprecated, never removed | Yes | **Yes** |
+| **P1-D12** Compatibility | `hello { protocol: { min, max } }`; highest common major, otherwise `protocol-unsupported` + close 4001. Within a released major: optional server fields, new types and new error codes allowed; removing, renaming, retyping or re-meaning forbidden; breaking → major + 1, with v and v − 1 served during a deprecation window; enforced by a golden-frame corpus | Replaces §8.3's capability-gated rule (C12 I2) | Binds only from the first release; the corpus needs upkeep; window length (docs/09 default 30 days) not fixed here | Yes (binds from release) | **Yes**, as a draft rule (low urgency) |
+| **P1-D13** Catalogue | Client: `hello`, `auth.resume`, `bet.place`, `bet.cashout`, `bonus.pick`, `sync.request`, `ping`. Public: `round.betting`, `round.dive`, `round.world`, `round.sync`, `round.boost`, `round.crashed`, `round.impact`, `round.bonus` (no chest values), `round.chests`, `round.ended`, `feed.bets`, `server.notice`. Session: `welcome`, `auth.ok`, `sync.snapshot`, `pong`, `bet.*`, `bonus.pick*`, `wallet.balance`, `error`. Not in v1: cancellation, auto-cashout, chat | Defines the missing messages (C8); carries what both replica options need (C11) | Encodes current recommendations as drafts: W-A `round.world` (OD-5), hidden chests (OD-9), one jackpot settlement (OD-20), commitment `{ fv, hash, chainIndex }` (OD-6). None is decided by it; alternatives are additive | Yes | **Yes** |
+
+**Approving P1-D1 … P1-D13 decides none of OD-1 … OD-21.**
+
+### 35.3 The owner's planning preferences (recorded; not an authorization)
+
+| Preference (owner, 2026-11-18) | Effect on P8-1 | Decided where |
+|---|---|---|
+| TypeScript | P8-1 is TypeScript (P1-D1) | Consistent |
+| Fastify | None | P8-2 (dependency approval) |
+| Modular monolith | None | §5; P8-2 |
+| PostgreSQL | None (P1-D9 fits `BIGINT`) | P8-7, OD-4 |
+| Native WebSocket, pending final approval | P1-D3 / P1-D13 are designed for it; they stay usable, with rework, if it changes | Final architecture approval; P8-2 |
+| Redis deferred | None | OD-14; P8-12 |
+| Play money only | P1-D9 carries a currency code and no real-money semantics | Owner directive 2026-11-18; OD-2 still formally open |
+| Existing Canvas 2D frontend preserved | P8-1 touches no UI, renderer or engine file; production build output must be identical to `HEAD` (docs/20 §5.4 gate 4) | Each later milestone |
+| No change to approved visuals and audio | As above | Each later milestone |
+
+These preferences are planning inputs. They do not authorize building the backend, any dependency, or any milestone.
+
+### 35.4 What would authorize P8-1 (all owner actions; none taken)
+
+1. **B1, the phase gate (§35.1):** an explicit exception, or the Phase 7 close.
+2. **B2, commit hygiene:** the pending documentation committed first as separate documentation-only commits (sequence proposed with P8-0E, not executed), so P8-1's commit contains only its own files.
+3. **B3, the contract:** approval of P1-D1 … P1-D13 (§35.2), including the deviations from §8 (I1 – I6).
+4. **The authorization itself:** "Start P8-1", with no push implied (the branch syncs to Lovable).
 
 ---
 

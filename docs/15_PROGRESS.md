@@ -92,6 +92,17 @@ M2 (the rest of integer minor units) is still deferred.
 
 ---
 
+## P8-0E — P8-0 review acceptance and safe roadmap preparation (documentation only; delivered, awaiting the owner's review)
+
+- **Date:** 2026-11-18
+- **Status:** delivered in the working tree, uncommitted. Not a Phase 8 start; P8-1 not started; P7-C not closed.
+- **Owner decision recorded:** the economic findings are acknowledged. The existing model is **not approved for real-money operation**, and AQUADIVE stays **play-money only** until a separately authorized economic redesign, independent verification and compliance reviews are complete.
+- **Summary:** the economy evidence is preserved in `qa/p8-0-review/` (local, Git-ignored). docs/09 gains clearly marked errata: a banner, pointers, §34 corrections C1 – C12 and §35 P8-1 authorization preparation. The original P8-0 text is unchanged. A documentation-only commit sequence was prepared (not executed).
+- **Files modified:** `docs/09_BACKEND_ARCHITECTURE.md` (additions only); one P8-0E entry each in docs 04, 14, 15, 16; `.gitignore` (one rule for `qa/p8-0-review/`). docs/19 and docs/20 unchanged.
+- **Validation:** re-ran `bounds.mjs`, `edge.mjs` and `restate.mjs` on the preserved bundle, with outputs identical to the figures in docs/20. Rebuilt the engine bundle from `HEAD` byte-identically. Checksums verified (25 files). docs/09 checked to contain every original line in order. No source change, so no test or build run was needed.
+
+---
+
 ## V7 — Reduced motion (Phase 7)
 
 ### V7 — REDUCED MOTION: VISUALLY APPROVED BY THE OWNER 2026-11-18; COMMITTED LOCALLY, NOT PUSHED
