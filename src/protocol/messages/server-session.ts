@@ -8,7 +8,7 @@
 //
 // | Type                 | `re`     | Payload |
 // |----------------------|----------|---------|
-// | `welcome`            | required | `{ protocol, sessionId, serverTimeMs, tickHz, snapshot, player? }` |
+// | `welcome`            | required | `{ protocol, sessionId, serverTimeMs, tickHz, snapshot?, player? }` |
 // | `auth.ok`            | required | `{ player }` |
 // | `sync.snapshot`      | required | `{ snapshot, player? }` — `player` for authenticated sessions |
 // | `pong`               | required | `{ clientTs, serverTimeMs }` |
@@ -51,12 +51,19 @@ import { MultiplierSchema } from "../multiplier";
 import { PlayerPrivateStateSchema, PublicSnapshotSchema } from "../snapshot";
 import { MAX_PROTOCOL_MAJOR } from "../version";
 
+// `welcome.snapshot` is optional (owner-approved P8-1 Draft v1 exception for
+// P8-2, 2026-11-18). Present: the public state of a real authoritative round.
+// Not present: the server has no authoritative round to report right now. A
+// server never fills the gap with an invented round (no made-up round id,
+// round number, commitment, phase or game state). A welcome without a
+// snapshot gives no permission for `bet.place`, `bet.cashout` or `bonus.pick`,
+// and `player` is never sent on a connection that has not authenticated.
 export const WelcomePayload = z.object({
   protocol: integerIn(1, MAX_PROTOCOL_MAJOR),
   sessionId: SessionIdSchema,
   serverTimeMs: ServerTimeMsSchema,
   tickHz: integerIn(1, MAX_TICK_HZ),
-  snapshot: PublicSnapshotSchema,
+  snapshot: PublicSnapshotSchema.optional(),
   player: PlayerPrivateStateSchema.optional(),
 });
 

@@ -113,6 +113,13 @@ export const GOLDEN_V1: readonly GoldenFrame[] = [
     "welcome player",
     `{"v":1,"t":"welcome","seq":1,"ts":"1731940000123","re":"${REQ_HELLO}","p":{"protocol":1,"sessionId":"${SESSION}","serverTimeMs":"1731940000123","tickHz":60,"snapshot":${SNAPSHOT_BETTING},"player":${PLAYER_IDLE}}}`,
   ),
+  // Added by the P8-2 exception (2026-11-18): the server has no authoritative
+  // round to report, so the welcome carries no snapshot (and, unauthenticated,
+  // no player).
+  server(
+    "welcome without a round",
+    `{"v":1,"t":"welcome","seq":1,"ts":"1731940000123","re":"${REQ_HELLO}","p":{"protocol":1,"sessionId":"${SESSION}","serverTimeMs":"1731940000123","tickHz":60}}`,
+  ),
   server(
     "auth.ok",
     `{"v":1,"t":"auth.ok","seq":2,"ts":"1731940000180","re":"${REQ_AUTH}","p":{"player":${PLAYER_IDLE}}}`,

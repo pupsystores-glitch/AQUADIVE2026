@@ -2,7 +2,9 @@
 
 **Status: DRAFT v1 (P8-1, 2026-11-18). Not released, not frozen, not consumed.** The owner authorized P8-1 as a narrowly scoped Phase 8 implementation exception while Phase 7 stays open, and provisionally approved P1-D1 … P1-D13 (docs/09 §35.2) for implementation as draft protocol v1. **None of OD-1 … OD-21 is decided by this library.** AQUADIVE is **PLAY-MONEY ONLY** (owner directive, 2026-11-18).
 
-This is a pure TypeScript contract library. It imports only `zod` (v3 API, the installed 3.25.76) and itself. Nothing in the application imports it yet, so it has no effect on the running game. `index.ts` is the only public surface.
+**P8-2 amendment (owner-approved Draft v1 exception, 2026-11-18):** `welcome.snapshot` is optional (§20). No other message or rule changed.
+
+This is a pure TypeScript contract library. It imports only `zod` (v3 API, the installed 3.25.76) and itself. Nothing in the frontend application imports it, so it has no effect on the running game. Since P8-2 the independent `server/` package consumes it from this source (through `server/src/protocol.ts`, never a copy). `index.ts` is the only public surface.
 
 A protocol contract is not its runtime enforcement. **This library does not implement** authentication, sessions, rate limits, WebSocket networking, ordering, replay protection, idempotency storage, ledger transactions, cashout authority, settlement, provable fairness or the RTP fix. It defines and validates the frames that those later milestones will exchange (§16 lists who owns what).
 
@@ -22,7 +24,7 @@ A protocol contract is not its runtime enforcement. **This library does not impl
 | `messages/server-session.ts` | One-connection catalogue (responses and private state)                                                                    |
 | `snapshot.ts`                | `PublicSnapshotV1` (phase-guarded) and `PlayerPrivateStateV1`                                                             |
 | `codec.ts`                   | Never-throwing decoders and self-validating encoders for both directions                                                  |
-| `test/golden-v1.ts`          | The golden-frame corpus (43 canonical frames, all 33 types)                                                               |
+| `test/golden-v1.ts`          | The golden-frame corpus (44 canonical frames, all 33 types; 43 from P8-1, 1 added by the P8-2 amendment)                  |
 | `test/fuzz.ts`               | Seeded hostile-input generator (no dependency)                                                                            |
 | `*.test.ts`                  | Format, message, snapshot, codec, compatibility and security tests                                                        |
 
@@ -93,7 +95,7 @@ Creature ids are **server** ids (the engine restarts its ids per fresh engine, d
 
 | Type                 | `re`     | Payload                                                                                                                                        |
 | -------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `welcome`            | required | `{ protocol, sessionId, serverTimeMs, tickHz, snapshot, player? }`                                                                             |
+| `welcome`            | required | `{ protocol, sessionId, serverTimeMs, tickHz, snapshot?, player? }` — no `snapshot` when the server has no authoritative round (§20)           |
 | `auth.ok`            | required | `{ player }`                                                                                                                                   |
 | `sync.snapshot`      | required | `{ snapshot, player? }` — `player` for authenticated sessions (there is no replay buffer, so lost private acknowledgements are recovered here) |
 | `pong`               | required | `{ clientTs, serverTimeMs }`                                                                                                                   |
@@ -241,7 +243,7 @@ OD-5 (W-A `round.world` streaming), OD-6 (commitment `{ fv, chainIndex, hash }`,
 
 | Responsibility                                                                                                                                                                                              | Milestone                            |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| WebSocket transport, origin checks, close codes, hello timeout, frame-size enforcement at the socket                                                                                                        | P8-2                                 |
+| WebSocket transport, origin checks, close codes, hello timeout, frame-size enforcement at the socket                                                                                                        | P8-2 (skeleton in `server/`)         |
 | Provably-fair seeds, commitments, reveals and verification                                                                                                                                                  | P8-3                                 |
 | Round orchestration, receipt ticks, ordering guarantees (§8.9), crash-before-rejection (F3)                                                                                                                 | P8-4, P8-5                           |
 | Allow-list snapshot and broadcast builders; sending `round.sync` uniformly (no timing side channel)                                                                                                         | P8-5                                 |
@@ -250,7 +252,7 @@ OD-5 (W-A `round.world` streaming), OD-6 (commitment `{ fv, chainIndex, hash }`,
 | Client network mode, resync on `seq` gaps, pre-dive scene                                                                                                                                                   | P8-6                                 |
 | Identity, tickets, sessions, `auth-*`                                                                                                                                                                       | P8-8                                 |
 | Idempotency store and retention, ledger, settlement, multiplier guard (docs/09 §18.5)                                                                                                                       | P8-9, P8-10                          |
-| Rate limits                                                                                                                                                                                                 | P8-2, P8-13                          |
+| Rate limits (P8-2: per-connection frame rate and concurrent connection bounds; per-address connection rate and tuning later)                                                                                | P8-2, P8-13                          |
 | Declaring v1 released (freeze; P1-D12 starts to bind)                                                                                                                                                       | owner decision, no earlier than P8-6 |
 
 ## 17. Performance (docs/20 §5.4 gate 8; tiered budget OWNER-APPROVED PROVISIONAL)
@@ -302,4 +304,19 @@ zod v3 validation dominates (for the largest snapshot ≈ 100 µs of ≈ 147 µs
 
 ## 19. Tests
 
-`errors.test.ts` covers the retryability contract (§9.1): outcome consistency of every registry entry, the carrier rule, the encoder refusing a transient code on `bet.rejected`, and the conservative classification of unknown codes. `money`, `multiplier`, `ids`, `envelope`, `codec`, `messages`, `snapshot`, `compat` and `security` (`*.test.ts`) cover docs/20 §5.3 tests 1 – 10 and §5.4 gates 3 and 6: 10^5 seeded hostile inputs per direction never throw; every type has accept and reject fixtures; the golden corpus round-trips byte for byte; public schemas match a committed field allow-list; prototype keys never reach a prototype; the audience separation is a compile-time error; idempotency fixtures; and an import-boundary check (protocol source imports only `zod`; nothing outside `src/protocol` imports it).
+`welcome.test.ts` covers the P8-2 amendment (§20): the welcome without a snapshot, that `null` or `{}` is not an absent snapshot, that `sync.snapshot` still requires one, and a pinned fingerprint proving the 43 earlier golden frames are byte-identical to P8-1 (`402376c`). `errors.test.ts` covers the retryability contract (§9.1): outcome consistency of every registry entry, the carrier rule, the encoder refusing a transient code on `bet.rejected`, and the conservative classification of unknown codes. `money`, `multiplier`, `ids`, `envelope`, `codec`, `messages`, `snapshot`, `compat` and `security` (`*.test.ts`) cover docs/20 §5.3 tests 1 – 10 and §5.4 gates 3 and 6: 10^5 seeded hostile inputs per direction never throw; every type has accept and reject fixtures; the golden corpus round-trips byte for byte; public schemas match a committed field allow-list; prototype keys never reach a prototype; the audience separation is a compile-time error; idempotency fixtures; and an import-boundary check (protocol source imports only `zod`; nothing outside `src/protocol` imports it).
+
+## 20. Amendment: optional welcome snapshot (P8-2 exception, 2026-11-18)
+
+**Owner decision A (2026-11-18):** a narrowly scoped, explicitly approved exception to P8-1 Draft v1, made for the P8-2 server skeleton. The protocol stays **DRAFT v1**; this is not a release, and no other message type, field, code or rule changed.
+
+| Item          | Rule                                                                                                                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Schema        | `welcome.snapshot` is optional (`messages/server-session.ts`). `null`, `{}` or any non-snapshot value is still refused                                                                    |
+| Present       | The public snapshot of a **real** authoritative round, validated in full as before                                                                                                        |
+| Not present   | The server has no authoritative round to report. A server never fills the gap with an invented round: no made-up round id, round number, fairness commitment, phase or game state         |
+| Private state | `player` is never sent on a connection that has not authenticated (a server duty; the schema cannot know who authenticated)                                                               |
+| Commands      | A welcome without a snapshot gives no permission for `bet.place`, `bet.cashout` or `bonus.pick`                                                                                           |
+| Unchanged     | `sync.snapshot` still requires its snapshot. `sync.request` handling is not part of P8-2                                                                                                  |
+| Golden corpus | One frame added, "welcome without a round". The 43 P8-1 frames are byte-identical, in the same order (pinned fingerprint, `welcome.test.ts`)                                              |
+| Compatibility | Every frame valid before the amendment is still valid. A decoder built before it refuses a welcome without a snapshot; no such decoder is deployed (no network client exists before P8-6) |

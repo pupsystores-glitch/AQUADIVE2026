@@ -363,9 +363,14 @@ const SESSION_CASES = {
         snapshot: SNAPSHOT,
         player: PLAYER,
       },
+      // No authoritative round to report (P8-2 exception: `snapshot` is optional).
+      { protocol: 1, sessionId: SESSION, serverTimeMs: "1", tickHz: 60 },
     ],
     reject: [
-      ["missing snapshot", { protocol: 1, sessionId: SESSION, serverTimeMs: "1", tickHz: 60 }],
+      [
+        "null snapshot",
+        { protocol: 1, sessionId: SESSION, serverTimeMs: "1", tickHz: 60, snapshot: null },
+      ],
       [
         "tick rate 0",
         { protocol: 1, sessionId: SESSION, serverTimeMs: "1", tickHz: 0, snapshot: SNAPSHOT },
