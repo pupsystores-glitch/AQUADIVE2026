@@ -70,6 +70,18 @@ M2 (the rest of integer minor units) is still deferred.
 
 ---
 
+## P8-0 — Phase 8 backend architecture planning (documentation only; PROPOSAL, awaiting the owner's review)
+
+- **Date:** 2026-11-18
+- **Status:** delivered in the working tree, uncommitted, **not approved**. Not a completed task: Phase 8 is not started, Phase 7 stays In Progress, Phase 2 stays In Progress.
+- **Summary:** `docs/09_BACKEND_ARCHITECTURE.md`, an implementation-ready proposal for the server-authoritative multiplayer backend: one Fastify service with native WebSocket, protocol v1, a precomputed `RoundScript` running the unchanged engine, a receipt-tick cashout rule mirroring delta D4, public/private snapshots, a hash-chain provably-fair design covering both RNG streams, a PostgreSQL double-entry ledger in integer minor units with idempotency and a fenced authority lease, Redis deferred, a threat model, test and performance targets, a Lovable inventory, a local → network migration and milestones P8-1 … P8-14.
+- **Files modified:** `docs/09_BACKEND_ARCHITECTURE.md` (new); docs 04, 14, 15, 16 (P8-0 tracking entries only, kept apart from the uncommitted P7-C audit entries).
+- **Architectural decisions:** none in force; all are recommendations or owner decisions (docs/09 §31).
+- **Risks:** E-RISK-1 (economy; conservative lower bound ≈ 7.26× the stake per round for a never-cash-out player, from the code; the exact RTP is for E-A); client replica mode needs engine exception E-X8; cross-engine float determinism for third-party verification (OD-18).
+- **Validation:** documentation only; no source change, so no test, type-check or build run was needed. One standalone arithmetic check outside the repository restated the no-boost descent (floor on dive tick 1290 at ≈ 6.218×) and the crash-point tail probability.
+
+---
+
 ## V7 — Reduced motion (Phase 7)
 
 ### V7 — REDUCED MOTION: VISUALLY APPROVED BY THE OWNER 2026-11-18; COMMITTED LOCALLY, NOT PUSHED

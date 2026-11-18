@@ -67,7 +67,7 @@ Project Audit Report.
 
 # PHASE 2 — SYSTEM ARCHITECTURE
 
-Status: 🔄 In Progress (Architecture Blueprint delivered in TASK 002; the rendering portion is persisted as `docs/05_RENDERING_ARCHITECTURE.md` — Sprint 2, Commit 1. Remaining portions, e.g. server protocol design, are persisted as their phases activate)
+Status: 🔄 In Progress (Architecture Blueprint delivered in TASK 002; the rendering portion is persisted as `docs/05_RENDERING_ARCHITECTURE.md` — Sprint 2, Commit 1. Remaining portions, e.g. server protocol design, are persisted as their phases activate. *2026-11-18, P8-0 (documentation only): the server protocol design portion is drafted as a proposal in `docs/09_BACKEND_ARCHITECTURE.md` §8 and §12. It is not accepted, so Phase 2 stays In Progress.*)
 
 Objectives
 
@@ -179,7 +179,7 @@ Immersive player experience.
 
 # PHASE 8 — MULTIPLAYER BACKEND
 
-Status: Pending
+Status: Pending — **not started.** *2026-11-18, P8-0: the owner authorized Phase 8 architecture planning as an explicit documentation-only exception while the Phase 7 close-out gates stay open. The proposal is `docs/09_BACKEND_ARCHITECTURE.md` (P8-0 PROPOSAL, not approved). It authorizes no implementation; every milestone P8-1 … P8-14 (docs/09 §29) and the economy analysis E-A (docs/09 §17.4) needs its own authorization. Phase 7 remains In Progress; no Phase 7 gate is waived. Open high-priority risk E-RISK-1 (the economy, docs/09 §17) is recorded.*
 
 Objectives
 

@@ -34,6 +34,17 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 | E-X3 — Dual Bet (engine freeze exception + M1 per-slot amendment + dual panel) | **Owner-approved 2026-11-14; committed in `be10b19`, on `origin/develop`.** This implements the layout decision above: BET 1 and BET 2 side by side on phones and `tab`, stacked in the `desk` rail, both real engine slots. Engine (docs/06 §13.2): `slot` on `placeBet`/`cashOut`/`betPlaced`/`cashedOut`, `invalid-slot`, per-slot impact auto-cash, one chest pick for all eligible slots, `participants`, snapshot v3. Wallet (docs/07 §23.17): every rule per slot, per-slot fault isolation, W2/W3 per slot. Session (docs/07 §8): `betInputs`, in-flight stake reservation. UI (docs/07 §13.3): `BetSlotPanel` ×2, `slot` props, quick bets hidden below `tab`. **Validation not recorded** (the commit message has none). **Pending:** owner browser QA, including 375×667 and 390×844 (no overflow, no unnecessary scroll, canvas unclipped) |
 | Sprint 4 close-out (Steps 1–4) | **Completed 2026-11-15.** Owner approved gates 7–8 (gameplay incl. Dual Bet, mobile, seven-size matrix); E-X4 and D1–D4 ratified; G1 `6e28ce0`, G2 `9bded6b`, G3 `3346ed8`, G4 docs; 572/572 tests. **TASK 007 / Phase 6 closed.** M1 deferred, not closed |
 
+## Also current: P8-0 — Phase 8 backend architecture planning — PROPOSAL DELIVERED (2026-11-18, documentation only, uncommitted), AWAITING THE OWNER'S REVIEW
+
+*A separate documentation-only exception. It does not replace or edit the P7-C readiness-audit section below, and TASK 008 / Phase 7 remain the active task and phase.*
+
+- **Authorization (owner, 2026-11-18):** P8-0 only — Phase 8 architecture planning as an explicit documentation-only exception while the Phase 7 close-out gates remain open. Phase 7 stays **IN PROGRESS**; no Phase 7 gate is waived or completed. **Phase 8 implementation is not authorized and not started.**
+- **Deliverable:** `docs/09_BACKEND_ARCHITECTURE.md` (P8-0 PROPOSAL, not approved). Tracking lines in docs 04, 14 and 15.
+- **Key findings:** E-RISK-1 (economy, OPEN, HIGH PRIORITY; conservative lower bound ≈ 7.26× the stake per round for a never-cash-out player; no RTP asserted or chosen; future task E-A proposed); client replica mode needs an engine exception (proposed E-X8); the world stream is outcome-relevant and must be committed.
+- **Owner decisions needed:** OD-1 … OD-21 (docs/09 §31.3), first OD-1 (business model direction), OD-2 (play-money only), OD-3 (layout and package manager), OD-16 (authorize E-A).
+- **Git:** verified before any change: branch `develop`, `HEAD` `01b061e`, five local commits ahead of `origin/develop` `d1ccb9b`, not pushed. P8-0 adds `docs/09` (untracked) and edits docs 04, 14, 15, 16 only. Nothing staged, committed or pushed.
+- **Stop condition:** await the owner's review. No source change, staging, commit, push or Phase 8 milestone without the owner's approval.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.

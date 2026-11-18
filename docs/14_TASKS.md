@@ -245,4 +245,20 @@ Status:
 
 ---
 
+## P8-0 — Phase 8 backend architecture planning (documentation-only exception, 2026-11-18)
+
+*Separate from the P7-C readiness-audit entries above, which are preserved unchanged.*
+
+| Item | Status |
+|---|---|
+| Authorization | **Owner, 2026-11-18:** P8-0 only, as an explicit documentation-only exception that allows Phase 8 planning while the Phase 7 close-out gates stay open. **Not** an authorization of Phase 8 implementation. TASK 008 stays the only active task; P8-0 does not activate a new task |
+| Deliverable | `docs/09_BACKEND_ARCHITECTURE.md` — **P8-0 PROPOSAL, delivered in the working tree, uncommitted; awaiting the owner's review.** Not approved |
+| Content | MVP scope and non-goals; business models A/B (not chosen, OD-1); one Fastify service with native WebSocket; protocol v1; validation and authentication; server-authoritative round with a precomputed `RoundScript` on the unchanged engine; receipt-tick cashout rule; public/private snapshots; reconnect; Dual Bet; goldfish, jackpot and global bonus rules; hash-chain provably-fair design covering the world stream; PostgreSQL double-entry ledger in integer minor units; idempotency; fenced authority lease; Redis deferred; observability; threat model; tests and performance targets; Lovable inventory; local → network migration; milestones P8-1 … P8-14; owner decisions OD-1 … OD-21 |
+| Findings | (1) **E-RISK-1, OPEN, HIGH PRIORITY:** a conservative lower bound from the code shows a never-cash-out player receives at least ≈ 7.26× the stake per round in expectation (docs/09 §17.2); no RTP asserted or chosen. (2) Client replica mode needs an engine freeze exception (proposed E-X8, docs/09 §27.3): the `RoundAuthority` is called synchronously at the transition. (3) The world stream is outcome-relevant (goldfish → boost → multiplier path and floor reach), so the commitment must cover it (docs/09 §16) |
+| Proposed, not authorized | Milestones P8-1 … P8-14 (docs/09 §29); economy analysis **E-A** (docs/09 §17.4, OD-16); engine exceptions E-X8 (replica mode) and E-X9 (facade export of the outcome functions, OD-10b); the Lovable independence track L-0 … L-5 (docs/09 §26.3, OD-17) |
+| Unchanged | No source, dependency, build, deployment, `AGENTS.md`, `vite.config.ts`, `package.json` or lockfile change. `src/engine`, outcome distributions and settlement untouched. Phase 7 **IN PROGRESS**; Phase 8 **not started**; Phase 2 **In Progress** |
+| Next | The owner's review of docs/09 and the decisions in its §31.3. **Stop condition:** no implementation, staging, commit or push without the owner's approval |
+
+---
+
 Only one task may be active at a time.
