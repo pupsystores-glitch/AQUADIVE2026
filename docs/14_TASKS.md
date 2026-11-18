@@ -259,6 +259,19 @@ Status:
 | Unchanged | No source, dependency, build, deployment, `AGENTS.md`, `vite.config.ts`, `package.json` or lockfile change. `src/engine`, outcome distributions and settlement untouched. Phase 7 **IN PROGRESS**; Phase 8 **not started**; Phase 2 **In Progress** |
 | Next | The owner's review of docs/09 and the decisions in its §31.3. **Stop condition:** no implementation, staging, commit or push without the owner's approval |
 
+## P8-0 review — architecture review and E-A preliminary economy verification (read-only, 2026-11-18)
+
+*Separate from the P8-0 entry above, which is preserved unchanged; its E-RISK-1 figure is corrected only in the review report.*
+
+| Item | Status |
+|---|---|
+| Authorization | **Owner, 2026-11-18:** read-only verification of the P8-0 architecture and economy assumptions. Not an approval of any P8-0 decision; not an authorization of P8-1 |
+| Deliverable | `docs/20_P8-0_REVIEW_AND_EA_PRELIMINARY.md` — delivered in the working tree, uncommitted, awaiting the owner's review |
+| Economy result | The "≥ 7.26×" bound is true but materially understated: never-cash-out return is **≥ 117.4× (rigorous)** and **≈ 130.5× (estimate**, confirmed end to end at 130.35× ± 0.77 over 1.2 M real-engine rounds). P(floor) = 0.1612. Every cashout rule is capped at 0.9603. E-RISK-1 stays OPEN |
+| Architecture result | 10 areas reviewed; corrections register K1–K14 for docs/09 (not applied); OD-10b found unnecessary; E-X8 not ready; new risks: selective voiding, receipt lag, construction-pinned fairness reference |
+| P8-1 | Exact scope, decisions P1-D1 … P1-D13 and acceptance gates prepared; **not started**. Blocking: phase gate (B1), documentation commits (B2), P8-1 contract approval (B3) |
+| Unchanged | No source, test, dependency or configuration change; docs/09 not edited. Phase 7 **IN PROGRESS**; Phase 8 **not started** |
+
 ---
 
 Only one task may be active at a time.

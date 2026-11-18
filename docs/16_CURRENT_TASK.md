@@ -45,6 +45,15 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **Git:** verified before any change: branch `develop`, `HEAD` `01b061e`, five local commits ahead of `origin/develop` `d1ccb9b`, not pushed. P8-0 adds `docs/09` (untracked) and edits docs 04, 14, 15, 16 only. Nothing staged, committed or pushed.
 - **Stop condition:** await the owner's review. No source change, staging, commit, push or Phase 8 milestone without the owner's approval.
 
+## Also current: P8-0 review — architecture review and E-A preliminary — DELIVERED (2026-11-18, read-only, uncommitted), AWAITING THE OWNER'S REVIEW
+
+- **Authorization (owner, 2026-11-18):** a narrowly scoped read-only verification. The owner has **not** approved the 21 P8-0 decisions. P8-1 is **not** authorized.
+- **Report:** `docs/20_P8-0_REVIEW_AND_EA_PRELIMINARY.md`.
+- **Key results:** E-RISK-1 is far larger than recorded in P8-0: never-cash-out return ≥ 117.4× (rigorous), ≈ 130.5× (estimate); P(floor) = 0.1612; every cashout rule is capped at 0.9603. Architecture: corrections K1–K14 (not applied to docs/09); OD-10b unnecessary; E-X8 not ready; new risks (selective voiding, receipt lag, construction-pinned fairness reference).
+- **P8-1 blockers needing the owner:** B1 phase gate (Phase 7 still open); B2 commit the pending documentation first; B3 approve P1-D1 … P1-D13.
+- **Git:** unchanged: `HEAD` `01b061e`, five local commits not pushed; nothing staged or committed.
+- **Stop condition:** await the owner's review.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.

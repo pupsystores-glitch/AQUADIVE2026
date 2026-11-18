@@ -82,6 +82,16 @@ M2 (the rest of integer minor units) is still deferred.
 
 ---
 
+## P8-0 review — architecture review and E-A preliminary (read-only; delivered, awaiting the owner's review)
+
+- **Date:** 2026-11-18
+- **Status:** `docs/20_P8-0_REVIEW_AND_EA_PRELIMINARY.md` delivered in the working tree, uncommitted. Not an approval of P8-0 and not a Phase 8 start.
+- **Summary:** independent economy verification from the engine code, plus a critical review of ten P8-0 architecture areas and a prepared P8-1 scope. Corrects E-RISK-1's magnitude: never-cash-out return ≥ 117.4× (rigorous, under a uniform-RNG model), ≈ 130.5× estimated. The P8-0 entry above keeps its original figure.
+- **Files modified:** `docs/20_P8-0_REVIEW_AND_EA_PRELIMINARY.md` (new); one review entry each in docs 14, 15, 16. docs/09 not edited.
+- **Validation:** read-only runs of the real repository code, bundled outside the repository: rigorous bounds; 2.4 M world paths through the real `DiveSimulation`; a formula restatement matching the engine bit for bit on 20,000 paths; 1.2 M end-to-end rounds through the real `GameEngine` and wallet store. No repository file was modified by the analysis; no test, type-check or build run was needed for a documentation-only change.
+
+---
+
 ## V7 — Reduced motion (Phase 7)
 
 ### V7 — REDUCED MOTION: VISUALLY APPROVED BY THE OWNER 2026-11-18; COMMITTED LOCALLY, NOT PUSHED
