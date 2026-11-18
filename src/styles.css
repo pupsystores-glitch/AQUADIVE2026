@@ -126,6 +126,20 @@
 .crash-shake {
   animation: crashShake 0.35s ease-in-out 2;
 }
+/* V7 (docs/08 §2.4, §16): under the OS reduced-motion preference the
+   multiplier keeps its gold glow as a still text-shadow (goldPulse's resting
+   frame) instead of pulsing, and does not shake on a crash; the crash is
+   still marked by the CHAIN SNAPPED panel and the canvas. Normal motion is
+   unchanged. */
+@media (prefers-reduced-motion: reduce) {
+  .multiplier-glow {
+    animation: none;
+    text-shadow: 0 0 12px color-mix(in oklab, var(--gold) 60%, transparent), 0 0 32px color-mix(in oklab, var(--gold-deep) 30%, transparent);
+  }
+  .crash-shake {
+    animation: none;
+  }
+}
 
 /* LA1: the loading screen's no-JavaScript fallback. Hidden at first; shown
    after 15 s by CSS alone, so a page whose scripts never load still offers a

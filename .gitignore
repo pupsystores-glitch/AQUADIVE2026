@@ -39,3 +39,5 @@ qa/v4-silt-plume/
 qa/v5-crash-fx/
 # Local V6 review captures (screenshots, reports); never committed
 qa/v6-reset-transition/
+# Local V7 review captures (screenshots, reports); never committed
+qa/v7-reduced-motion/

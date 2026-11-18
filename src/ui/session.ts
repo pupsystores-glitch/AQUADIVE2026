@@ -69,6 +69,17 @@
 // The startup screen uses it once to know the first playable frame is on
 // the canvas. The frame sink checks one array length per frame; no loading
 // progress runs through the animation loop.
+//
+// Since V7 (Phase 7, docs/08 §4.2, §12, §13.2) the session passes the OS
+// reduced-motion preference to the attached renderer: attachCanvas resolves
+// `matchMedia("(prefers-reduced-motion: reduce)")` (never at construction, so
+// the server never touches `window`), calls renderer.setMotion before the
+// first frame, and keeps it current through one `change` listener per
+// attached renderer, removed by that attachment's detach. Nothing runs per
+// frame; no timer, polling or React state. Without matchMedia (SSR, old
+// browsers, tests) nothing is called and the renderer keeps its default
+// (full motion). The renderer still never reads `window` itself. There is no
+// in-app override yet (docs/08 Q12, open): the OS setting alone decides.
 
 import {
   BET_SLOTS,
@@ -108,10 +119,88 @@ import {
 /**
  * The renderer surface the session drives — SceneRenderer in production,
  * injectable for headless tests (§8 test seam). `trigger` (V1, the FX event
- * channel) is optional so a test renderer may omit it.
+ * channel) and `setMotion` (V7, the reduced-motion flag) are optional so a
+ * test renderer may omit them.
  */
 export type CanvasRenderer = Pick<SceneRenderer, "resize" | "frame" | "dispose"> &
-  Partial<Pick<SceneRenderer, "trigger">>;
+  Partial<Pick<SceneRenderer, "trigger" | "setMotion">>;
+
+/** V7: the media query the session follows (docs/08 §4.2). */
+export const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+/**
+ * V7: the part of a MediaQueryList the session uses. `addEventListener` is
+ * the standard API; `addListener` is the legacy one (Safari before 14).
+ */
+export interface ReducedMotionQuery {
+  readonly matches: boolean;
+  addEventListener?(type: "change", listener: () => void): void;
+  removeEventListener?(type: "change", listener: () => void): void;
+  addListener?(listener: () => void): void;
+  removeListener?(listener: () => void): void;
+}
+
+/** V7: resolves the reduced-motion query, or null where there is none. Called once per attach. */
+export type ReducedMotionResolver = () => ReducedMotionQuery | null;
+
+/** V7 default: the browser's matchMedia, or null on the server / without matchMedia. */
+const browserReducedMotion: ReducedMotionResolver = () => {
+  const w = typeof window === "undefined" ? undefined : window;
+  if (typeof w?.matchMedia !== "function") return null;
+  return w.matchMedia(REDUCED_MOTION_QUERY);
+};
+
+const noop = () => {};
+
+/**
+ * V7: apply the reduced-motion preference to `renderer` now and on every
+ * change; returns the unsubscribe. Never throws: a missing or failing
+ * matchMedia, listener API or setMotion leaves the renderer at its default.
+ */
+function followReducedMotion(renderer: CanvasRenderer, resolve: ReducedMotionResolver): () => void {
+  if (typeof renderer.setMotion !== "function") return noop;
+  let query: ReducedMotionQuery | null = null;
+  try {
+    query = resolve();
+  } catch {
+    query = null;
+  }
+  if (query == null) return noop;
+  const q = query;
+  const apply = () => {
+    try {
+      renderer.setMotion?.({ reducedMotion: q.matches === true });
+    } catch {
+      // Presentation only; the renderer keeps its last flag.
+    }
+  };
+  apply();
+  try {
+    if (typeof q.addEventListener === "function") {
+      q.addEventListener("change", apply);
+      return () => {
+        try {
+          q.removeEventListener?.("change", apply);
+        } catch {
+          // Nothing to undo.
+        }
+      };
+    }
+    if (typeof q.addListener === "function") {
+      q.addListener(apply);
+      return () => {
+        try {
+          q.removeListener?.(apply);
+        } catch {
+          // Nothing to undo.
+        }
+      };
+    }
+  } catch {
+    // No live updates; the initial preference still applies.
+  }
+  return noop;
+}
 
 /** Engine deps injectable per §8: scripted authority, deterministic Rngs, and (because SceneRenderer needs a real 2D context) the renderer factory. */
 export interface GameSessionDeps {
@@ -131,6 +220,8 @@ export interface GameSessionDeps {
   audio?: Omit<AudioHostOptions, "events" | "settings">;
   /** A4b test seam: sound settings storage. Default: the global `localStorage`, resolved at call time. */
   soundSettingsStorage?: SoundSettingsStorageResolver;
+  /** V7 test seam: the reduced-motion query. Default: `window.matchMedia(REDUCED_MOTION_QUERY)`, resolved on each attach (null without `window` or matchMedia). */
+  reducedMotion?: ReducedMotionResolver;
 }
 
 export interface GameSession {
@@ -264,6 +355,8 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
   };
   engine.events.on("crashed", () => forwardFx("crash"));
   engine.events.on("bettingOpened", () => forwardFx("reset"));
+  // V7: resolved per attach, never here (SSR-safe construction).
+  const resolveReducedMotion = deps.reducedMotion ?? browserReducedMotion;
   // LA1: one-shot callbacks after the next drawn frame.
   const frameWaiters: (() => void)[] = [];
   const notifyFrameWaiters = () => {
@@ -308,6 +401,8 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
     attachCanvas: (canvas) => {
       const renderer = createRenderer(canvas);
       fxTarget = renderer;
+      // V7: the OS reduced-motion preference, before the first frame and on every change.
+      const stopMotion = followReducedMotion(renderer, resolveReducedMotion);
       // Synchronize once on attach. In production this changes nothing (the
       // engine advances only inside driver frames, each followed by a sync),
       // so it never notifies; it guarantees a remount cannot show a stale
@@ -355,6 +450,7 @@ export function createGameSession(deps: GameSessionDeps): GameSession {
         },
       });
       return () => {
+        stopMotion();
         if (fxTarget === renderer) fxTarget = null;
         driver.detach();
         renderer.dispose();
