@@ -112,6 +112,18 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **Git:** verified before any change: branch `develop`, `HEAD` `fd292bc`, twelve local commits ahead of `origin/develop`, clean tree, nothing staged. After the owner's acceptance: one isolated local commit `feat(fairness): add cryptographic seed foundation (P8-3a)` on top of `fd292bc`. **Not pushed.**
 - **Stop condition:** P8-3b and P8-3c are not authorized. Await the owner. No push.
 
+## Also current: P8-3b-0 + P8-3b — Secret lifecycle hardening and seeded round authority — ACCEPTED FOR LOCAL DEVELOPMENT (2026-11-19), COMMITTED LOCALLY, NOT PUSHED
+
+*A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*
+
+- **Authorization (owner, 2026-11-18):** after the P8-3b implementation-readiness report, P8-3b-0 (secret lifecycle hardening R1 – R4) and P8-3b (seeded round authority and deterministic verification) with decisions D-B1 – D-B10 (docs/09 §39). Both stay unstaged and uncommitted until the owner's final review. P8-3c, P8-4 and later are not authorized.
+- **Delivered:** P8-3b-0 in `src/fairness/` (four sources, `lifecycle.test.ts`, README §7); P8-3b as the new module `src/seeded-round/` (binding, authority, typed errors, redaction, README, tests, test-only reference runner and vectors); the `security.test.ts` boundary amendment; one `.gitignore` rule for `qa/p8-3b-authority/`. Docs 04, 09 (§39 + two pointers), 14, 15, 16.
+- **Status:** **P8-3a completed** (`7124ec9`). **P8-3b-0 and P8-3b accepted for local development (2026-11-19); not production fairness certification.** **P8-3c not started. P8-4 not started.**
+- **Not implemented (by design):** production RoundScript, reveal mechanism, public snapshots, broadcasting, endpoints, persistence, wallet or settlement processing, chain-index skipping or round voiding, server crypto adapter, chain store. Engine, probabilities, RTP and tuning unchanged.
+- **Open:** remaining secret-lifecycle limitations (caller disposal, `KeyObject` lifetime, no guaranteed erasure), Node 22.18+ verification, zod S-1, E-RISK-1, public salt selection, fairness-version freeze, operational selective-voiding controls, controlled performance validation (D7 not verified), Phase 7 audio licensing, physical-device QA.
+- **Git:** verified before any change: branch `develop`, `HEAD` `7124ec9`, 13 local commits ahead of `origin/develop`, clean tree, nothing staged. After the owner's acceptance: two isolated local commits on top of `7124ec9`: `afc54c8` `fix(fairness): harden secret lifecycle (P8-3b-0)`, then `feat(fairness): add seeded round authority and distribution tests (P8-3b)`. **Not pushed.**
+- **Stop condition:** no push; P8-3c is not authorized.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.

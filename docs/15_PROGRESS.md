@@ -187,6 +187,84 @@ M2 (the rest of integer minor units) is still deferred.
 - **Runtime compatibility (OPEN):** Node 24.21.0 tested; Node 22 not tested directly; a Node 22 reference floor must be ≥ 22.18.0 (default type stripping). The P8-2 CommonJS server build does not compile the `.ts` imports without extra TypeScript configuration (TS5097); a discarded experiment with `allowImportingTsExtensions` + `rewriteRelativeImportExtensions` succeeded. That change is a **P8-3c proposal**; the server build configuration is unchanged.
 - **Limitations and open items:** public-salt source (D1) and per-round beacon (D3) open; Node 22 not run (D4); D7 gate not decided; no `SeededRoundAuthority`, distribution test, full-round verifier, server adapter, chain store, persistence or endpoint; in-memory index checks give no restart durability (P8-7); secret wrapper is not memory protection; selective voiding and cashout receipt honesty open (D10); zod S-1 open (D12); docs/09 §16.9 float-path determinism (OD-18) untouched.
 
+## P8-3b-0 + P8-3b — Secret lifecycle hardening and seeded round authority (Phase 8 implementation exception; accepted for local development 2026-11-19, committed locally, not pushed)
+
+- **Date:** 2026-11-18 – 2026-11-19
+- **Status:** **accepted by the owner for local development on 2026-11-19 (not production fairness certification); committed locally as `afc54c8` (P8-3b-0) and the P8-3b commit on top of it; not pushed.** P8-3a stays completed (`7124ec9`). P8-3c and P8-4 not started. fv = 1 stays internal and experimental. Phase 7 stays In Progress; Phase 8 is not complete; E-RISK-1 open; play money only.
+- **Authorization:** P8-3b-0 and P8-3b with owner decisions D-B1 – D-B10 (docs/09 §39).
+- **Baseline (verified before any change):** branch `develop`, `HEAD` `7124ec9`, 13 commits ahead of `origin/develop`, clean tree, nothing staged. A production build of the clean tree was taken first (`qa/p8-3b-authority/build/baseline.json`, equal to the P8-3a baseline except the two known nondeterministic files).
+- **Files:** M `src/fairness/{crypto,chain,derive,seeded-rng}.ts`, `src/fairness/README.md`, `src/fairness/security.test.ts` (boundary amendment, D-B1); A `src/fairness/lifecycle.test.ts`; A `src/seeded-round/` (`index.ts`, `seeded-round.ts`, `authority.ts`, `purpose-rng.ts`, `lifecycle.ts`, `errors.ts`, `secrecy.ts`, `README.md`; tests `seeded-round`, `replay`, `draw-order`, `exhaustion`, `distribution`, `engine-regression`, `dev-chain`, `security` `.test.ts`; test-only `test/reference-runner.ts`, `test/dev-chain.ts`, `test/independent-vectors.ts`, `test/replay-pins.ts`, `test/stats.ts`); M `.gitignore` (one rule: `qa/p8-3b-authority/`); M docs 04, 09 (§39 + two pointers), 14, 15, 16. Nothing else changed.
+- **P8-3b-0 (D-B2):**
+  - **R1:** `keyedHmac` zeroes the key copy in `finally`, also when the provider throws. `RoundDerivation.create` zeroes its seed probe in `finally`.
+  - **R2:** idempotent `RoundDerivation.dispose()`: drops the HMAC function, zeroes the chain-id and salt copies, disposes its streams. Afterwards `block` / `openStream` / `next` throw `secret-disposed`. `deriveBlock` disposes its temporary context.
+  - **R3:** idempotent `SeededStream.dispose()`: zeroes the cached block; later draws throw `secret-disposed`.
+  - **R4:** each superseded chain link is zeroed.
+  - **Evidence:** 19 lifecycle tests. The full per-purpose dump of every draw, index and salt is **byte-identical** before and after with both providers (`9a5c227e…`). `vectors.ts`, `version.ts` and `encoding.ts` are untouched. The independent spec implementation still reproduces the recorded P8-3a set. Erasure is best effort.
+- **P8-3b design:**
+  - `SeededRound` owns one `RoundDerivation`, opens `crash`, `jackpot`, `chests` and `world` once each, and exposes the existing `GameEngineDeps` `{ authority, worldRng }`.
+  - `SeededRoundAuthority` delegates to three existing `LocalRoundAuthority` instances, one per outcome stream. Decisions are one-time and in the engine's order: `outcome-already-consumed`, `outcome-out-of-order`.
+  - Exhaustion throws `SeededRoundError("draw-limit-exceeded")`. The round becomes failed and every later draw throws `round-failed`. There is no wrap, reuse or fallback.
+  - Redaction: streams are private; serialization shows `{ fv, chainIndex }` / `{ purpose }` / the class name, also inside a `GameEngine`. Draw counts are readable only via `secretDrawCounts()`.
+  - Imports: only the `@/engine` and `@/fairness` barrels.
+  - No P8-3a getter or `toJSON()` changed (D-B4: not necessary). Snapshot/restore is shown not to rewind streams.
+- **Reference runner (test-only, D-B3):**
+  - Runs a fresh real `GameEngine` with `advance(1/60)`, checked to consume one tick per call. No participants, wallet, network or clock.
+  - Stops on entering `crashed`, or on entering `bonus` (impact + 84 ticks, the chest reveal).
+  - The record holds outcome, crash point, ticks, multiplier, jackpot, chests, goldfish, final world, draw counts and a canonical SHA-256. Errors return no record and dispose the round.
+- **Replay and vectors (D-B10):**
+  - 16 P8-3a rounds reproduce their pinned record hashes, identically in forward, reverse and interleaved order.
+  - Independent vectors (`qa/p8-3b-authority/independent/gen-outcome-vectors.mjs`, imports nothing from `src/`) match the authority and the real engine on all 16 rounds: crash point, crash draw count, jackpot, chests, and the first two creatures.
+  - Negative tests show that swapped streams, one shared outcome stream, reversed block words and a one-draw offset all fail the vectors.
+  - No `Math.random` is called on the seeded path.
+- **Mutation check** (`qa/p8-3b-authority/mutation/`): **18 / 18 injected defects caught**, every file restored and SHA-256-verified.
+  - Binding: stream swaps ×3, the one-time rule, the order rule, a draw-count leak, exhaustion fallback, dispose, failure poisoning.
+  - Boundaries: deep fairness / engine imports, application imports of `src/fairness` or `src/seeded-round`.
+  - Hardening: R1 – R4.
+  - One QA incident: on the first run, the exhaustion-fallback mutant made an unbounded test loop spin (≈ 54 min) until the owner approved terminating that one Vitest worker. The harness then restored the file (hash verified). The test loop is now bounded (`LIMIT + 16` attempts), and the mutant was re-run: caught in 11 s, 6 failing tests.
+- **Distribution tests in the default suite (D-B5, D-B6):**
+  - 100,000 rounds of the public P8-3b development chain, with formulas re-derived from the engine source and 5 σ bounds.
+  - Crash: the 1.00 / 1.01 / 200 atoms, the 0.9603 / x tail at 11 points, a 12-bin goodness of fit, and the one-draw ⇔ 1.00 invariant.
+  - Jackpot and the three chests: band shares, rounding edges, band means, overall means, and inter-chest independence.
+  - World uniformity: 100,000 draws (exact 2^-52 grid, 100-bin chi-square, mean, variance, per-word lanes, lag-1 / lag-4 correlation).
+  - Purpose independence: 5 contingency tests, plus jackpot after 1-draw vs 2-draw crash rounds.
+  - **Finding (test design, not a game discrepancy):** cent rounding puts ≈ 0.20 % of chests and ≈ 0.009 % of jackpots exactly on a band edge (e.g. 2.995 → 3.00). The tests model those edges exactly. No probability changed.
+- **Full-engine QA** (`qa/p8-3b-authority/analysis/`, Git-ignored; public development chains; one fresh real `GameEngine` per round). All runs on **AC power** (BatteryStatus 2 at start and end), with the owner's `vite dev` running; uncontrolled conditions.
+
+  | Run | Rounds | Seeds | Wall / CPU | Invariant violations | Max \|z\| | Key results |
+  |---|---|---|---|---|---|---|
+  | natural-100k | 100,000 | P8-3b dev chain, rounds 1 – 100,000; 8 processes | 29.6 s / 238 CPU-s | 0 | 2.84 | P(floor) 0.16013; world draws max 861, mean 411 |
+  | natural-100k-split5 | same | same; 5 processes | 27.7 s / 145 CPU-s | 0 | — | Overall record digest `21fe342a…`, **identical** to the 8-process run |
+  | natural-1m | 1,000,000 | 10 dev chains × 100,000 (seed phrase + " [QA chain k/10]") | 281 s / 1,749 CPU-s | 0 | 2.30 | P(floor) 0.161943 (z 1.91 vs 0.161239); crash atoms and tail, jackpot / chest bands within 2.3 σ; jackpot mean 142.72, chest mean 5.675; world draws max 868 |
+  | fulldive-100k (QA only: the crash decision is taken and ignored, every dive reaches the floor) | 100,000 | P8-3b dev chain | 46.6 s / 382 CPU-s | 0 | 1.37 | Rao–Blackwell P(floor) = E[0.9603 / path max] 0.161269; path max 4.71 – 6.58 (< 6.614321); goldfish per full dive mean 1.751 (0: 17.1 %, 1: 30.4 %, 2: 26.7 %, 3: 15.7 %, 4: 6.8 %, ≥ 5: 3.2 %) |
+
+  - Invariants checked on every round: draw counts (crash 1 ⇔ 1.00, jackpot 2 / chests 6 ⇔ floor, world = 7 × creatures); dive start tick 300; chests at impact + 84; a 1.00 crash ends on the first diving tick; crash ≥ 6.62 ⇒ floor; goldfish consumed only on the anchor line and never skipped.
+  - Goldfish are 4.00 % of creatures, and 45.1 % of goldfish lie on the anchor line (both match).
+  - **The E-A reference values (docs/09 §34.1 – §34.3) are confirmed independently by the seeded engine; no discrepancy found.**
+  - The world-draw maximum (868) exceeds P8-3a's measured 861 but stays far below the 2,048 limit.
+- **Performance (informational only):**
+  - Hardware: AMD Ryzen 5 5500U, 12 logical CPUs, 5.8 GB RAM, Node 24.21.0, OpenSSL 3.5.8.
+  - Per full reference round (engine + HMAC derivation + record hash), per worker, with 8 processes in parallel:
+    - 1M run: p50 0.72 – 1.45 ms, p95 1.93 – 4.57 ms, p99 2.91 – 5.40 ms;
+    - natural 100k: p50 1.71 – 1.75 ms, p95 4.88 – 5.03 ms, p99 7.98 – 9.06 ms;
+    - full dive: p50 ≈ 3.9 ms, p99 ≈ 9.5 – 9.9 ms.
+  - Worker memory: RSS ≤ 157 MB, heap ≤ 68 MB.
+  - These were measured under parallel load, not as isolated benchmarks. They say nothing about production server throughput, and **the provisional D7 gate stays NOT VERIFIED**.
+- **Validation:**
+  - Root `tsc --noEmit` clean.
+  - Full Vitest (`--maxWorkers=2`, PowerShell, AC power): **102 files / 2,586 tests passed**, 128.7 s. That is the P8-3a baseline 93 / 2,436 + `lifecycle.test.ts` 19 + `src/seeded-round` 8 files / 131.
+  - The 250 P8-3a fairness tests pass unchanged; the fairness suite is now 10 files / 269.
+  - ESLint (unchanged configuration) 0 findings and Prettier clean on all 26 changed / new `src` files. `git diff --check` clean. All files LF.
+  - **Production build (PowerShell):** 48 of 51 files byte-identical to the clean-tree baseline. `nitro.json` and `server/index.mjs` are equal after masking. `server/wrangler.json` differs only in `compatibility_date` (`2026-11-18` → `2026-11-19`: the build crossed midnight). No fairness or seeded-round string appears in `.output`.
+  - **Commit split check:** the proposed commit-1 tree (HEAD + P8-3b-0 only) was built in a scratch copy. It passes `tsc` and `src/fairness` + `src/engine` (22 files / 369 tests), and its vector dump equals the pre-change dump.
+  - **Acceptance check (2026-11-19):** the `compatibility_date` difference is a build-clock value, not a code change: no tracked file or environment variable sets it, so nitro uses its default `compatibilityDate: "latest"`, which resolves to the build machine's **local** date (the change build ran at 21:17 UTC = 01:17 local, +04:00). Any build of `HEAD` on another day differs the same way. It is passed to Cloudflare Workers at deploy time and selects which dated runtime compatibility flags apply, so it is a deployment-reproducibility concern that predates P8-3b (not pinned; see Open). Masked, `server/index.mjs` differs only in asset `mtime`s and table order (26 entries, same etag / size / type / path; the code outside the table is byte-identical); `nitro.json` only in `date`. All client JS, CSS and assets are byte-identical. The commit-1 tree (`HEAD` + P8-3b-0 only) was rebuilt in a scratch copy: `tsc` clean, `src/fairness` 10 files / 269 tests, vector dump byte-identical to `HEAD` with both providers.
+- **Runtime (D-B7):** Node 24.21.0 only. **Node 22.18+ NOT VERIFIED.** The server CommonJS build is unchanged.
+- **Limitations and open items:**
+  - Remaining secret-lifecycle limits: caller disposal, `KeyObject` lifetime, no guaranteed erasure.
+  - Node 22.18+ verification; zod S-1; E-RISK-1; public salt selection; fairness-version freeze; operational selective-voiding controls (D10); controlled performance validation (D7); OD-18 cross-engine float determinism.
+  - Phase 7 audio licensing and physical-device QA.
+  - The production build's Cloudflare `compatibility_date` is not pinned (nitro default `"latest"` = build date); pinning it is a separate, unauthorized configuration change.
+  - No reveal mechanism, production RoundScript (P8-4), server adapter or chain store (P8-3c).
+
 ---
 
 ## V7 — Reduced motion (Phase 7)

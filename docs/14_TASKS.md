@@ -351,6 +351,21 @@ Status:
 | Gates | P8-3 **not complete** (P8-3b, P8-3c not started); D7 performance gate **not verified** (provisional; conditions uncontrolled, docs/15); Phase 7 **IN PROGRESS**; Phase 8 **not complete**; E-RISK-1 open; D3 beacon, salt source, D10 risks and zod S-1 open; play money only |
 | Next | **Stop.** P8-3b is not authorized. No push |
 
+## P8-3b-0 + P8-3b — Secret lifecycle hardening and seeded round authority (Phase 8 implementation exception, 2026-11-18)
+
+*Separate from the P8-3a entry above, which is preserved unchanged. P8-3a is committed locally as `7124ec9` (not pushed).*
+
+| Item | Status |
+| --- | --- |
+| Authorization | **Owner, 2026-11-18:** after the P8-3b implementation-readiness report, two work packages with decisions D-B1 – D-B10 (docs/09 §39): P8-3b-0 (secret lifecycle hardening R1 – R4) and P8-3b (seeded round authority and deterministic verification). Both stay **unstaged and uncommitted** pending the owner's final review. P8-3c, P8-4 and later are not authorized; no Phase 7 gate waived; TASK 008 stays the active task |
+| P8-3b-0 deliverable | `src/fairness/{crypto,chain,derive,seeded-rng}.ts` (key copies zeroed in `finally`, idempotent `RoundDerivation.dispose()`, `SeededStream.dispose()`, superseded chain links zeroed), `src/fairness/lifecycle.test.ts` (19 tests), `src/fairness/README.md` §7. No algorithm, encoding, domain-separation, purpose, limit or output change; the vector corpus and the full per-purpose dump are byte-identical |
+| P8-3b deliverable | `src/seeded-round/` (`SeededRound`, `SeededRoundAuthority`, `PurposeRng`, `RoundLifecycle`, `SeededRoundError`, redaction, `README.md`), 8 test files (131 tests), test-only reference runner / development chain / independent vectors / replay pins / statistics helpers; the import-boundary amendment in `src/fairness/security.test.ts` (D-B1); one `.gitignore` rule for `qa/p8-3b-authority/` |
+| Verification | Independent outcome vectors (16 rounds) agree with the real engine; record replay identical in any order and across processes (100,000 rounds, two process splits, same digest); 18 / 18 injected defects caught; 100,000 distribution samples in the default suite; 100,000 and 1,000,000 full-engine QA rounds with 0 invariant violations and all frequencies within 2.9 σ of the re-derived references (docs/15) |
+| Isolation | No change to `src/engine`, `src/shared`, `src/rendering`, `src/ui`, `src/audio`, `src/protocol`, `server/`, assets, dependencies, lockfiles or configuration. Nothing in the app or the server imports `src/seeded-round` or `src/fairness` (except the binding through the barrel). Production build: 48 of 51 files byte-identical; the other three differ only in build dates / mtimes |
+| Acceptance and commits | **Owner, 2026-11-19: both accepted for local development only; not production fairness certification.** Two isolated local commits on top of `7124ec9`, **not pushed**: 1. `afc54c8` `fix(fairness): harden secret lifecycle (P8-3b-0)` — the four `src/fairness` sources, `lifecycle.test.ts`, the README hardening text, `.gitignore`. 2. `feat(fairness): add seeded round authority and distribution tests (P8-3b)` — `src/seeded-round/`, the `security.test.ts` amendment, the README's seeded-round sentences, docs 04 / 09 / 14 / 15 / 16. The commit-1 tree was built separately and passes `tsc` and its tests |
+| Gates | P8-3 **not complete** (P8-3c not started); P8-4 not started; D7 performance gate **not verified**; Node 22.18+ **not verified**; Phase 7 **IN PROGRESS**; Phase 8 **not complete**; E-RISK-1, zod S-1, public salt source, fairness-version freeze, selective voiding, Phase 7 audio licensing and physical-device QA open; play money only |
+| Next | **Stop.** P8-3c is not authorized. No push |
+
 ---
 
 Only one task may be active at a time.

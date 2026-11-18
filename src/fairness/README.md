@@ -1,8 +1,8 @@
 # `src/fairness` — fairness cryptographic foundation (P8-3a, fv = 1 EXPERIMENTAL)
 
-**Status: P8-3a, internal and experimental (2026-11-18). Accepted by the owner for local development with the limitations in §7, §9, §10 and §11 (docs/09 §38.1); not production fairness certification. Not frozen, not published, not activated, not connected to gameplay.** The owner authorized P8-3a only (seed chain and domain-separated derivation) with decisions D1 – D12 (docs/09 §38). **2026-11-18, P8-3b-0:** the owner authorized the secret lifecycle hardening R1 – R4 (§7) together with P8-3b (`SeededRoundAuthority`, distribution tests; a separate commit); the hardening is implemented and awaits the owner's acceptance. P8-3c (server crypto adapter, chain store) and every later milestone are **not** authorized. AQUADIVE is **PLAY-MONEY ONLY**.
+**Status: P8-3a, internal and experimental (2026-11-18). Accepted by the owner for local development with the limitations in §7, §9, §10 and §11 (docs/09 §38.1); not production fairness certification. Not frozen, not published, not activated, not connected to gameplay.** The owner authorized P8-3a only (seed chain and domain-separated derivation) with decisions D1 – D12 (docs/09 §38). **2026-11-18, P8-3b-0:** the owner authorized the secret lifecycle hardening R1 – R4 (§7) together with P8-3b (`SeededRoundAuthority` in the separate module `src/seeded-round/`, distribution tests); both were accepted for local development on 2026-11-19 (not production fairness certification) and committed locally. P8-3c (server crypto adapter, chain store) and every later milestone are **not** authorized. AQUADIVE is **PLAY-MONEY ONLY**.
 
-This is a pure TypeScript module. Production files import only each other (relative `./*.ts`), never the engine, UI, rendering, audio, shared floor, protocol, zod, Fastify, Node built-ins or the DOM. Cryptography is injected. Nothing in the application or the server imports it, so it has no effect on the running game. It does not change the engine RNG, any probability, RTP, the wallet or settlement.
+This is a pure TypeScript module. Production files import only each other (relative `./*.ts`), never the engine, UI, rendering, audio, shared floor, protocol, zod, Fastify, Node built-ins or the DOM. Cryptography is injected. Nothing in the application or the server imports it, so it has no effect on the running game. Since P8-3b its only importer is the separate binding module `src/seeded-round/`, which imports it through `@/fairness` (this public surface) and is itself unconnected to the game; `security.test.ts` enforces both. It does not change the engine RNG, any probability, RTP, the wallet or settlement.
 
 Relative imports carry an explicit `.ts` extension so that Node can run the module **unmodified** through its built-in type stripping (no build step). The tests rely on this to compare separate Node processes. The current P8-2 CommonJS server build (`tsc` 5.8.3) rejects these imports (TS5097). A discarded experiment with `allowImportingTsExtensions` + `rewriteRelativeImportExtensions` compiled the module, with output identical to the type-stripped run. That configuration change is a **P8-3c proposal**; the server build is unchanged.
 
@@ -106,7 +106,7 @@ Every output is checked to be a 32-byte `Uint8Array` (`crypto-provider-failed` o
 
 `SecretBytes` holds its bytes in a private field. JSON, `String()`, template literals, concatenation, `util.inspect` and `util.format`, `Object.entries`, spreading, `Reflect.ownKeys`, `structuredClone` and error messages show `[redacted secret]` or nothing. Its constructor refuses use outside `fromBytes` at runtime too. `reveal()` returns a caller-owned copy, `equals` is constant-time, and `dispose()` zeroes the wrapper's own buffer. `RoundDerivation` serializes only its public fields; the stream zeroes each cached block when it moves on.
 
-**Draw counts are secret before the reveal (P8-3b, D-B4).** `SeededStream.toJSON()` shows `drawsUsed`, and a draw count leaks outcome information (one crash draw means a 1.00× crash; the world count tracks the dive length). The method is unchanged for compatibility; a live stream must therefore never reach a public message, snapshot or log.
+**Draw counts are secret before the reveal (P8-3b, D-B4).** `SeededStream.toJSON()` shows `drawsUsed`, and a draw count leaks outcome information (one crash draw means a 1.00× crash; the world count tracks the dive length). The method is unchanged for compatibility; a live stream must therefore never reach a public message, snapshot or log. `src/seeded-round` keeps its streams in private fields behind redacting wrappers.
 
 **Lifecycle hardening (P8-3b-0, owner decision D-B2; requirements R1 – R4).** No algorithm, encoding, domain separation, purpose, draw limit or output changed; the vector corpus and the full per-purpose dump are byte-identical before and after (docs/15).
 
@@ -123,7 +123,7 @@ Tests: `lifecycle.test.ts` (19 tests) observes the buffers the module hands out 
 
 **Still open (before production server integration):**
 
-- Not retaining secret derived blocks longer than necessary is now bounded by `dispose()`; whether a caller disposes promptly is the caller's responsibility.
+- Not retaining secret derived blocks longer than necessary is now bounded by `dispose()`; whether a caller disposes promptly is the caller's responsibility (the P8-3b reference runner does).
 - Never log, transmit or persist unrevealed secret material (draw counts included, D-B4).
 - Review secret handling in Node.js and in the future server crypto adapter (P8-3c), including `KeyObject` lifetime.
 
@@ -170,8 +170,8 @@ Verification needs a controlled benchmark on the chosen reference hardware.
 
 ## 11. Limitations and open items
 
-- The remaining secret-handling items (§7, "Still open"), controlled performance verification (§10) and the CommonJS server build of this source (P8-3c proposal) are open. R1 – R4 are implemented (P8-3b-0, awaiting the owner's acceptance).
+- The remaining secret-handling items (§7, "Still open"), controlled performance verification (§10) and the CommonJS server build of this source (P8-3c proposal) are open. R1 – R4 are implemented (P8-3b-0, accepted for local development on 2026-11-19).
 - The public-salt source (D1), the fairness-version freeze (D11), the per-round beacon (D3), the Node reference version (D4), OD-5 world disclosure and OD-18 float determinism of the engine path are open.
-- No `SeededRoundAuthority`, distribution test, verifier for a full round, server adapter, chain store, persistence, endpoint or message handler exists.
+- No verifier for a full round, server adapter, chain store, persistence, endpoint or message handler exists. (`SeededRoundAuthority` and the distribution tests live in `src/seeded-round/`, P8-3b, which is not connected to the game.)
 - Selective voiding and cashout receipt honesty (D10) are open high-priority risks; cryptographic commitments alone do not solve them.
 - The zod advisory review (D12, S-1) stays open and separate. This module does not touch zod.

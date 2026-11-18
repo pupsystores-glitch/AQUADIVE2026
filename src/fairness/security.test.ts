@@ -3,6 +3,10 @@
 //   audio, shared floor, protocol, zod, Fastify, Node built-ins or any package.
 // - No Math.random, clock, logging, network, DOM, process or global crypto access in production.
 // - Nothing in the application or the server imports src/fairness (not connected to gameplay).
+//   Amended for P8-3b (owner decision D-B1): the one exception is the separate binding module
+//   src/seeded-round/, whose production files may import only the public barrel `@/fairness` and
+//   whose tests may also import the test-only providers under src/fairness/test/. Every other file
+//   in src/ and server/ still may not import src/fairness at all.
 // - Errors and commitments never carry secret material.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
@@ -90,9 +94,10 @@ describe("production import boundary", () => {
 });
 
 describe("isolation from the application and the server", () => {
-  it("no file outside src/fairness imports it", () => {
+  it("no file outside src/fairness imports it, except src/seeded-round through the barrel", () => {
     const roots = [join(repo, "src"), join(repo, "server", "src"), join(repo, "server", "test")];
     const offenders: string[] = [];
+    let seededRoundImports = 0;
     for (const root of roots) {
       let files: string[] = [];
       try {
@@ -104,6 +109,21 @@ describe("isolation from the application and the server", () => {
         const rel = relative(repo, f).split(sep).join("/");
         if (rel.startsWith("src/fairness/")) continue;
         const src = readFileSync(f, "utf8");
+        if (rel.startsWith("src/seeded-round/")) {
+          // P8-3b exception (D-B1): production → the barrel only; tests → also the test providers.
+          const isTest = rel.endsWith(".test.ts") || rel.startsWith("src/seeded-round/test/");
+          const allowed = isTest
+            ? /^@\/fairness(\/test\/(node-provider|sha256-reference))?$/
+            : /^@\/fairness$/;
+          const found = [
+            ...src.matchAll(
+              /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["']([^"']*\bfairness\b[^"']*)["']/g,
+            ),
+          ].map((m) => m[1]);
+          seededRoundImports += found.length;
+          if (found.some((s) => !allowed.test(s))) offenders.push(rel);
+          continue;
+        }
         if (
           /(\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["'][^"']*\bfairness\b/.test(
             src,
@@ -114,6 +134,7 @@ describe("isolation from the application and the server", () => {
       }
     }
     expect(offenders).toEqual([]);
+    expect(seededRoundImports).toBeGreaterThan(0); // the exception is exercised, not dead code
   });
 
   it("fairness tests never import the engine, UI, rendering, audio or shared floor", () => {
