@@ -285,6 +285,43 @@ Status:
 | Gates | Phase 7 **IN PROGRESS** (P7-C not closed); Phase 8 planning authorized, implementation **not**; P8-1 needs an explicit phase-gate exception (docs/09 §35.1); full E-A not started; OD-1 … OD-21 not approved |
 | Next | Owner review; then, if authorized, the documentation commits and the P8-1 decisions. **Stop condition:** no staging, commit, push or implementation without the owner's approval |
 
+## P8-1 — Versioned network protocol contracts (DRAFT v1; Phase 8 implementation exception, 2026-11-18)
+
+*Separate from the P8-0, P8-0 review and P8-0E entries above, which are preserved unchanged. Those three documentation steps are committed locally as `c110202`, `a96da57`, `6f2e2a7` and `c11ab64` (not pushed).*
+
+| Item | Status |
+|---|---|
+| Authorization | **Owner, 2026-11-18:** P8-1 only, as a narrowly scoped Phase 8 implementation exception while Phase 7 remains open. P1-D1 … P1-D13 (docs/09 §35.2) provisionally approved for implementation as DRAFT protocol v1. Not an approval of OD-1 … OD-21; not a protocol freeze or public release; no Phase 7 gate waived. TASK 008 stays the active task |
+| Deliverable | `src/protocol/` (docs/20 §5.2 file list): version, limits, ids, money, multiplier, errors, envelope, client / public / session catalogues, snapshots, never-throwing codec, `index.ts`, `README.md` (the as-implemented protocol documentation), tests, golden corpus, seeded fuzz generator. **Delivered in the working tree, unstaged and uncommitted; awaiting the owner's review** |
+| Contract | Envelopes `{v,t,id,p}` / `{v,t,seq,ts,re?,p}`; 7 client, 12 public and 14 session message types incl. `sync.snapshot`, `auth.ok`, `pong`; money as BIGINT-safe minor-unit strings (`bigint` only); multipliers as canonical shortest-round-trip decimals; one kebab-case append-only error registry; idempotency semantics (enforcement deferred to P8-10); draft compatibility rules with a golden corpus |
+| Isolation | Imports only `zod` (installed 3.25.76, v3 API); nothing outside `src/protocol` imports it (tested). No change to `src/engine`, `src/shared`, `src/rendering`, `src/ui`, `src/audio`, `package.json`, lockfiles or configuration |
+| Gates | Phase 7 **IN PROGRESS** (P7-C not closed); protocol v1 **DRAFT**; OD-1 … OD-21 not approved; full E-A not started; play money only |
+| Next | Owner review of P8-1. **Stop condition:** no staging, commit, push, P8-2 or any other milestone without the owner's approval |
+
+### P8-1 acceptance refinement (owner decisions, 2026-11-18; P8-1 only)
+
+*Added after the P8-1 performance and acceptance review. The rows above are preserved as written.*
+
+| Item | Status |
+|---|---|
+| Decisions | zod v3 **retained** (no zod v4, no hand-written validators, no dependency or package change). Tiered performance budget **OWNER-APPROVED PROVISIONAL** (docs/09 §36.2) replaces the universal 50 µs target. Retryability contract clarified before the first network client. Security validation and canonical serialization preserved. P8-1 stays uncommitted until the final report is reviewed |
+| Retryability | Typed `RequestOutcome` (`final` / `transient` / `indeterminate`) on every registry code and `classifyRequestResponse` for clients; carrier rule (`bet.rejected` / `bonus.pickRejected` carry only stored final codes); `server-busy` is `error`-only; new stored final code `commit-timeout` for the SETTLE-IN barrier (amends docs/09 §10.4's `SERVER_BUSY`, **owner to confirm**); original request id must be reused; a missing response or transient error never proves rejection (docs/09 §36.3, `src/protocol/README.md` §9.1) |
+| Wire format | Unchanged; the 43 golden frames are byte-identical |
+| Performance gate | Measured five runs on the current tree; conditions not controlled (battery, owner's dev server running) → **NOT VERIFIED** (docs/15 P8-1 refinement entry) |
+| Not done | No WebSocket, no broadcast fan-out, no runtime retry logic, no gameplay / wallet / engine / RNG / rendering / UI / audio change |
+| Next | Owner review of the final report. **Stop condition:** no staging, commit, push or P8-2 without the owner's approval |
+
+### P8-1 owner acceptance (2026-11-18)
+
+| Item | Status |
+|---|---|
+| Decision | P8-1 Draft v1 **ACCEPTED** by the owner, subject to final safety verification (done). One isolated **local** commit authorized; **no push** |
+| `commit-timeout` | **Approved** as a stored final rejection **only** when the server can prove the bet was not included and any debit was rolled back or durably compensated; otherwise the request is **indeterminate** (`error internal` or no response). Semantics defined now; enforcement deferred to the server milestones (docs/09 §36.3) |
+| Final review fix | `classifyRequestResponse` no longer classifies an `error` frame as `final` when it carries a code registered only for a rejection carrier (e.g. `commit-timeout` as `error`); it is now `indeterminate`. 2 tests added. Wire format and golden frames unchanged |
+| Performance gate | **NOT VERIFIED** (accepted as such, not PASS); provisional tiered budgets and all results stay documented. No benchmark rerun |
+| Boundaries | Protocol v1 DRAFT, not frozen. Phase 7 IN PROGRESS. Phase 8 implementation authorization covers P8-1 only. PLAY-MONEY ONLY; economy/RTP risk, audio rights and physical-device QA open |
+| Next | **Stop.** P8-2 (Fastify server skeleton) not started and not authorized |
+
 ---
 
 Only one task may be active at a time.

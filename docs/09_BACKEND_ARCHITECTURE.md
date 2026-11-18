@@ -1846,6 +1846,44 @@ These preferences are planning inputs. They do not authorize building the backen
 3. **B3, the contract:** approval of P1-D1 … P1-D13 (§35.2), including the deviations from §8 (I1 – I6).
 4. **The authorization itself:** "Start P8-1", with no push implied (the branch syncs to Lovable).
 
+*§35 is kept as written before P8-1 started. The owner later authorized P8-1 (docs/14, docs/15 P8-1 entries); §36 records the P8-1 acceptance decisions.*
+
+---
+
+## 36. P8-1 acceptance decisions (owner, 2026-11-18; P8-1 only)
+
+**Scope.** These decisions apply to P8-1 Draft v1 only. They do not approve the Phase 8 architecture as a whole, do not decide OD-1 … OD-21, do not release or freeze protocol v1, and do not close Phase 7. `src/protocol/README.md` is the as-implemented record.
+
+### 36.1 Validation engine
+
+**zod v3 is retained** as the production validation engine (installed 3.25.76, v3 API). No migration to zod v4, no hand-written validators, no new dependency. The P8-1 review measured the `zod/v4` engine inside the same package at ≈ 2× faster (not 10×); that measurement remains informational.
+
+### 36.2 Performance budget — OWNER-APPROVED PROVISIONAL
+
+The single "p99 < 50 µs per message" target (docs/20 §5.4 gate 8) is replaced by three tiers. Measured on decode-and-validate (`decodeClientFrame` / `decodeServerFrame`, every pipeline stage included). **Provisional, not production certification**; real-device and load testing remain open.
+
+| Tier | Frames | Target |
+|---|---|---|
+| 1 — client → server | every client request, `bet.place` and `bet.cashout` included | p99 < 50 µs |
+| 2 — small server → client | server frames ≤ 0.5 KB | p50 < 50 µs and p99 < 200 µs |
+| 3 — bulk and snapshot | `welcome`, `sync.snapshot`, `round.world`, `feed.bets` | p50 < 300 µs at representative golden-frame sizes; mean < 3 ms at the documented maximum schema size |
+
+p95 and p99 are reported for every tier, Tier 3 included. The absence of a Tier 3 p99 threshold is **not** permission for unbounded blocking or allocation: the frame-size, nesting, array-length and field limits (`src/protocol/limits.ts`) stay in force. A gate passes only under recorded, stable conditions (AC power, no competing load, warmed process, five runs); otherwise it is reported NOT VERIFIED. Results: docs/15 P8-1 entry and `src/protocol/README.md` §17.
+
+### 36.3 Retryability and error contract
+
+- **Three outcomes** for every response to `bet.place`, `bet.cashout`, `bonus.pick`: `final` (stored decision: acceptances, and every code on `bet.rejected` / `bonus.pickRejected`, unknown codes included), `transient` (`error` with `server-busy`, `rate-limited`, `auth-required`, `auth-expired`: this delivery was refused before processing) and `indeterminate` (`error` with `internal`, `idempotency-conflict`, a protocol fault or an unknown code; and a missing response).
+- **A transient error does not prove that a bet was never accepted**, and **a missing response does not prove rejection.** The runtime (P8-6 client, P8-10 idempotency store) settles an unsettled request only through authoritative state (`sync.snapshot.player`) or idempotent replay of the **original** request id. A client never sends a new id for an unsettled financial request; no automatic retry may create a second financially effective request.
+- **Carrier rule:** `bet.rejected` / `bonus.pickRejected` carry only stored, final codes; transient and indeterminate conditions travel only as `error`. `error.retryable` means only "a resend with the same id may succeed later".
+- **Amendment to §10.4 and the §20 failure table (draft protocol only):** the SETTLE-IN barrier's rejection is `bet.rejected commit-timeout`, a stored final code, instead of `bet.rejected SERVER_BUSY`; `server-busy` is `error`-only. The barrier itself (300 ms default, rollback or compensating void) is unchanged. **Owner-approved at P8-1 acceptance (2026-11-18), with a condition:** `commit-timeout` is a stored final rejection **only** when the authoritative server can prove that the bet was not included in the round **and** any debit was rolled back or durably compensated (the compensating void committed). While the transaction's outcome is unknown or reconciliation is incomplete, the request is **indeterminate**: the server answers `error internal` (or nothing) and never implies a definitive rejection while the financial effect is unresolved. The protocol defines these semantics now; enforcement belongs to the authorized server milestones (P8-4 rounds, P8-10 idempotency / ledger).
+- **Classifier hardening (P8-1 acceptance):** an `error` frame never settles a request. `classifyRequestResponse` returns `indeterminate` for an `error` frame whose code is not registered for the `error` carrier (for example a stored business code such as `commit-timeout` sent as `error` by a non-conforming server); before this fix it returned that code's `final` outcome. Server encoders already refused such frames. Wire format unchanged.
+- **Stable vs diagnostic:** error codes (and their carriers) are wire contract, append-only. Human-readable failure `detail` strings are diagnostics and not API. Unknown codes: final on a rejection carrier, indeterminate on `error`. Server inbound validation stays strict; client decoding stays tolerant (P1-D4, P1-D12).
+- **Wire format:** unchanged. No payload gained or lost a field; the 43 golden frames are byte-identical.
+
+### 36.4 Security and broadcast architecture
+
+The decoder's security pipeline is unchanged: size before parsing, nesting scan before `JSON.parse`, prototype-key rejection, strict inbound schemas, allow-list encoders; no fast path skips validation of player requests. A future broadcast optimization (P8-5) may validate an immutable shared payload once and add each connection's `seq` safely; P8-1 implements no broadcast fan-out and no WebSocket networking.
+
 ---
 
 *This document is a proposal. It becomes the backend's architectural source of truth only when the owner approves it. Until then Phase 8 is not started, and no milestone in §29 may begin without its own authorization.*

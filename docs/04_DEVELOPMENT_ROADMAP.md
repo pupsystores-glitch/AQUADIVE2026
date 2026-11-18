@@ -183,6 +183,10 @@ Status: Pending — **not started.** *2026-11-18, P8-0: the owner authorized Pha
 
 *2026-11-18, P8-0E (documentation only): Phase 8 **planning** is authorized; Phase 8 **implementation** is not. Phase 7 remains **In Progress** and P7-C is not closed. P8-1 adds source files, so it would need an explicit owner **phase-gate exception** while Phase 7 is open ("Never skip phases", above), or the Phase 7 close first (docs/09 §35.1). Neither has been granted, and P8-1 has not started. E-RISK-1 is corrected to **Critical**: the never-cash-out return is ≈ 130.5× (≥ 117.4× rigorous) (docs/20 §2, docs/09 §34.1). **Owner directive:** the existing economic model is not approved for real-money operation, and AQUADIVE stays **play-money only** until a separately authorized economic redesign, independent verification and the applicable compliance reviews are complete.*
 
+*2026-11-18, P8-1 (implementation exception): after the P8-0E documentation commits (`c110202`, `a96da57`, `6f2e2a7`, `c11ab64`), the owner authorized **P8-1 — Versioned Network Protocol Contracts** as a narrowly scoped Phase 8 implementation exception while Phase 7 remains open, and provisionally approved P1-D1 … P1-D13 (docs/09 §35.2) for implementation as **DRAFT protocol v1**. No Phase 7 gate is waived. The deliverable is the pure library `src/protocol/` (zod only; nothing in the app imports it; production build output unchanged). It is delivered in the working tree, **unstaged and uncommitted**, and awaits the owner's review. Protocol v1 stays a draft and is not released. OD-1 … OD-21 are not approved. No other Phase 8 milestone is authorized; Phase 8 as a phase is otherwise not started. AQUADIVE stays **play-money only**.*
+
+*2026-11-18, P8-1 acceptance: the owner accepted P8-1 Draft v1 after a final safety verification and authorized one isolated local commit (not pushed). The performance gate stays **NOT VERIFIED**. Protocol v1 stays a draft; Phase 7 stays **In Progress**; P8-2 is not authorized.*
+
 Objectives
 
 - WebSocket

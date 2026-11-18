@@ -62,6 +62,32 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **Git:** `HEAD` `01b061e`, five local commits not pushed; nothing staged, committed or pushed.
 - **Stop condition:** await the owner's review.
 
+## Also current: P8-1 — Versioned network protocol contracts (DRAFT v1) — DELIVERED (2026-11-18, working tree, unstaged and uncommitted), AWAITING THE OWNER'S REVIEW
+
+*A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*
+
+- **Authorization (owner, 2026-11-18):** after reviewing the P8-0E documentation closeout (committed locally as `c110202`, `a96da57`, `6f2e2a7`, `c11ab64`), the owner authorized P8-1 only and provisionally approved P1-D1 … P1-D13 (docs/09 §35.2) for implementation as **DRAFT protocol v1**. OD-1 … OD-21 are **not** approved; the protocol is **not** frozen or released; no Phase 7 gate is waived. AQUADIVE stays **PLAY-MONEY ONLY**.
+- **Delivered:** `src/protocol/` — a pure TypeScript library (zod only) defining the v1 draft envelopes, the full message catalogue (client, public, session, incl. `sync.snapshot`), identifiers, money and multiplier formats, the error registry, idempotency semantics, compatibility rules and a never-throwing codec; tests, a golden-frame corpus and a seeded fuzz generator. `src/protocol/README.md` is the as-implemented protocol documentation (envelopes, audiences, every message type, formats, errors, versioning, idempotency, deviations from docs/09 §8, deferred runtime responsibilities, measured performance).
+- **Not implemented (by design):** authentication, sessions, rate limits, WebSocket networking, ordering, replay protection, idempotency storage, ledger, settlement, cashout authority, provable fairness. The protocol does not change or fix the game's economics (E-RISK-1).
+- **Isolation:** nothing in the app imports the protocol; no engine, shared, rendering, UI, audio, dependency, lockfile or configuration change; the production build output is compared with `c11ab64` (docs/15 P8-1 entry).
+- **Git:** verified before any change: branch `develop`, `HEAD` `c11ab64`, nine local commits ahead of `origin/develop`, clean tree. P8-1 adds untracked `src/protocol/` and edits docs 04, 14, 15, 16 only. **Nothing staged, committed or pushed.**
+- **Stop condition:** await the owner's review. No staging, commit, push, P8-2 or any other milestone without the owner's approval.
+
+### P8-1 acceptance refinement (owner decisions, 2026-11-18) — DONE IN THE WORKING TREE, AWAITING THE OWNER'S REVIEW OF THE FINAL REPORT
+
+- **Owner decisions:** retain zod v3; tiered performance budget **OWNER-APPROVED PROVISIONAL** (docs/09 §36.2); clarify retryability before the first network client; preserve all security validation and canonical serialization; keep P8-1 uncommitted until the final report is reviewed. P8-1 only; the Phase 8 architecture as a whole is not approved; Phase 7 is not complete.
+- **Changed:** `src/protocol/errors.ts` (typed `outcome` per code, carrier rule, `server-busy` `error`-only, new stored code `commit-timeout`, `classifyRequestResponse`), `index.ts` exports, comments in `codec.ts` and `messages/server-session.ts`, `security.test.ts` (stored-code list), new `errors.test.ts`, `README.md` (§9, §9.1, §11, §14, §16, §17, §19). docs/09 §36 added. No golden frame changed.
+- **Performance:** measured, but not under controlled conditions (battery, owner's dev server running) → the tiered gate is **NOT VERIFIED** (docs/15).
+- **Git:** `HEAD` `c11ab64`; nothing staged, committed or pushed.
+- **Stop condition:** await the owner's review of the final report.
+
+### P8-1 owner acceptance (2026-11-18) — ACCEPTED; ONE ISOLATED LOCAL COMMIT, NOT PUSHED
+
+- **Decision:** P8-1 Draft v1 accepted after a final safety verification; `commit-timeout` approved only as a proven-final rejection (bet provably not included, debit rolled back or durably compensated), otherwise indeterminate (docs/09 §36.3). Performance gate **NOT VERIFIED**.
+- **Final review fix:** an `error` frame never classifies as `final` (`classifyRequestResponse`); 2 tests added. Wire format unchanged.
+- **Git:** one local P8-1 commit on `develop` on top of `c11ab64`; **not pushed**.
+- **Stop condition:** P8-2 is not authorized. Await the owner.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.

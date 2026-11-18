@@ -43,3 +43,5 @@ qa/v6-reset-transition/
 qa/v7-reduced-motion/
 # Local P8-0 review economy-analysis evidence (scripts, results); never committed
 qa/p8-0-review/
+# Local P8-1 protocol review evidence (benchmarks, build comparison); never committed
+qa/p8-1-protocol/
