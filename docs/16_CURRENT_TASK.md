@@ -100,6 +100,18 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **Git:** two isolated local commits on `develop` on top of `402376c`: the protocol amendment `060b18e`, then the server skeleton. **Not pushed.**
 - **Stop condition:** P8-3 is not authorized. Await the owner.
 
+## Also current: P8-3a — Fairness cryptographic foundation — ACCEPTED FOR LOCAL DEVELOPMENT (2026-11-18), COMMITTED LOCALLY, NOT PUSHED
+
+*A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*
+
+- **Authorization (owner, 2026-11-18):** after the P8-3 readiness and zod security report, **P8-3a only** (seed chain and domain-separated cryptographic derivation) with decisions D1 – D12 (docs/09 §38). A development-only foundation; **not** approval to activate a publicly committed fairness scheme. P8-3b, P8-3c, P8-4 and later are not authorized.
+- **Delivered:** `src/fairness/` (pure, engine-independent, injected crypto; `README.md` is the as-implemented record with the byte-level specification), its tests, test-only helpers, and one `.gitignore` rule for the local evidence folder `qa/p8-3-fairness/`. Docs 04, 09 (§38 + two pointers), 14, 15, 16.
+- **Not implemented (by design):** `SeededRoundAuthority`, distribution tests, full-round verifier, server crypto adapter, chain store, persistence, endpoints, message handlers, gameplay wiring, beacon. Engine RNG, probabilities, RTP, wallet and settlement unchanged.
+- **Owner acceptance (2026-11-18, docs/09 §38.1):** approved for local development with documented limitations; not production fairness certification. D7 Class A p95 ≤ 5 ms and Class B p99 ≤ 20 ms: target observed, gate not verified. Event-loop rule recorded.
+- **Open:** secret lifecycle hardening, CommonJS server build of `.ts` imports (P8-3c proposal), public-salt source (D1), per-round beacon (D3), Node 22 reference run (D4; floor ≥ 22.18.0), D7 performance gate under controlled conditions, selective voiding and cashout receipt honesty (D10), zod S-1 (D12), E-RISK-1. fv = 1 stays internal and experimental (D11).
+- **Git:** verified before any change: branch `develop`, `HEAD` `fd292bc`, twelve local commits ahead of `origin/develop`, clean tree, nothing staged. After the owner's acceptance: one isolated local commit `feat(fairness): add cryptographic seed foundation (P8-3a)` on top of `fd292bc`. **Not pushed.**
+- **Stop condition:** P8-3b and P8-3c are not authorized. Await the owner. No push.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.

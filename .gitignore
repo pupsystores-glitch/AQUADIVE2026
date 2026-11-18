@@ -47,3 +47,5 @@ qa/p8-0-review/
 qa/p8-1-protocol/
 # Local P8-2 server review evidence (clean install, security, build comparison); never committed
 qa/p8-2-server/
+# Local P8-3a fairness evidence (vectors cross-checks, benchmarks, build comparison); never committed
+qa/p8-3-fairness/

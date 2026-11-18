@@ -191,6 +191,8 @@ Status: Pending — **not started.** *2026-11-18, P8-0: the owner authorized Pha
 
 *2026-11-18, P8-2 final acceptance: the owner accepted P8-2 for **local development only** (not production-ready) after a final security and regression review, ratified the dependencies and the welcome amendment (docs/09 §37), and authorized two isolated local commits: the protocol amendment (`060b18e`) and the server skeleton. Not pushed. Protocol v1 stays a **DRAFT**; Phase 7 stays **In Progress**; P8-3 is not authorized.*
 
+*2026-11-18, P8-3a (implementation exception): after the P8-3 readiness and zod security report, the owner authorized **P8-3a only — seed chain and domain-separated cryptographic derivation** — with decisions D1 – D12 (docs/09 §38). P8-3 is split into P8-3a, P8-3b (`SeededRoundAuthority`, distribution tests) and P8-3c (server crypto adapter, chain store); only P8-3a is authorized. The deliverable is the pure module `src/fairness/` (fv = 1 **internal and experimental**: not frozen, published or activated; nothing in the app or the server imports it). Owner final acceptance (same day): **approved for local development** with documented limitations (D7 Class A / Class B targets observed but not verified, open secret-lifecycle hardening, Node 22 untested; docs/09 §38.1); not production fairness certification; one isolated local commit, **not pushed**. P8-3b and P8-3c are not authorized. P8-3 is **not** complete; Phase 7 stays **In Progress**; Phase 8 is not complete; E-RISK-1 stays open. AQUADIVE stays **play-money only**.*
+
 Objectives
 
 - WebSocket

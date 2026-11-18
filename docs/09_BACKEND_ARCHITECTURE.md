@@ -794,6 +794,8 @@ purposes          = "crash" | "jackpot" | "chests" | "world"
 - Each purpose has its own counter, so the crash point's 1-or-2 draws never shift the jackpot or chest draws.
 - `worldSeed` for disclosure = `HMAC-SHA256(s_round, "AQUADIVE|fv=1|" + salt + "|" + roundNumber + "|world-seed")`, so disclosing the world seed early (if OD-5 chooses that) never discloses `s_round`.
 
+> ▶ **P8-3a (§38, D2):** for the experimental fv = 1 the message is a length-prefixed binary encoding over (fv, chain id, chain index, salt, purpose, block counter); `roundNumber` is **not** an input. The text above is the historical proposal. No `worldSeed` disclosure derivation exists yet (OD-5 open).
+
 ### 16.5 Server bindings (no engine change)
 
 - `SeededRng(purposeStream)` implements the existing `Rng` interface (`next(): number`).
@@ -1359,6 +1361,8 @@ Order principle: **protocol and money-free skeleton first; fairness and the roun
 9. **Owner decisions:** OD-5, OD-6, OD-10b, OD-18.
 10. **Commit:** `feat(fairness): add hash-chain seeds and seeded round authority (P8-3)`.
 
+> ▶ **P8-3a (§38):** the owner split P8-3 into P8-3a (chain and derivation, authorized 2026-11-18), P8-3b (`SeededRoundAuthority`, distribution tests) and P8-3c (server crypto adapter, chain store); OD-10b / E-X9 withdrawn (D5); the performance targets are provisional: Class A p95 ≤ 5 ms per representative round, Class B p99 ≤ 20 ms at the maximum workload, neither verified (D7, §38.1).
+
 ### P8-4 — Headless round orchestrator (in memory, no money, no clients)
 
 1. **Goal:** the server runs the global round loop continuously from seeds.
@@ -1900,6 +1904,61 @@ The decoder's security pipeline is unchanged: size before parsing, nesting scan 
 **P8-2 choices needing owner confirmation:** refused requests after the handshake answer `error auth-required` (`bet.place`, `bet.cashout`, `bonus.pick`) or `error server-busy` (`auth.resume`, `sync.request`, `ping`), both registered transient codes; the registry has no "not available" code, and adding one would be a further protocol change. A non-hello first frame closes with 1008 without an `error` frame. A binary frame is answered `error malformed` and closed with 1003.
 
 **P8-2 final acceptance (owner, 2026-11-18).** Accepted for **local development only**; **not production-ready**. Ratified: the independent `server/` package, `fastify` 5.12.8, `@fastify/websocket` 11.3.7, `zod` 3.25.76 (kept for this milestone; no zod 4 upgrade, no change to protocol validation), TypeScript 5.8.3, `tsx` 4.23.15, Vitest 4.1.12, `@types/node` 22.20.1, and the optional `welcome.snapshot` amendment (Decision A). The post-handshake refusal codes stay **temporary P8-2 skeleton responses, not permanent contract behavior**; no new error code is authorized. Security review (zod GHSA-mrhx-c7xc-m3w5, dev-only picomatch GHSA-fc5q-39xc-vjpf, refusal semantics, next mandatory review gate): `server/README.md` §11. Two isolated local commits (protocol amendment `060b18e`, then the server skeleton); not pushed. P8-3 is not authorized.
+
+## 38. P8-3a owner decisions (owner, 2026-11-18; P8-3a only)
+
+**Scope.** The owner reviewed the P8-3 readiness and zod security report and authorized **P8-3a only: seed chain and domain-separated cryptographic derivation**, as a development-only cryptographic foundation. This is **not** approval to activate a publicly committed fairness scheme. P8-3b (`SeededRoundAuthority`, distribution tests), P8-3c (server crypto adapter, chain store), P8-4 and every later milestone are **not** authorized. These decisions do not approve the Phase 8 architecture as a whole, do not decide OD-1 … OD-21 beyond what is stated here, and do not close Phase 7. AQUADIVE stays **PLAY-MONEY ONLY**. As-implemented record: `src/fairness/README.md`. The original P8-3 milestone (§29) splits into P8-3a / P8-3b / P8-3c under this decision.
+
+| Decision | Owner ruling | As implemented in P8-3a |
+| --- | --- | --- |
+| **D1 — hash chain** | Scheme A (OD-6 option A): pre-generated SHA-256 reverse hash chain with an explicit public-salt input. Fixed deterministic salts in tests. No drand, blockchain or external beacon; no public chain activated. The real public-salt source stays an **owner decision** | `chain.ts`: x_i = SHA-256(x_(i+1)), chain id = x_0, round j uses x_j; salt is an explicit 16 – 64 byte input; dev salts are SHA-256 of fixed public phrases (`vectors.ts`) |
+| **D2 — derivation structure** | Inputs: fairness version, chain id (terminating hash), chain index, explicit salt, purpose, per-purpose block counter. **No database `roundNumber`** as a cryptographic input. Unambiguous length-prefixed binary encoding with exact byte order, widths, maxima and rejection; no encoding collisions | `encoding.ts`: tag `AQUADIVE-FAIRNESS`, fv u8, kind u8, length-prefixed chain id (32), chain index u32 BE (1 … 2^32 − 1), length-prefixed salt (16 – 64), length-prefixed purpose (1 – 32, `^[a-z][a-z0-9-]*$`), block counter u32 BE; strict decoder; README §3. **Supersedes §16.4's text-concatenated message and its `roundNumber` for fv = 1** (§16.4 is kept as the historical proposal) |
+| **D3 — beacon** | No per-round beacon in P8-3a. Kept explicitly **OPEN** before any public fairness-version freeze | None implemented |
+| **D4 — reference runtime** | Node.js 22 as the proposed reference major. Verify on the installed runtime, incl. Node 24 where available. No cross-engine determinism claim from a Node-only test | Verified on Node 24.21.0 (the only installed runtime); **Node 22 not run**. Chrome 157 WebCrypto reproduces the vectors from a spec-only re-implementation (V8 too: not a cross-engine result) |
+| **D5 — engine access** | OD-10b / E-X9 **withdrawn** from the P8-3a design; no facade export change | No engine change; per-purpose streams need none (docs/20 B1) |
+| **D6 — engine freeze** | No change to `src/engine/`, `src/shared/`, `src/rendering/`, `src/ui/`, `src/audio/` | None; enforced by `src/fairness/security.test.ts` (import boundary) and the diff audit |
+| **D7 — performance** | Retain HMAC-SHA256. **Provisional** target p95 ≤ 5 ms per representative round workload, with exact workload, hardware, iterations and conditions; no pass claimed without reproducible measurements | Workloads W-floor-max (representative, 220 HMACs), W-limit (516), W-median (94): `qa/p8-3-fairness/bench/bench.ts`; results and conditions in docs/15. **Replaces §29 P8-3's "< 1 ms" target**, which did not hold as specified. Owner refinement at acceptance (Class A / Class B, event-loop rule): "D7 performance decisions" below |
+| **D8 — test scale** | Fast deterministic unit tests in CI; the 10^5 / 10^6 distribution tests move to **P8-3b** | No distribution test in P8-3a |
+| **D9 — server bridge** | No server crypto adapter or chain store (P8-3c) | Only a test-only node:crypto provider under `src/fairness/test/` |
+| **D10 — operational fairness** | Selective voiding (§34.5) and cashout receipt honesty stay **open high-priority risks**; commitments alone do not solve them | Not addressed; stated in the README |
+| **D11 — fairness version** | fv = 1 for internal experimental vectors; not frozen, published or activated. The economics redesign is **not** automatically fv = 2. Public activation needs separate owner approval, resolved economic rules and independent verification | `FAIRNESS_STATUS = "experimental-internal"`; vectors labelled public, non-secret, not for production |
+| **D12 — zod** | The P8-2 zod security review stays open. P8-3a imports no zod, decodes no frames, adds no HTTP endpoint, changes no protocol schema or frame cap. **S-1** stays a separate security task required before the first browser network client or browser verifier that consumes untrusted server data | None of these; enforced by `security.test.ts` |
+
+**fv = 1 per-purpose hard draw limits (P8-3a choice, recorded for review):** crash 2, jackpot 2, chests 6 (the engine's exact draw counts at `fd292bc`), world 2,048 (analytic bound ≈ 1,071; measured maximum 861 per round in 3,000 forced-floor rounds of the real engine). Exceeding a limit throws; streams never wrap, repeat or fall back.
+
+**Not claimed:** P8-3 complete; P8-3b or P8-3c complete; a passed D7 gate; durable chain-index uniqueness (an in-memory index does not survive a restart; persistence is P8-7); protection of secrets against memory inspection (the secret wrapper is defense in depth only); cross-engine determinism; resolution of E-RISK-1 or RTP; production fairness certification; Phase 7 or Phase 8 completion.
+
+### 38.1 P8-3a final owner acceptance (owner, 2026-11-18)
+
+The owner **approved the P8-3a cryptographic foundation for local development**, with the limitations below, and authorized one isolated local commit (`feat(fairness): add cryptographic seed foundation (P8-3a)`). Not pushed. This is **not** production fairness certification. The cryptographic design is unchanged by the acceptance: SHA-256 reverse hash chain, canonical binary encoding, HMAC-SHA256 derivation, domain separation, independent purpose streams, per-purpose draw limits, deterministic 52-bit values, `SecretBytes` redaction, internal experimental fv = 1. Public fairness is not activated; the module stays unconnected to the engine, the server and the frontend. The public-salt source and the fairness-version freeze stay unresolved. P8-3b and P8-3c are **not** authorized.
+
+**D7 performance decisions (provisional engineering targets, not production-certified limits):**
+
+| Class | Workload | Target | Observed (uncontrolled: battery, owner's `vite dev` running; docs/15) | Status |
+| --- | --- | --- | --- | --- |
+| **A — representative demanding round** | ≈ 220 HMAC-SHA256 blocks (W-floor-max, world 864) | **p95 ≤ 5 ms** | p95 3.71 – 3.99 ms over 9 runs | **TARGET OBSERVED, PERFORMANCE GATE NOT VERIFIED** |
+| **B — maximum permitted workload** | world 2,048 draws, ≈ 516 HMAC blocks across all purposes (W-limit) | **p99 ≤ 20 ms** | p95 8.48 – 11.04 ms, p99 10.28 – 15.70 ms over 9 runs | **TARGET OBSERVED, PERFORMANCE GATE NOT VERIFIED** |
+
+Verifying either gate needs a controlled benchmark (AC power, idle machine) on the chosen **reference hardware**, which is not yet chosen. The historical measurements stay recorded in docs/15 unchanged.
+
+**Main event-loop rule:** the full maximum-workload derivation is **never** performed inside a live 60 Hz game tick, a WebSocket message handler, the cashout receipt path, or a time-critical betting / settlement barrier. Provisional guidance: an unavoidable synchronous slice on the live event loop targets **p99 ≤ 2 ms**; prefer precomputation before live gameplay or a worker-thread strategy. The 64-block slice measured in the gate benchmark (p99 1.35 – 1.86 ms per slice) is a **benchmark example, not an approved scheduling granularity**. P8-3a implements neither workers nor precomputation and changes no draw limit or algorithm; the strategy is a P8-3c / P8-4 decision.
+
+**Secret-handling requirements (OPEN; defense in depth; required before production server integration):**
+
+- Clear temporary revealed HMAC key copies where technically possible.
+- Define and implement a `RoundDerivation` disposal lifecycle.
+- Clear intermediate seed-chain links.
+- Avoid retaining secret derived blocks longer than necessary.
+- Never log, transmit or persist unrevealed secret material.
+- Review secret handling in Node.js and in the future server crypto adapter (P8-3c).
+
+JavaScript cannot guarantee memory erasure; none of these is a claim that it does. No cryptographic change was made for them in P8-3a.
+
+**Runtime compatibility (OPEN):**
+
+- Node.js 24 (24.21.0) was tested. Node.js 22 is **not yet tested directly**.
+- A Node.js 22 reference-runtime floor must be at least **22.18.0**, the first 22.x release that strips TypeScript types by default (22.6 – 22.17 need `--experimental-strip-types`; `determinism.test.ts` spawns `node file.ts`).
+- The current P8-2 CommonJS server build (`tsc` 5.8.3) does **not** compile the fairness library's `.ts` relative imports (TS5097) without additional TypeScript configuration. A temporary, discarded experiment with `allowImportingTsExtensions` + `rewriteRelativeImportExtensions` compiled it, and its output matched the type-stripped run byte for byte. **That configuration change is a P8-3c proposal**; the server build configuration is unchanged.
 
 ---
 

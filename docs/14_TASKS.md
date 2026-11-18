@@ -337,6 +337,20 @@ Status:
 | Acceptance | **Owner, 2026-11-18: accepted for local development only; not production-ready.** Dependencies and the welcome amendment ratified (docs/09 §37). Security review in `server/README.md` §11: zod GHSA-mrhx-c7xc-m3w5 kept with documented mitigations and a mandatory review gate; dev-only picomatch GHSA-fc5q-39xc-vjpf has no fix. Refusal codes are temporary skeleton responses. Committed locally in two isolated commits: protocol amendment `060b18e`, then the server skeleton. **Not pushed** |
 | Next | **Stop.** P8-3 is not authorized. Physical-device and production load testing are not done |
 
+## P8-3a — Fairness cryptographic foundation (Phase 8 implementation exception, 2026-11-18)
+
+*Separate from the P8-2 entry above, which is preserved unchanged. P8-2 is committed locally as `060b18e` + `fd292bc` (not pushed).*
+
+| Item | Status |
+|---|---|
+| Authorization | **Owner, 2026-11-18:** P8-3a only (seed chain and domain-separated derivation), after the P8-3 readiness and zod security report, with decisions D1 – D12 (docs/09 §38). A development-only foundation, **not** approval to activate a publicly committed fairness scheme. P8-3b, P8-3c, P8-4 and later are not authorized; no Phase 7 gate waived; TASK 008 stays the active task |
+| Deliverable | `src/fairness/`: `version.ts`, `encoding.ts`, `crypto.ts`, `chain.ts`, `derive.ts`, `seeded-rng.ts`, `secret.ts`, `vectors.ts`, `index.ts`, `README.md`; 9 test files; test-only helpers in `src/fairness/test/` (node:crypto provider, pure-TypeScript SHA-256 / HMAC, child-process dump). One `.gitignore` rule for `qa/p8-3-fairness/`. Committed locally as one isolated commit (`feat(fairness): add cryptographic seed foundation (P8-3a)`), **not pushed** |
+| Scheme | fv = 1 **internal and experimental**: SHA-256 reverse hash chain (chain id = x_0), explicit public salt (source open), HMAC-SHA256 keyed by x_j over a length-prefixed binary message (fv, chain id, chain index, salt, purpose, block counter; no round number), purpose-separated streams of exact 52-bit values in [0, 1), hard draw limits crash 2 / jackpot 2 / chests 6 / world 2,048 |
+| Isolation | No change to `src/engine`, `src/shared`, `src/rendering`, `src/ui`, `src/audio`, `src/protocol`, `server/`, assets, dependencies, lockfiles or configuration. Nothing imports `src/fairness`. No zod, endpoint, message handler, gameplay wiring, RTP or wallet change |
+| Acceptance | **Owner, 2026-11-18: approved for local development** with documented limitations (docs/09 §38.1); not production fairness certification. D7 Class A (p95 ≤ 5 ms) and Class B (p99 ≤ 20 ms): target observed, gate **not verified**. Secret lifecycle hardening, Node 22 run (floor ≥ 22.18.0) and the CommonJS server build (P8-3c proposal) open |
+| Gates | P8-3 **not complete** (P8-3b, P8-3c not started); D7 performance gate **not verified** (provisional; conditions uncontrolled, docs/15); Phase 7 **IN PROGRESS**; Phase 8 **not complete**; E-RISK-1 open; D3 beacon, salt source, D10 risks and zod S-1 open; play money only |
+| Next | **Stop.** P8-3b is not authorized. No push |
+
 ---
 
 Only one task may be active at a time.
