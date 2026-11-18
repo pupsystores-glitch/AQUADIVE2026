@@ -88,6 +88,18 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **Git:** one local P8-1 commit on `develop` on top of `c11ab64`; **not pushed**.
 - **Stop condition:** P8-2 is not authorized. Await the owner.
 
+## Also current: P8-2 — Server skeleton — ACCEPTED FOR LOCAL DEVELOPMENT ONLY (2026-11-18), COMMITTED LOCALLY, NOT PUSHED
+
+*A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*
+
+- **Authorization (owner, 2026-11-18):** P8-2 only, with decisions A–D (docs/09 §37): A optional welcome snapshot (an explicitly approved P8-1 Draft v1 exception), B zod 3.25.76 consumed from the original protocol source with verified, deterministic resolution, C root ESLint unchanged, D npm and the pinned dependencies. No P8-3 or other milestone.
+- **Delivered:** the protocol amendment (`src/protocol/messages/server-session.ts`, golden corpus, tests, README §20) and the independent package `server/` (`server/README.md` is the as-implemented record): health endpoints, configuration, logging with redaction, graceful shutdown, and a WebSocket gateway that performs `hello` → `welcome` only (no snapshot, no player) and refuses every other request before processing.
+- **Not implemented (by design):** rounds, authentication, sessions, `sync.request`, `pong`, broadcasts, wallet, ledger, settlement, fairness, database, metrics. The game is not connected to the server.
+- **Isolation:** no engine, shared, rendering, UI, audio, asset, root dependency, lockfile, configuration or deployment change; production build output unchanged against `402376c` (docs/15).
+- **Acceptance (owner, 2026-11-18):** accepted for local development only, **not production-ready**; dependencies and the welcome amendment ratified (docs/09 §37). Security review and the temporary refusal semantics: `server/README.md` §11.
+- **Git:** two isolated local commits on `develop` on top of `402376c`: the protocol amendment `060b18e`, then the server skeleton. **Not pushed.**
+- **Stop condition:** P8-3 is not authorized. Await the owner.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.

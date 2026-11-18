@@ -1,0 +1,30 @@
+{
+  "name": "aquadive-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AQUADIVE backend skeleton (P8-2): Fastify health endpoints and the WebSocket hello/welcome handshake. Play money only; no game, no money.",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "start": "node dist/server/src/main.js",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/websocket": "11.3.7",
+    "fastify": "5.12.8",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "tsx": "4.23.15",
+    "typescript": "5.8.3",
+    "vitest": "4.1.12"
+  }
+}

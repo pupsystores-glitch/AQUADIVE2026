@@ -187,6 +187,10 @@ Status: Pending — **not started.** *2026-11-18, P8-0: the owner authorized Pha
 
 *2026-11-18, P8-1 acceptance: the owner accepted P8-1 Draft v1 after a final safety verification and authorized one isolated local commit (not pushed). The performance gate stays **NOT VERIFIED**. Protocol v1 stays a draft; Phase 7 stays **In Progress**; P8-2 is not authorized.*
 
+*2026-11-18, P8-2 (implementation exception): the owner authorized **P8-2 — Server skeleton** only, with decisions A–D (docs/09 §37), including a narrowly scoped protocol exception (optional `welcome.snapshot`). The deliverable is the independent npm package `server/` (Fastify health endpoints and the WebSocket `hello` → `welcome` handshake; no game, no money, not connected to the game). It is delivered in the working tree, **unstaged and uncommitted**, and awaits the owner's review. Protocol v1 stays a **DRAFT**; Phase 7 stays **In Progress**; Phase 8 is not complete; P8-3 is not authorized. AQUADIVE stays **play-money only**.*
+
+*2026-11-18, P8-2 final acceptance: the owner accepted P8-2 for **local development only** (not production-ready) after a final security and regression review, ratified the dependencies and the welcome amendment (docs/09 §37), and authorized two isolated local commits: the protocol amendment (`060b18e`) and the server skeleton. Not pushed. Protocol v1 stays a **DRAFT**; Phase 7 stays **In Progress**; P8-3 is not authorized.*
+
 Objectives
 
 - WebSocket

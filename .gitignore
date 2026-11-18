@@ -45,3 +45,5 @@ qa/v7-reduced-motion/
 qa/p8-0-review/
 # Local P8-1 protocol review evidence (benchmarks, build comparison); never committed
 qa/p8-1-protocol/
+# Local P8-2 server review evidence (clean install, security, build comparison); never committed
+qa/p8-2-server/

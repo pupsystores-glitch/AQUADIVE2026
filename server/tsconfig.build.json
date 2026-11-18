@@ -1,0 +1,23 @@
+{
+  // Production build: CommonJS into dist/. `rootDir` is the repository root
+  // because the shared protocol source (../src/protocol) is compiled with the
+  // server: dist/server/src/** and dist/src/protocol/**. Both sit inside this
+  // package, so at run time every bare import (fastify, @fastify/websocket,
+  // zod — the protocol's included) resolves from server/node_modules.
+  //
+  // CommonJS keeps the protocol's extensionless relative imports valid at run
+  // time without changing the shared source. Tests are not built.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "rootDir": "..",
+    "outDir": "dist",
+    "noEmit": false,
+    "sourceMap": false,
+    "declaration": false,
+    "removeComments": false,
+    "newLine": "lf"
+  },
+  "include": ["src/**/*.ts"]
+}

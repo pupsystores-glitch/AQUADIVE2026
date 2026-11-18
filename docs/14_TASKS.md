@@ -322,6 +322,21 @@ Status:
 | Boundaries | Protocol v1 DRAFT, not frozen. Phase 7 IN PROGRESS. Phase 8 implementation authorization covers P8-1 only. PLAY-MONEY ONLY; economy/RTP risk, audio rights and physical-device QA open |
 | Next | **Stop.** P8-2 (Fastify server skeleton) not started and not authorized |
 
+## P8-2 — Server skeleton (Phase 8 implementation exception, 2026-11-18)
+
+*Separate from the P8-1 entries above, which are preserved unchanged. P8-1 is committed locally as `402376c` (not pushed).*
+
+| Item | Status |
+|---|---|
+| Authorization | **Owner, 2026-11-18:** P8-2 only, after the read-only P8-2 architecture report, with decisions A–D (docs/09 §37). Includes an explicitly approved, narrowly scoped P8-1 Draft v1 exception (Decision A). Not an approval of OD-1 … OD-21 (OD-3 decided for P8-2 only); no Phase 7 gate waived; TASK 008 stays the active task |
+| Protocol exception | `welcome.snapshot` optional (`src/protocol/messages/server-session.ts`): present = a real authoritative round, absent = none to report; nothing invented; one golden frame added; the 43 P8-1 frames byte-identical; tests and `src/protocol/README.md` §20. Protocol stays **DRAFT v1** |
+| Deliverable | `server/`: independent npm package (own `package.json`, `package-lock.json`, `tsconfig*.json`, `vitest.config.ts`, `README.md`), Fastify app factory and entrypoint, validated configuration (loopback by default), `/health/live` and `/health/ready`, redacted structured logging, graceful shutdown, WebSocket gateway (Origin allow-list, connection bounds, hello timeout, frame-size and frame-rate limits, heartbeat), `hello` → `welcome` without snapshot or player, every other request refused before processing. Originally delivered unstaged for the owner's review; **accepted and committed locally, see Acceptance** |
+| Dependencies | `fastify` 5.12.8, `@fastify/websocket` 11.3.7, `zod` 3.25.76; dev TypeScript 5.8.3, `tsx` 4.23.15, Vitest 4.1.12, and `@types/node` 22.20.1 (type declarations; **not in the owner's list, flagged**). No database, Redis, JWT, ORM, Docker, payments, wallet or round engine. `npm audit`: zod 3.25.76 GHSA-mrhx-c7xc-m3w5 (high; fix needs zod 4; inbound frames capped at 4 KiB before validation) and dev-only `picomatch` (no fix exists) remain open |
+| Isolation | No change to `src/engine`, `src/shared`, `src/rendering`, `src/ui`, `src/audio`, assets, root `package.json`, lockfiles, Vite / Vitest / TypeScript / ESLint configuration or deployment files. The game is not connected to the server; production build output unchanged (docs/15) |
+| Gates | Phase 7 **IN PROGRESS** (P7-C not closed); Phase 8 **not complete**; protocol v1 **DRAFT**, not released; OD-1 … OD-21 not approved; play money only |
+| Acceptance | **Owner, 2026-11-18: accepted for local development only; not production-ready.** Dependencies and the welcome amendment ratified (docs/09 §37). Security review in `server/README.md` §11: zod GHSA-mrhx-c7xc-m3w5 kept with documented mitigations and a mandatory review gate; dev-only picomatch GHSA-fc5q-39xc-vjpf has no fix. Refusal codes are temporary skeleton responses. Committed locally in two isolated commits: protocol amendment `060b18e`, then the server skeleton. **Not pushed** |
+| Next | **Stop.** P8-3 is not authorized. Physical-device and production load testing are not done |
+
 ---
 
 Only one task may be active at a time.

@@ -1,0 +1,26 @@
+{
+  // Type-check configuration (sources, tests, Vitest config); emits nothing.
+  // `tsconfig.build.json` extends it for the CommonJS build.
+  //
+  // `paths.zod` makes TypeScript resolve `zod` from THIS package for every file,
+  // including the shared protocol source in ../src/protocol, which would
+  // otherwise resolve upwards to the root's node_modules.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "paths": {
+      "zod": ["./node_modules/zod"]
+    },
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+}
