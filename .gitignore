@@ -35,3 +35,5 @@ dist-ssr
 
 # Local V4 review captures (screenshots, reports); never committed
 qa/v4-silt-plume/
+# Local V5 review captures (screenshots, reports); never committed
+qa/v5-crash-fx/

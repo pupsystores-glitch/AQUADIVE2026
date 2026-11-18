@@ -70,6 +70,68 @@ M2 (the rest of integer minor units) is still deferred.
 
 ---
 
+## V5 — F6 crash visual effects (Phase 7)
+
+### V5 — VISUALLY APPROVED BY THE OWNER 2026-11-18 — FINAL VALUES; COMMITTED LOCALLY, NOT PUSHED
+
+- **Owner acceptance (2026-11-18):** the owner visually reviewed and approved V5 with final values, including the optimized cached-vignette implementation: 12 metallic fragments on High and 6 on Low; the current steel-blue fragment colours; the current deterministic fragment movement and lifetime; the current subtle dark-blue vignette pulse; the full-resolution cached pulse bitmap with its 1:1 copy and resize/DPR handling, the existing cache size limit and gradient fallback; under reduced motion one subtle static fading accent; no additional Canvas camera shake; the DOM multiplier `crash-shake` and the E-X7 chain-snap animation unchanged. No source or visual value changed at acceptance. **Not part of this acceptance:** physical-device performance validation, which is still pending. The timings below are software-rasterized headless Chrome on the desktop only, not iPhone, Android or GPU-rasterized browser numbers.
+- **Git:** one local commit, `feat(rendering): add accepted crash FX (V5)`, with the three V5 source and test files, these V5 records and a one-line `.gitignore` rule for `qa/v5-crash-fx/`; not pushed. The review captures in `qa/v5-crash-fx/` and `qa/v4-silt-plume/` stay local and are not committed.
+
+### V5 performance refinement — DELIVERED 2026-11-18 *(until the acceptance this heading continued: "(WORKING TREE, UNCOMMITTED, NOT STAGED); V5 STILL AWAITING THE OWNER'S VISUAL ACCEPTANCE")*
+
+- **Task:** owner authorization of 2026-11-18: optimize the vignette pulse without redesigning F6 (12 High / 6 Low fragments, colours, motion, duration, the pulse, reduced motion, no Canvas shake, the DOM `crash-shake`, E-X7 all kept); add a `.gitignore` rule for `qa/v5-crash-fx/`. R1 (`cede9be`) and V4 (`9bc714d`) untouched.
+- **Root cause:** the pulse was a full-viewport radial-gradient fill under a non-uniform scale. Chrome's software rasterizer evaluates the gradient for every device pixel on every pulse frame (≈ 9 ns/px here; a solid fill of the same area costs ≈ 0.6 ns/px). Skipping the clear centre with a clip or four bands saved only 10–15 %.
+- **Strategies measured** (isolated, 1920×1080 DPR 1 / DPR 2, mean ms, software raster): gradient 17.5 / 74.3; low-resolution bitmap (64², 128², ¼ or ½ viewport) upscaled with smoothing 7.6–11.5 / 30.6–42.4 (any scaled copy takes the filtered path); four sub-rectangle bands 4.1–7.0 / 15–28; one mirrored quarter-size bitmap 8.1 / 23.4; **full-size bitmap copied 1:1: 1.6 / 6.2** (max 2 levels from the gradient). Selected: the full-size bitmap.
+- **Implementation:** `crashPulseBitmap(ctx)` in `draw/crash-fx.ts` rasterizes the existing pulse gradient once into an offscreen canvas of the target canvas's own pixel size (created through `ctx.canvas.ownerDocument`, so no global and nothing at module load), cached per context in a WeakMap; the pulse is then `drawImage(bitmap, 0, 0, w, h)` at the pulse strength. Rebuilt only when the canvas's pixel size changes (resize, DPR), reusing the same element; nothing is allocated on other frames. Direct gradient fill (the previous code) without a backing canvas or document (tests, SSR), without a 2D context, or above `CRASH_PULSE_CACHE_MAX_PIXELS` (3840 × 2160, i.e. 1920×1080 at the DPR cap 2, ≈ 33 MB), where any held bitmap is released (width/height 0). No `setTransform` on the frame context, no filter, no blur.
+- **Files:** M `src/rendering/draw/crash-fx.ts`, `src/rendering/draw/crash-fx.test.ts` (recorder takes an optional backing canvas; 7 new tests: build once and copy 1:1, rebuild on DPR/resize reusing the element, one bitmap per context, cap fallback and release, no-context fallback, never built under reduced motion or outside the pulse, Low shares it); `.gitignore` (`qa/v5-crash-fx/`); docs 08, 15, 16. `layers/effects.ts`, the chain-snap code, the camera, the FX queue, the engine, shared models, wallet, audio and artwork are unchanged by the refinement.
+- **Timing** (headless Chrome, software raster forced by a 1-px readback after every sample; whole `SceneRenderer` crash frames over break +0 … +0.68 s, 2 alternating rounds × 210 frames; F6 alone: 420 samples on an opaque canvas; mean / p95 ms):
+
+  | Case | V4 frame | V5 before | V5 refined | Vignette before → refined | Fragments | F6 before → refined |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | 390×844 @1 High | 12.62 / 18.35 | 16.58 / 26.70 | 14.91 / 22.90 | 2.56 / 4.10 → 0.20 / 0.40 | 0.05 | 2.59 / 4.10 → 0.34 / 0.80 |
+  | 390×844 @1 Low | 8.75 / 12.80 | 11.46 / 16.10 | 8.57 / 10.85 | 3.15 / 6.60 → 0.22 / 0.60 | 0.03 | 2.56 / 4.20 → 0.23 / 0.50 |
+  | 390×844 @2 High | 30.29 / 38.70 | 41.75 / 59.80 | 32.53 / 42.70 | 9.91 / 15.70 → 1.03 / 2.00 | 0.07–0.09 | 10.01 / 15.00 → 1.08 / 2.10 |
+  | 390×844 @2 Low | 31.17 / 42.05 | 41.43 / 56.90 | 30.79 / 38.70 | 11.60 / 20.20 → 0.94 / 1.60 | 0.03–0.04 | 10.44 / 17.40 → 0.98 / 1.70 |
+  | 1920×1080 @1 High | 32.46 / 36.30 | 47.34 / 57.40 | 34.71 / 41.20 | 14.97 / 21.20 → 1.47 / 2.80 | 0.06 | 15.23 / 21.90 → 1.55 / 2.80 |
+  | 1920×1080 @1 Low | 32.08 / 37.20 | 46.71 / 55.60 | 34.17 / 40.60 | 14.89 / 21.50 → 1.53 / 2.90 | 0.03–0.04 | 15.29 / 22.00 → 1.50 / 2.80 |
+  | 1920×1080 @2 High | 128.22 / 148.40 | 200.65 / 274.15 | 137.94 / 167.50 | 63.84 / 100.00 → 6.29 / 10.50 | 0.07–0.11 | 68.30 / 120.10 → 6.07 / 9.70 |
+  | 1920×1080 @2 Low | 124.01 / 136.95 | 183.23 / 215.60 | 127.80 / 138.60 | 59.96 / 84.90 → 5.44 / 8.80 | 0.03–0.04 | 60.13 / 85.00 → 5.55 / 8.50 |
+
+  Reduced motion (no pulse, no fragments): F6 ≤ 0.02 ms everywhere; frames equal to V4 within noise. The 390×844 DPR 1 whole-frame numbers are noise-dominated (first-round warm-up; a rerun gave different absolute values with the same ordering); the F6-only numbers are the reliable figure there.
+- **Visual difference from V5 before** (447 frames: 7 sizes × High / Low / reduced × 19 moments at DPR 1, plus the 8 crash moments at 390×844 and 1920×1080 DPR 2): pulse frames differ by **at most 1 level per channel** (8-bit premultiplied rounding of the cached bitmap) on ≈ 15.7 % of pixels, all in the pulse ring; **0 changed pixels inside the clear zone** (unit radius < 0.55: anchor, break, centre); fragments, crash +0, crash +0.65 and every reduced-motion frame bit-identical; **231/231 unaffected frames identical to the V4 commit and to V5 before**; shake offset 0 on every frame. Real-game screenshots with the refined build at seven sizes (break +0.05–0.10, +0.13–0.15, +0.30–0.32 s): DOM multiplier, `crash-shake` and CHAIN SNAPPED banner unchanged.
+- **Validation:** `tsc` clean; Vitest 1585/1585 across 70 files (`--maxWorkers=2`); ESLint and Prettier clean on the three source files (docs 08/14/15/16 already failed Prettier at `HEAD`; not reformatted); `git diff --check` clean; build passes; SSR smoke HTTP 200, canvas present, loading screen `initializing`.
+- **QA material:** `qa/v5-crash-fx/` (≈ 116 MB with `refined/`) and `qa/v4-silt-plume/` (≈ 87 MB) are ignored (`git status --ignored` shows `!! qa/`; representative files checked with `git check-ignore`); nothing under `qa/` is tracked.
+- **Limits:** no physical-device measurement. On GPU-rasterized canvases (normal on phones and most desktops) both the gradient and the copy are far cheaper, and a cross-canvas copy is a texture blit; the ratio above is indicative only. Memory: w × h × 4 bytes per renderer while it lives. The first build (one gradient fill, the old per-frame cost) happens once on the first pulse frame after load or resize.
+
+### V5 — DELIVERED 2026-11-18 *(until the acceptance this heading continued: "(WORKING TREE, UNCOMMITTED, NOT STAGED); AWAITING THE OWNER'S VISUAL ACCEPTANCE")*
+
+- **Task:** owner authorization of 2026-11-18 (docs/16, "Current: V5"): decisions D1 (option A, no Canvas camera shake), D2 (≤ 12 / 6 fragments), D3 (dark-blue vignette pulse), D4 (reduced motion), D5 (existing FX preserved). Spec as implemented: docs/08 §4.3 "F6 as implemented".
+- **Summary:** at the chain break, a few small steel shards leave the break point, slow in the water, sink a little, turn and fade (≤ 0.7 s), while the viewport edges darken in one brief dark-blue pulse (peak 0.26 in the corners at 0.07 s, gone at 0.6 s). Reduced motion: one static glint at the break that fades over 0.6 s. No camera movement. Drawn first in the Effects layer, on crashed frames only.
+- **Synchronization:** the clock is `RenderState.chainSnap.elapsed`, the E-X7 chain-snap clock that the FX queue's crash entry also reads, so there is no second crash clock. elapsed 0 is the first frame the chain is drawn broken (the renderer's latch, up to one frame after the engine's `crashed`). The break point is the E-X7 split itself: `layoutUpperChain(0, …)` on the prepared break record, cached per break, run after the Actor layer has drawn. A test pins it within 0.5 px of the detached links' far joint at seven sizes and three depths. A remount mid-crash (the settled result) shows nothing.
+- **Files:** C `src/rendering/draw/crash-fx.ts`, `src/rendering/draw/crash-fx.test.ts`; M `src/rendering/layers/effects.ts`; docs 08, 14, 15, 16. Within the ratified §13.1 V5 scope. **Not changed:** `camera.ts`, `fx-queue.ts` (the shake hook stays 0), `scene-renderer.ts`, `layers/actor.ts`, `layers/chain-snap.ts`, `theme.ts` (the colours are module constants in `crash-fx.ts`), `src/engine`, `src/shared`, `src/ui`, `src/audio`, `src/styles.css`.
+- **Validation:**
+  - `tsc` clean.
+  - Vitest 1578/1578 across 70 files (`--maxWorkers=2`; 27 new in `crash-fx.test.ts`).
+  - ESLint and Prettier clean on the three source files. docs/08 already failed Prettier before V5, at `HEAD` and at `d1ccb9b`; it is not reformatted.
+  - `git diff --check` clean. Production build passes. SSR smoke: HTTP 200, canvas present, loading screen `initializing`.
+- **Pixel comparison against the V4 commit `9bc714d`** (real `SceneRenderer`, two dev servers, the baseline from `git archive`, DPR 1): 7 sizes × High / Low / reduced motion × 19 moments.
+  - **231/231 unaffected frames are pixel-identical:** betting, release, mid-dive, near the floor, cashout, the jackpot impact and touchdown +0.5 s, the late bonus, crash +0.75 / +1.5 s, and the snapped anchor on the sand at +1.2 s. The 375×667 numbers come from a rerun; in the first run, the first two frames of the fresh page differed because the page had not finished decoding its images.
+  - Crash frames differ as intended:
+    - High: +0 s at about 25 px; +0.05–0.12 s at 0.12–0.99 M px (the pulse), peak 90–127/255; +0.45 s at 7–46 k px, peak ≈ 22; +0.65 s at about 25 px, peak 3.
+    - Reduced motion: about 300 px around the break, peak 45 → 12; identical to V4 from 0.6 s.
+  - The camera shake offset is 0 on all 399 frames.
+- **Real game** (dev server, headless Chrome, natural crash rounds; the loop held at the target via a CDP-rewritten `effects.ts`): all seven sizes at break +0.05–0.08, +0.13–0.15 and +0.30–0.33 s. The DOM multiplier, its `crash-shake` and the CHAIN SNAPPED banner are unchanged. On desktop sizes the fragments are small against the scene.
+- **Performance** (this desktop, headless Chrome 157, 2D canvas rasterized in software; each sample flushed with a 1-px readback; 240 samples × 2 alternating runs, over the first 0.7 s of a crash):
+
+  | Case          | Full frame mean, V4 → V5 | `drawCrashFx` alone, High mean / p95 | Low mean / p95 | Reduced motion |
+  | ------------- | ------------------------ | ------------------------------------ | -------------- | -------------- |
+  | 1920×1080 @1  | 35.1 → 51.2 ms           | 16.6 / 23.7 ms                       | 16.5 / 23.7    | ≈ 0.1 ms       |
+  | 1920×1080 @2  | 130.2 → 196.3 ms         | 72.7 / 126.5 ms                      | 67.4 / 96.8    | ≈ 0            |
+  | 390×844 @2    | 30.5 → 41.5 ms           | 11.4 / 16.3 ms                       | 11.3 / 16.3    | ≈ 0.1 ms       |
+
+  Nearly all of the cost is the full-viewport pulse gradient (Low ≈ High; the fragments are negligible). It is the same kind of fill as the accepted V2 depth vignette. Absolute times are not representative of GPU-backed canvases. An in-page experiment with a cached 96×96 pulse bitmap, upscaled, measured 22.9 vs 21.9 ms at 1920×1080 @1, 40 vs 88 ms at @2 and 6.7 vs 14.9 ms at 390×844 @2: not adopted, reported for the owner. No Android or iPhone measurement.
+- **Risks:** values provisional; the pulse's cost on low-end devices (unmeasured); the break point reuses the E-X7 output buffer after the Actor layer (documented ordering dependency, tested).
+
 ## V4 — F5 landing silt plume (Phase 7)
 
 ### V4 — VISUALLY ACCEPTED BY THE OWNER 2026-11-18; COMMITTED LOCALLY, NOT PUSHED
