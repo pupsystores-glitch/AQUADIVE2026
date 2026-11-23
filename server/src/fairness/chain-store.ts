@@ -16,9 +16,13 @@
 // - A disposition (completed, aborted, voided, indeterminate) is a recorded classification, not a
 //   settlement decision. `indeterminate` may later be replaced by a final classification; final
 //   classifications never change. Both stay in the history.
+// - "Concluded" means finally classified (completed, aborted or voided). `indeterminate` is NOT a
+//   conclusion: an indeterminate round cannot be revealed and blocks the reveal of every later
+//   index exactly like an unclassified one, until a final classification replaces it (P8-3c-3).
+//   Nothing converts `indeterminate` into a final value automatically.
 // - A reveal is recorded only for a concluded round, and only while every earlier reserved index
 //   is concluded or revealed: revealing x_j discloses every x_i with i < j (SHA-256 runs forward),
-//   so it must never expose a round that is still live. Revealed data never changes; a
+//   so it must never expose a round that is still live or unresolved. Revealed data never changes; a
 //   contradicting reveal marks the chain compromised. A store does not hash: the vault verifies
 //   every link (reveal.ts) before it records a reveal, and the store checks only equality with
 //   the chain id and with recorded neighbours. Only the vault may write reveals.
@@ -64,6 +68,7 @@ export const CHAIN_STATE_RULES: Readonly<
  * - aborted: the round stopped before completing.
  * - voided: the round was deliberately invalidated by an operator decision.
  * - indeterminate: what happened cannot be established (yet); may be replaced by a final value.
+ *   Until then the round is unresolved: it is not revealable and blocks later reveals.
  */
 export type RoundDisposition = "completed" | "aborted" | "voided" | "indeterminate";
 

@@ -17,6 +17,16 @@
 // - a reveal that does not verify, or that contradicts recorded data, marks the chain
 //   compromised.
 //
+// Cached secrets (P8-3c-3). The precompute cache is an optimization, never an authority: the store
+// decides every state. The vault drops (disposes) a chain's cached seeds whenever it observes that
+// the chain may no longer derive (compromised, suspended, retired: from its own transitions, from
+// every chain snapshot it reads, and from every refusal or integrity error the store returns for
+// that chain). Each drop advances the chain's cache epoch; a precompute that yielded while the
+// epoch moved, or while the vault was disposed, discards its staged seeds instead of installing
+// them. A vault learns of an out-of-band change (another vault, an operator) only on its next
+// interaction with that chain; until then its cached seeds stay in memory (best effort: dispose()
+// zeroes the vault's buffers, but JavaScript cannot guarantee erasure of engine-internal copies).
+//
 // Event loop: every hash walk (chain creation, precomputation, seed reconstruction from a
 // checkpoint, long reveal verification) runs in slices of at most HASH_SLICE_LINKS hashes and
 // yields between slices. Without precomputation, preparing or revealing a round reconstructs its
@@ -93,12 +103,26 @@ const CHAIN_ID_PATTERN = /^[0-9a-f]{64}$/;
 
 const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
+/**
+ * Store refusals and integrity errors after which a chain's cached seeds are dropped: the chain
+ * may be compromised, may no longer derive, or is no longer known to the store.
+ */
+const EVICTING_CODES: ReadonlySet<string> = new Set([
+  "invalid-chain-state",
+  "reveal-conflict",
+  "reveal-verification-failed",
+  "unknown-chain",
+  "store-closed",
+]);
+
 export class ChainVault {
   readonly audit: AuditSink;
   #crypto: NodeFairnessCrypto;
   #store: ChainStore;
   #yield: () => Promise<void>;
   #cache = new Map<string, Map<number, SecretBytes>>();
+  /** Advances every time a chain's cache is dropped (see "Cached secrets" above). */
+  #epochs = new Map<string, number>();
   #disposed = false;
 
   constructor(options: ChainVaultOptions) {
@@ -162,14 +186,20 @@ export class ChainVault {
 
   chainStatus(chainId: string): Promise<ChainStatusRecord> {
     return this.#run("chain-status", chainId, null, async () =>
-      chainStatusRecord(await this.#store.getChain(chainId)),
+      chainStatusRecord(await this.#getChain(chainId)),
     );
   }
 
   transitionChain(chainId: string, to: ChainState, reasonCode: string): Promise<ChainStatusRecord> {
     return this.#run("transition-chain", chainId, null, async () => {
-      const snapshot = await this.#store.transitionChain(chainId, to, reasonCode);
-      if (!CHAIN_STATE_RULES[snapshot.state].derive) this.#evictChain(chainId);
+      let snapshot: ChainSnapshot;
+      try {
+        snapshot = this.#observe(await this.#store.transitionChain(chainId, to, reasonCode));
+      } catch (err) {
+        // A refused transition (for example out of `compromised`) still tells us to look.
+        await this.#refresh(chainId);
+        throw err;
+      }
       await this.#record("chain-transition", "transition-chain", chainId, null, snapshot.state);
       return chainStatusRecord(snapshot);
     });
@@ -198,12 +228,19 @@ export class ChainVault {
   prepareRound(chainId: string, index: number, salt: Uint8Array): Promise<RoundKeys> {
     return this.#run("prepare-round", chainId, index, async () => {
       assertPublicSalt(salt);
-      const chain = await this.#store.getChain(chainId);
+      const chain = await this.#getChain(chainId);
+      const epoch = this.#epoch(chainId);
       const bound = await this.#store.bindSalt(chainId, index, salt);
       if (!bound.replayed) await this.#record("salt-bound", "prepare-round", chainId, index, null);
       const seed = await this.#seed(chain, index);
       let keys: RoundKeys;
       try {
+        // The cache was dropped while this call yielded: the chain may have stopped deriving.
+        // Fail closed before building keys (the store's issue check stays the authority; a
+        // same-salt retry is allowed).
+        if (this.#epoch(chainId) !== epoch) {
+          throw new ChainError("invalid-chain-state", "the chain changed during preparation");
+        }
         keys = RoundKeys.create(this.#crypto.hash, {
           chainId,
           chainIndex: index,
@@ -224,7 +261,12 @@ export class ChainVault {
     });
   }
 
-  /** Records a round's classification (evidence only; no settlement rule). */
+  /**
+   * Records a round's classification (evidence only; no settlement rule). `indeterminate` is not
+   * a conclusion: it keeps the round unrevealable and blocks every later reveal until a final
+   * classification (completed, aborted, voided) replaces it, once. The vault never resolves an
+   * indeterminate round by itself.
+   */
   classifyRound(
     chainId: string,
     index: number,
@@ -241,6 +283,9 @@ export class ChainVault {
       if (!replayed) {
         await this.#record("round-classified", "classify-round", chainId, index, disposition);
       }
+      // Classification is allowed in every state, so it alone says nothing about the chain: if
+      // this vault holds cached seeds for it, look at the chain state once (best effort).
+      if (this.#cache.has(chainId)) await this.#refresh(chainId);
       return roundDispositionRecord(value);
     });
   }
@@ -251,10 +296,15 @@ export class ChainVault {
    */
   revealRound(chainId: string, index: number): Promise<RoundRevealRecord> {
     return this.#run("reveal-round", chainId, index, async () => {
-      const chain = await this.#store.getChain(chainId);
+      const chain = await this.#getChain(chainId);
       const current = await this.#store.getIndex(chainId, index);
       if (current.disposition === null) {
         throw new ChainError("round-not-concluded", `index ${index} is not classified`);
+      }
+      // An unresolved round is not concluded: refused before any seed is reconstructed. Later
+      // indices are refused by the store's atomic ordering check (`reveal-order-violation`).
+      if (current.disposition === "indeterminate") {
+        throw new ChainError("round-not-concluded", `index ${index} is indeterminate`);
       }
       if (!CHAIN_STATE_RULES[chain.state].reveal) {
         throw new ChainError("invalid-chain-state", `cannot reveal in state ${chain.state}`);
@@ -277,12 +327,19 @@ export class ChainVault {
           }
           throw err;
         }
-        const { value, replayed } = await this.#store.recordReveal(
-          chainId,
-          index,
-          seedBytes,
-          previousLink,
-        );
+        let result: Awaited<ReturnType<ChainStore["recordReveal"]>>;
+        try {
+          result = await this.#store.recordReveal(chainId, index, seedBytes, previousLink);
+        } catch (err) {
+          // The store found contradicting data and marked the chain compromised: drop the cache
+          // now (before anything else can run) and record the transition the store made.
+          if (err instanceof ChainError && err.code === "reveal-conflict") {
+            this.#evictChain(chainId);
+            await this.#recordStoreCompromise(chainId);
+          }
+          throw err;
+        }
+        const { value, replayed } = result;
         this.#evict(chainId, index);
         await this.#record(
           replayed ? "reveal-replayed" : "reveal-recorded",
@@ -291,7 +348,7 @@ export class ChainVault {
           index,
           null,
         );
-        return roundRevealRecord(await this.#store.getChain(chainId), value);
+        return roundRevealRecord(await this.#getChain(chainId), value);
       } finally {
         seedBytes.fill(0);
         previousLink?.fill(0);
@@ -304,14 +361,18 @@ export class ChainVault {
    * preparing and revealing those rounds needs no hashing on the live event loop. Revealed
    * indices are skipped. Returns the number of seeds added to the cache. Not a scheduler: the
    * caller decides when to run it.
+   *
+   * Seeds are staged privately while the walk yields and installed only if, after the last
+   * yield, the vault is not disposed, the chain may still derive and its cache epoch has not
+   * moved; otherwise every staged seed is disposed and the call fails closed.
    */
   precompute(chainId: string, fromIndex: number, count: number): Promise<number> {
     return this.#run("precompute", chainId, null, async () => {
-      const chain = await this.#store.getChain(chainId);
+      const chain = await this.#getChain(chainId);
       if (!CHAIN_STATE_RULES[chain.state].derive) {
         throw new ChainError("invalid-chain-state", `cannot precompute in state ${chain.state}`);
       }
-      const cache = this.#cache.get(chainId) ?? new Map<number, SecretBytes>();
+      const epoch = this.#epoch(chainId);
       const to = fromIndex + count - 1;
       if (
         !Number.isInteger(fromIndex) ||
@@ -319,7 +380,7 @@ export class ChainVault {
         fromIndex < 1 ||
         count < 1 ||
         to > chain.length ||
-        cache.size + count > MAX_PRECOMPUTED_SEEDS
+        (this.#cache.get(chainId)?.size ?? 0) + count > MAX_PRECOMPUTED_SEEDS
       ) {
         throw new ChainError("invalid-precompute-range", "precompute range is out of bounds");
       }
@@ -335,13 +396,11 @@ export class ChainVault {
       } finally {
         checkpoint.dispose();
       }
+      const staged = new Map<number, SecretBytes>();
       let added = 0;
       try {
         for (let i = to; i >= fromIndex; i--) {
-          if (!cache.has(i) && !revealed.has(i)) {
-            cache.set(i, copySecret(x));
-            added++;
-          }
+          if (!revealed.has(i)) staged.set(i, copySecret(x));
           if (i > fromIndex) {
             const next = computeRoundSeed(this.#crypto.hash, x, i, i - 1);
             x.dispose();
@@ -349,10 +408,31 @@ export class ChainVault {
             if ((to - i + 1) % HASH_SLICE_LINKS === 0) await this.#yield();
           }
         }
+        x.dispose();
+        // Re-validate after the last yield; from here to the install nothing awaits.
+        const now = await this.#getChain(chainId);
+        if (this.#disposed) throw new ChainError("vault-disposed", "the vault was disposed");
+        if (!CHAIN_STATE_RULES[now.state].derive || this.#epoch(chainId) !== epoch) {
+          throw new ChainError("invalid-chain-state", "the chain changed during precompute");
+        }
+        const cache = this.#cache.get(chainId) ?? new Map<number, SecretBytes>();
+        let fresh = 0;
+        for (const i of staged.keys()) if (!cache.has(i)) fresh++;
+        if (cache.size + fresh > MAX_PRECOMPUTED_SEEDS) {
+          throw new ChainError("invalid-precompute-range", "precompute range is out of bounds");
+        }
+        for (const [i, secret] of staged) {
+          if (cache.has(i)) continue;
+          cache.set(i, secret);
+          staged.delete(i);
+          added++;
+        }
+        this.#cache.set(chainId, cache);
       } finally {
         x.dispose();
+        for (const secret of staged.values()) secret.dispose();
+        staged.clear();
       }
-      this.#cache.set(chainId, cache);
       await this.#record("seeds-precomputed", "precompute", chainId, fromIndex, null);
       return added;
     });
@@ -385,6 +465,16 @@ export class ChainVault {
     } catch (err) {
       const code =
         err instanceof ChainError || err instanceof FairnessError ? err.code : "unexpected-error";
+      // Synchronously, before the audit can yield: a refusal or integrity error for a chain
+      // drops that chain's cached seeds.
+      if (
+        err instanceof ChainError &&
+        EVICTING_CODES.has(err.code) &&
+        typeof chainId === "string" &&
+        CHAIN_ID_PATTERN.test(chainId)
+      ) {
+        this.#evictChain(chainId);
+      }
       try {
         await this.audit.append({
           kind: "operation-failed",
@@ -411,6 +501,41 @@ export class ChainVault {
       await this.audit.append({ kind, operation, chainId, chainIndex, code });
     } catch {
       throw new ChainError("audit-failed", `audit of ${operation} failed`);
+    }
+  }
+
+  /** Reads the chain and applies its state to the cache (`#observe`). */
+  async #getChain(chainId: string): Promise<ChainSnapshot> {
+    return this.#observe(await this.#store.getChain(chainId));
+  }
+
+  /** Drops the chain's cached seeds when its state no longer allows derivation. */
+  #observe(snapshot: ChainSnapshot): ChainSnapshot {
+    if (!CHAIN_STATE_RULES[snapshot.state].derive) this.#evictChain(snapshot.chainId);
+    return snapshot;
+  }
+
+  /** Best-effort state check that never fails the caller; refusals still drop the cache. */
+  async #refresh(chainId: string): Promise<void> {
+    try {
+      await this.#getChain(chainId);
+    } catch (err) {
+      if (err instanceof ChainError && EVICTING_CODES.has(err.code)) this.#evictChain(chainId);
+    }
+  }
+
+  #epoch(chainId: string): number {
+    return this.#epochs.get(chainId) ?? 0;
+  }
+
+  /** Audits a compromise the store itself recorded (`reveal-conflict`), if the store confirms it. */
+  async #recordStoreCompromise(chainId: string): Promise<void> {
+    try {
+      if ((await this.#getChain(chainId)).state === "compromised") {
+        await this.#record("chain-transition", "reveal-round", chainId, null, "compromised");
+      }
+    } catch {
+      // Unreachable store or failed audit: the reveal still fails closed with reveal-conflict.
     }
   }
 
@@ -461,6 +586,7 @@ export class ChainVault {
 
   #evictChain(chainId: string): void {
     assertChainIdHex(chainId);
+    this.#epochs.set(chainId, this.#epoch(chainId) + 1);
     const cache = this.#cache.get(chainId);
     if (!cache) return;
     for (const secret of cache.values()) secret.dispose();

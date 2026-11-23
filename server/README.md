@@ -235,7 +235,7 @@ Limitations: `server-busy` is semantically imprecise (nothing is busy; the servi
 
 ## 12. Fairness infrastructure (P8-3c, local development only)
 
-**Status: delivered 2026-11-19; accepted for local development on 2026-11-23 (not production fairness certification); committed locally, not pushed. Not connected to the running server, the gateway or the game. Not production fairness. fv = 1 internal and experimental.** Owner decisions: `docs/09_BACKEND_ARCHITECTURE.md` §40. Local evidence: `qa/p8-3c-server-fairness/` (Git-ignored). Measurements: docs/15.
+**Status: delivered 2026-11-19; accepted for local development on 2026-11-23 (not production fairness certification); committed locally, not pushed. Not connected to the running server, the gateway or the game. Not production fairness. fv = 1 internal and experimental.** **P8-3c-3 security patch (indeterminate reveal ordering, compromised-chain cache invalidation): delivered and accepted for local development on 2026-11-23 (not production security certification); committed locally, not pushed.** Owner decisions: `docs/09_BACKEND_ARCHITECTURE.md` §40. Local evidence: `qa/p8-3c-server-fairness/` (Git-ignored). Measurements: docs/15.
 
 ### 12.1 Build integration (P8-3c-0)
 
@@ -266,8 +266,8 @@ Limitations: `server-busy` is semantically imprecise (nothing is busy; the servi
 - Reservation is monotonic and keyed by a request id: a retry returns the same index; an index is never released or reused.
 - The public salt is bound to the index before derivation and never changes (`salt-conflict`): a failed preparation cannot be retried with another salt.
 - A derivation is issued once per index (`derivation-already-issued`).
-- Dispositions `completed` (needs an issued derivation), `aborted`, `voided` and `indeterminate` are evidence only, with reason codes and history; `indeterminate` may be resolved once; final values never change. No settlement or payout rule exists here.
-- A reveal needs the round classified and every earlier reserved index classified or revealed, because revealing x_j discloses all earlier seeds (`reveal-order-violation`). Unreserved (future) indices cannot be revealed. A repeated reveal returns the same record; a reveal that fails verification or contradicts recorded data moves the chain to `compromised`.
+- Dispositions `completed` (needs an issued derivation), `aborted`, `voided` and `indeterminate` are evidence only, with reason codes and history; `indeterminate` may be resolved once, by an explicit final classification; final values never change. No settlement or payout rule exists here, and nothing resolves an indeterminate round automatically.
+- A reveal needs the round finally classified (`completed`, `aborted` or `voided`) and every earlier reserved index finally classified or revealed, because revealing x_j discloses all earlier seeds (`reveal-order-violation`). **`indeterminate` is not a conclusion (P8-3c-3):** an indeterminate round cannot be revealed (`round-not-concluded`) and blocks every later reveal exactly like an unclassified one until it is resolved. Unreserved (future) indices cannot be revealed. A repeated reveal returns the same record; a reveal that fails verification or contradicts recorded data moves the chain to `compromised`.
 - The store compares and records but never hashes; the vault verifies every link before it records a reveal.
 
 **Chain states.**
@@ -288,6 +288,8 @@ Classification is recorded in every state.
 
 ### 12.4 Secret handling (defense in depth)
 
+**Cached seeds (P8-3c-3).** The precompute cache is an optimization, never an authority. The vault disposes a chain's cached seeds as soon as it observes that the chain may no longer derive: on its own transitions, on every chain snapshot it reads, and on every store refusal or integrity error for that chain (`invalid-chain-state`, `reveal-conflict`, `reveal-verification-failed`, `unknown-chain`, `store-closed`), synchronously, before it audits or yields. A store-detected `reveal-conflict` is additionally audited as a `compromised` transition. `precompute` stages seeds privately and installs them only if, after its last yield, the vault is not disposed, the chain may still derive and the chain's cache epoch (advanced by every drop) has not moved; otherwise it disposes them and fails closed. `prepareRound` likewise refuses (`invalid-chain-state`, same-salt retry allowed) if the cache was dropped while it reconstructed a seed. **Limitation:** a vault learns of an out-of-band compromise (another vault, an operator) only on its next interaction with that chain; until then its cached seeds stay in memory.
+
 Chain seeds, checkpoints and unrevealed round seeds exist only as `SecretBytes` or short-lived buffers that are zeroed after use. The vault, the store and `RoundKeys` serialize and inspect as redacted markers; records and audit events have fixed allow-listed fields with no free text; errors carry codes and public indices only. Tests render every object the vault produces (JSON, `String`, template literals, `util.inspect` with hidden fields, keys, error messages and stacks) and find no chain link before its reveal, and only the revealed links after it. Disposed secrets, disposed round keys, a disposed vault and a closed store refuse every later use. **Not protected:** memory inspection, heap snapshots, debuggers, the OpenSSL key behind a `KeyObject` (released by the garbage collector), engine-internal copies and deliberate extraction. Erasure is best effort.
 
 ### 12.5 Event loop and performance
@@ -303,3 +305,4 @@ Every hash walk (chain creation, precompute, seed reconstruction from a checkpoi
 - Development only: no durable store, no encryption at rest, no KMS, no PostgreSQL or Redis, no tamper-evident audit, no cross-process index uniqueness (P8-7).
 - No round orchestration, no `SeededRoundAuthority` binding, no `GameEngine` on the server, no endpoint, message handler, public commitment or verifier (P8-4 and later).
 - Open: public salt source, fv = 1 freeze, Node 22 verification, controlled performance validation (D7), slice size and checkpoint interval, selective-voiding operations, Zod S-1.
+- P8-3c-3: an indeterminate round that is never resolved blocks every later reveal of its chain indefinitely (fail closed by design). Who may resolve it, when, and on what evidence is an owner / operations decision (selective voiding, D10), not encoded here. A vault does not learn of an out-of-band compromise before its next interaction with that chain.

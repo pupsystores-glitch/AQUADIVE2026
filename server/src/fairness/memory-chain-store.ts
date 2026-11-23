@@ -89,7 +89,10 @@ interface ChainRecord {
   readonly checkpoints: Map<number, SecretBytes>;
   readonly indices: Map<number, IndexRecord>;
   readonly requests: Map<string, number>;
-  /** Reserved indices that are neither classified nor revealed. */
+  /**
+   * Reserved indices whose outcome is not finally established: unclassified or `indeterminate`,
+   * and not revealed. Any of them blocks the reveal of every later index (P8-3c-3).
+   */
   readonly open: Set<number>;
   /** Revealed indices, ascending. */
   readonly revealed: number[];
@@ -285,7 +288,9 @@ export class MemoryChainStore implements ChainStore {
     }
     record.disposition = disposition;
     record.history.push(Object.freeze({ disposition, reasonCode }));
-    chain.open.delete(index);
+    // `indeterminate` is not a conclusion: the index stays open (it blocks later reveals) until a
+    // final classification replaces it (P8-3c-3).
+    if (disposition !== "indeterminate") chain.open.delete(index);
     return { value: indexSnapshot(chain, record), replayed: false };
   }
 
@@ -330,6 +335,9 @@ export class MemoryChainStore implements ChainStore {
     }
     if (record.disposition === null) {
       throw new ChainError("round-not-concluded", `index ${index} is not classified`);
+    }
+    if (record.disposition === "indeterminate") {
+      throw new ChainError("round-not-concluded", `index ${index} is indeterminate`);
     }
     for (const open of chain.open) {
       if (open < index) {
