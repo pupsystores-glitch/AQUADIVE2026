@@ -12,6 +12,9 @@
 //   src/fairness/index.ts by a relative specifier (no `@/` alias, no private module). Server files
 //   that import the server's own bridge or server/src/fairness/ stay inside server/ and are not
 //   imports of src/fairness; every other server specifier that names fairness is refused.
+//   Amended for P8-4-0 (engine build integration): server/engine/ (the bundle entry) and
+//   server/scripts/ (the bundle build) are scanned too and import no fairness module at all;
+//   the bundle keeps `@/fairness` external and loads the server's compiled copy.
 // - Errors and commitments never carry secret material.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -44,7 +47,7 @@ function walk(dir: string, out: string[] = []): string[] {
     if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
     const path = join(dir, name);
     if (statSync(path).isDirectory()) walk(path, out);
-    else if (/\.(ts|tsx|mts|cts|js|mjs)$/.test(name)) out.push(path);
+    else if (/\.(ts|tsx|mts|cts|js|mjs|cjs)$/.test(name)) out.push(path);
   }
   return out;
 }
@@ -100,7 +103,13 @@ describe("production import boundary", () => {
 
 describe("isolation from the application and the server", () => {
   it("no file outside src/fairness imports it, except src/seeded-round through the barrel", () => {
-    const roots = [join(repo, "src"), join(repo, "server", "src"), join(repo, "server", "test")];
+    const roots = [
+      join(repo, "src"),
+      join(repo, "server", "src"),
+      join(repo, "server", "test"),
+      join(repo, "server", "engine"),
+      join(repo, "server", "scripts"),
+    ];
     const offenders: string[] = [];
     let seededRoundImports = 0;
     const serverBridgeImports: string[] = [];

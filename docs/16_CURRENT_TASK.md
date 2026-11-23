@@ -136,6 +136,15 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **P8-3c-3 — fairness vault security hardening (2026-11-23): ACCEPTED FOR LOCAL DEVELOPMENT BY THE OWNER (2026-11-23; NOT PRODUCTION SECURITY CERTIFICATION); COMMITTED LOCALLY, NOT PUSHED.** Baseline verified: `develop`, `HEAD` `a02dbf9`, 18 local commits ahead of `origin/develop`, clean tree. Fixes (docs/09 §40.1): an `indeterminate` round blocks its own and every later reveal until a final classification resolves it; the vault disposes a chain's cached seeds whenever it observes that the chain may no longer derive, and in-flight `precompute` / `prepareRound` fail closed. Server 328 tests + 5 todo, root 2,586 tests pass (docs/15). Owner decision recommended: the operational policy for resolving `indeterminate` rounds (D10). One isolated local commit `fix(server): harden fairness vault security (P8-3c-3)` on top of `a02dbf9`; no push; P8-4 not started.
 - **Stop condition:** no push; P8-4 is not authorized.
 
+## Also current: P8-4-0 — Engine build integration (local development only, not production activation) — ACCEPTANCE GATES PASSED (2026-11-23), COMMITTED LOCALLY, NOT PUSHED
+
+*A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*
+
+- **Authorization (owner, 2026-11-23):** P8-4-0 only — engine build integration, final hardening under decisions D-1 – D-3 (docs/09 §41) and one isolated local commit if every gate passes. Not production activation; P8-4a and later are **not** authorized.
+- **Delivered:** the server's build bundles the unchanged engine and seeded-round source into `server/dist/engine/engine.cjs` (one fairness instance with the server). The bundle **exists but the running Fastify server does not load it** (`server/README.md` §13). No authority constructor is exported; the bundle check is syntax-aware and fails closed.
+- **Open:** Zod S-1, E-RISK-1, D7 (**NOT VERIFIED**), durable secret persistence (P8-7), payout policy, Node 22 verification; the reflection residual of D-1.
+- **Stop condition:** no push; P8-4a is not authorized.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.

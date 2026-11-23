@@ -383,6 +383,21 @@ Status:
 | P8-3c-3 security patch | **Delivered 2026-11-23; owner, 2026-11-23: accepted for local development only, not production security certification. One isolated local commit `fix(server): harden fairness vault security (P8-3c-3)` on top of `a02dbf9`, not pushed.** Fixes two P8-3c acceptance-review findings (docs/09 §40.1): (A) an `indeterminate` round is not concluded: it cannot be revealed and blocks every later reveal until a final classification resolves it; (B) the vault drops a chain's cached seeds whenever it observes that the chain may no longer derive (compromise, suspension, retirement, store refusal or integrity error), and `precompute` / `prepareRound` fail closed if that happens while they yield. M `server/src/fairness/` `chain-vault`, `memory-chain-store`, `chain-store` (comments), `server/README.md`, docs 09 / 14 / 15 / 16; A `server/test/fairness/hardening.test.ts` (31 tests). Server 15 files / 328 tests + 5 todo; root 102 files / 2,586 tests; 12 / 12 reverted-fix mutants caught. Owner decision recommended: the operational policy for resolving `indeterminate` rounds (D10) |
 | Next | **Stop.** P8-4 is not authorized. No push |
 
+## P8-4-0 — Engine build integration (Phase 8 implementation exception, local development only, 2026-11-23)
+
+*Separate from the entries above, which are preserved unchanged. P8-3c-3 is committed locally as `aea9bcd` (not pushed).*
+
+| Item | Status |
+| --- | --- |
+| Authorization | **Owner, 2026-11-23:** P8-4-0 only — engine build integration for local development; final hardening, documentation and acceptance with decisions D-1 – D-3 (docs/09 §41) and one isolated local commit if every blocking finding is resolved and every mandatory gate passes. **Not production activation.** P8-4a and later not authorized; no Phase 7 gate waived; TASK 008 stays the active task |
+| Deliverable | A `server/engine/entry.ts`, `server/engine/tsconfig.json`, `server/scripts/build-engine.mjs` + `build-engine.d.mts`, `server/test/engine/engine-bundle.test.ts` + `compiled-probe.cjs`; M `server/package.json` (`build`, `typecheck`; rolldown 1.2.19 declared as a devDependency, already installed through vite), `server/package-lock.json` (one line), `server/test/boundaries.test.ts`, `src/fairness/security.test.ts`, `src/seeded-round/security.test.ts`, `server/README.md`, `src/seeded-round/README.md`, docs 04 / 09 / 14 / 15 / 16 |
+| Hardening | D-1: no authority constructor exported (7 exports); `LocalRoundAuthority` determinism tested through a TEST-ONLY bundle. D-2: syntax-aware validation of the emitted bundle (`rolldown/parseAst`, no new dependency); stale-bundle removal, atomic write, CLI exit 1. EventBus: no secret in listener-error output (tested, engine unchanged) |
+| Verification | Server `tsc` (+ engine entry) clean; server Vitest 16 files / 417 tests + 5 todo; root `tsc` clean; root Vitest 102 files / 2,586 tests; ESLint 0 errors, Prettier clean on the changed files; clean `npm run build` (52 files, bundle SHA-256 `6de3c107…`); fresh-process probe of that build: 7 exports, one fairness instance, A1 – A8 and B1 – B8 through create and bind, the spec-only independent generator agrees, 0 Math.random / browser / clock / timer calls; clean `npm ci` in an isolated copy (native rolldown binding present): same bundle, 417 tests + 5 todo, a bad entry makes `npm run build` exit 1 with no bundle; client assets 27 / 27 byte-identical to `HEAD`; two mutants caught |
+| Isolation | No change to `src/engine`, `src/seeded-round` production files, `src/fairness` production files, `src/shared`, rendering, UI, audio, `src/protocol`, the Fastify app, handlers, gateway or startup, the vault, chain store or secret derivation, root configuration or dependencies |
+| Gates | **Not production activation**; the bundle is not loaded by the running server; P8-4a **not authorized**; Zod S-1, E-RISK-1, D7 (**NOT VERIFIED**), durable secret persistence (P8-7) and the payout policy open; Node 22 **not verified**; play money only |
+| Acceptance and commit | acceptance gates passed 2026-11-23 under the owner's authorization; committed locally as one isolated commit `build(server): integrate and harden engine bundle (P8-4-0)` on top of `aea9bcd`, not pushed |
+| Next | **Stop.** P8-4a is not authorized. No push |
+
 ---
 
 Only one task may be active at a time.

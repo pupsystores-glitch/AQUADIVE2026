@@ -10,6 +10,11 @@
 //   the fairness bridge or server/src/fairness (P8-3c is not connected).
 // - The frontend (../src) never imports the server.
 // - The protocol's `zod` is this package's `zod`: one instance.
+// - P8-4-0 (engine build integration): outside src/, exactly two places reach the engine.
+//   engine/entry.ts, the bundle entry, imports only the public barrels `@/engine` and
+//   `@/seeded-round`; scripts/build-engine.mjs imports only Node built-ins and rolldown (the
+//   bundler and its parser `rolldown/parseAst`, used by the syntax-aware validation). Nothing
+//   in src/ (startup, routes, gateway, fairness) imports either or loads the built bundle.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -137,6 +142,46 @@ describe("server import boundary", () => {
           expect(resolve(dirname(file), spec).startsWith(SERVER_DIR + sep)).toBe(false);
         }
       }
+    }
+  });
+});
+
+describe("engine build integration (P8-4-0)", () => {
+  const ENGINE_DIR = join(SERVER_DIR, "engine");
+  const SCRIPTS_DIR = join(SERVER_DIR, "scripts");
+
+  it("engine/ and scripts/ hold exactly the bundle entry, its type check and the build script", () => {
+    expect(readdirSync(ENGINE_DIR).sort()).toEqual(["entry.ts", "tsconfig.json"]);
+    expect(readdirSync(SCRIPTS_DIR).sort()).toEqual(["build-engine.d.mts", "build-engine.mjs"]);
+  });
+
+  it("the bundle entry imports only the engine and seeded-round public barrels", () => {
+    expect(specifiers(join(ENGINE_DIR, "entry.ts"))).toEqual(["@/engine", "@/seeded-round"]);
+    const source = readFileSync(join(ENGINE_DIR, "entry.ts"), "utf8");
+    expect(source).not.toMatch(/\brequire\s*\(|\bimport\s*\(/);
+  });
+
+  it("the build script imports only Node built-ins and rolldown (bundler and its parser)", () => {
+    for (const file of ["build-engine.mjs", "build-engine.d.mts"]) {
+      for (const spec of specifiers(join(SCRIPTS_DIR, file))) {
+        expect(
+          spec.startsWith("node:") || spec === "rolldown" || spec === "rolldown/parseAst",
+          `${file}: ${spec}`,
+        ).toBe(true);
+      }
+    }
+    expect(specifiers(join(SCRIPTS_DIR, "build-engine.mjs"))).toContain("rolldown/parseAst");
+  });
+
+  it("nothing in src/ imports the bundle entry, the build script or the built bundle", () => {
+    for (const file of walk(SERVER_SRC)) {
+      const source = readFileSync(file, "utf8");
+      for (const spec of specifiers(file)) {
+        expect(spec, relative(SERVER_DIR, file)).not.toMatch(/engine|seeded-round|scripts/);
+      }
+      expect(source, relative(SERVER_DIR, file)).not.toMatch(
+        /engine\.cjs|build-engine|seeded-round|\brequire\s*\(/,
+      );
     }
   });
 });

@@ -44,14 +44,18 @@ The owner authorized P8-2 as a narrowly scoped Phase 8 implementation exception 
 | `src/fairness/`                      | P8-3c: node:crypto adapter, chain vault, chain store, records, audit (§12)         |
 | `test/`                              | Unit, real-socket integration, hostile-input, lifecycle and boundary tests         |
 | `test/fairness/`                     | P8-3c: build equivalence, adapter, store, vault, failure, secret-handling tests    |
+| `engine/entry.ts`                    | P8-4-0: entry of the engine bundle (`@/engine`, `@/seeded-round` barrels) (§13)    |
+| `engine/tsconfig.json`               | P8-4-0: type-checks the entry under the root (frontend) configuration              |
+| `scripts/build-engine.mjs`           | P8-4-0: rolldown build of `dist/engine/engine.cjs`, fail-closed checks (§13)       |
+| `test/engine/`                       | P8-4-0: bundle contents, compiled run time, one fairness instance, replay pins     |
 
 ## 3. Commands (npm, inside `server/`)
 
 ```sh
 npm ci                # clean install from package-lock.json
-npm run typecheck     # tsc -p tsconfig.json (sources, tests, Vitest config)
+npm run typecheck     # tsc -p tsconfig.json (sources, tests, Vitest config), then engine/tsconfig.json
 npm test              # vitest run (server tests only)
-npm run build         # clean, then tsc -p tsconfig.build.json → dist/
+npm run build         # clean, tsc -p tsconfig.build.json → dist/, then the engine bundle (§13)
 npm start             # node dist/server/src/main.js
 npm run dev           # tsx watch src/main.ts
 ```
@@ -188,9 +192,10 @@ CommonJS output keeps the protocol's extensionless relative imports valid at run
 | `typescript`         | 5.8.3   | dev                                                                                                           |
 | `tsx`                | 4.23.15 | dev (brings esbuild 0.28.2)                                                                                   |
 | `vitest`             | 4.1.12  | dev (brings vite 8.3.8)                                                                                       |
+| `rolldown`           | 1.2.19  | dev, build only (P8-4-0 engine bundle, §13); already installed through vite, now declared explicitly          |
 | `@types/node`        | 22.20.1 | dev, type declarations only (needed for Node and Fastify types; not in the owner's list, see the P8-2 report) |
 
-npm 11 reports that esbuild's `postinstall` script is not covered by `allowScripts` and skips it; `tsx` works without it (esbuild's platform binary comes from its optional dependency). No database, Redis, JWT, ORM, Docker, payment, wallet or round engine.
+npm 11 reports that esbuild's `postinstall` script is not covered by `allowScripts` and skips it; `tsx` works without it (esbuild's platform binary comes from its optional dependency). No database, Redis, JWT, ORM, Docker, payment or wallet. The engine bundle (§13) is built but nothing in the running server loads it.
 
 Vitest is 4.1.12 rather than the root's 4.1.10: 4.1.12 fixes two `@vitest/mocker` advisories (GHSA-82fw-gwwq-j7x9, GHSA-qxg6-89mg-rqv8) and stays within the approved 4.1.x. `npm audit` (2026-11-18) still reports:
 
@@ -306,3 +311,39 @@ Every hash walk (chain creation, precompute, seed reconstruction from a checkpoi
 - No round orchestration, no `SeededRoundAuthority` binding, no `GameEngine` on the server, no endpoint, message handler, public commitment or verifier (P8-4 and later).
 - Open: public salt source, fv = 1 freeze, Node 22 verification, controlled performance validation (D7), slice size and checkpoint interval, selective-voiding operations, Zod S-1.
 - P8-3c-3: an indeterminate round that is never resolved blocks every later reveal of its chain indefinitely (fail closed by design). Who may resolve it, when, and on what evidence is an owner / operations decision (selective voiding, D10), not encoded here. A vault does not learn of an out-of-band compromise before its next interaction with that chain.
+
+## 13. Engine build integration (P8-4-0, local development only)
+
+**Status: delivered 2026-11-23; hardened under owner decisions D-1 (export surface) and D-2 (bundle validation) on 2026-11-23 (docs/09 §41); acceptance gates passed 2026-11-23 under the owner's authorization; committed locally, not pushed. LOCAL DEVELOPMENT ONLY — NOT PRODUCTION ACTIVATION. The bundle EXISTS (`npm run build` writes `dist/engine/engine.cjs`) but the running Fastify server does NOT LOAD it: nothing in the startup, the HTTP routes or the WebSocket gateway requires it. PLAY MONEY ONLY. Zod S-1, E-RISK-1, D7, durable secret persistence and the payout policy stay open. P8-4a is not authorized.**
+
+The existing engine (`src/engine`) and seeded-round binding (`src/seeded-round`) are reused unchanged. `npm run build` runs `scripts/build-engine.mjs` after `tsc`; it bundles `engine/entry.ts` with rolldown into **`dist/engine/engine.cjs`** (CommonJS, 21 source modules: `src/engine`, `src/shared`, `src/seeded-round`, the entry).
+
+- **`@/` aliases** are resolved at build time; none survives in the output. **Type-only imports** of the rendering layer are erased by the transform, so no rendering, UI, audio or browser module is bundled.
+- **One fairness instance.** `@/fairness` is kept external and emitted as `require("../src/fairness/index.js")`: the module `tsc` compiles into `dist/src/fairness/` and that `src/fairness.ts` (the server's bridge) loads. The bundle contains no fairness code, so `SeededRound.bind` (an `instanceof RoundDerivation` check) accepts the server's derivations; a derivation from a second copy is refused.
+- **Export surface (D-1):** `GameEngine`, `SNAPSHOT_SCHEMA_VERSION`, `BET_SLOTS`, `ENGINE_STATE_TO_PHASE`, `SeededRound`, `SeededRoundError`, `OUTCOME_DECISIONS`. Not exported: `EngineDriver` (requestAnimationFrame), `createMathRandomRng` (unseeded Math.random), `LocalRoundAuthority` (draws outcomes from any stream it is given) and `SeededRoundAuthority` (built only by `SeededRound`). A server round obtains its authority and world stream only from `SeededRound.create` / `SeededRound.bind` (`round.deps`). Both authority classes are still bundled, unchanged, as `SeededRound`'s internals.
+- **Syntax-aware validation (D-2).** `validateEngineCode` parses the emitted executable code with `rolldown/parseAst` (the oxc parser shipped with the declared rolldown dependency; no new package) and checks the syntax tree, so neither a comment nor a string literal can hide code or fake a match (the earlier comment-stripping text scan was blinded by a `"/*"` string literal). Refused:
+  - unseeded randomness: `Math.random`, `crypto`, `.getRandomValues`, `.randomUUID`;
+  - clocks: `Date`, `performance`, `Intl`, `.now`, locale formatting;
+  - process and module-system access: `process`, `Buffer`, `module`, `__dirname`, `__filename`, and any `require` other than a literal call to an allowed specifier (the fairness module; in multi-entry TEST-ONLY builds, that build's own chunks);
+  - `eval`, `Function`, `.constructor`, `.__proto__`;
+  - timers and asynchronous scheduling: `setTimeout` and its relatives, `queueMicrotask`, `Promise`, async functions, `await`, `for await`, workers, channels, `Atomics`, `WeakRef`, `FinalizationRegistry`;
+  - the global object (`globalThis`, `global`, `window`, `self`, …), browser APIs and network APIs;
+  - `with`, `import()`, `import.meta`, `new.target`, `@/` and `.ts` specifiers, and code that does not parse.
+
+  `Math` may be read only by a named, non-forbidden property, and `console` only as `console.error` (the EventBus listener firewall). A forbidden name is refused wherever it appears as an identifier (reference, binding or shadowing), and a forbidden property name also as a literal computed key (`x["constructor"]`).
+
+- **Fail closed:** the build refuses (an `Error` whose `problems` lists every reason) if a bundled module is outside the allow-list, if the validation finds anything, or on any rolldown warning. A bundle already at the target is removed before the build starts; the new one is written to a temporary file, renamed into place and re-read. A failed build therefore leaves no bundle, neither a partial nor a stale one. The CLI prints the reasons on stderr and exits 1; `npm run build` (`clean && tsc && build-engine`) starts from an empty `dist/` and stops at the first failing step.
+- **Types:** the bundle has no declaration file. `engine/tsconfig.json` type-checks the entry under the root configuration (the engine's type closure reaches the rendering layer, which needs the DOM library); `server/tsconfig.json` does not include it. A typed server-side facade is a P8-4a decision.
+
+`test/engine/engine-bundle.test.ts` builds the server exactly as `npm run build` does into a temporary directory and, in a fresh Node process with Math.random and every browser global poisoned, checks: the module list, the single `require`, the export surface, that seeded authority is reachable only through `SeededRound`, the single fairness instance, all 16 replay pins (A1 – A8, B1 – B8) through `SeededRound.create`, through the server's `RoundDerivation` and through the vault (`reserveRound` → `prepareRound` → `RoundKeys.derivation` → `SeededRound.bind`), agreement with the independent outcome vectors, redaction of a live compiled round, the EventBus's real stderr output for throwing listeners (below), and a deterministic round of the production `GameEngine` over `LocalRoundAuthority` from a TEST-ONLY bundle of its unchanged source module `src/engine/round-authority.ts`. It also tests every validation rule with accepted and refused fixtures, the build-level refusals with their exact reasons (a private fairness module, Math.random, the requestAnimationFrame driver, a Node built-in by either specifier, a resolvable and an unresolvable package, a dynamic import, a string that opens a comment, a clock read) together with the removal of a stale bundle, and the CLI's exit status. The replay runner, pins and vectors are the original `src/seeded-round/test/` files, bundled for the test only (never shipped) on top of the production bundle.
+
+**EventBus and secrets.** The engine's `EventBus` reports a throwing listener with `console.error("[engine] event listener failed:", eventName, error)` (pre-existing engine behavior, unchanged). The test makes every listener of every event throw an error that carries the live seeded round, its authority, world stream, deps and the server's derivation (one listener throws the round itself), runs a bound round to its end and captures what the real `console.error` writes to stderr. Every call holds exactly the prefix, the event name and the value thrown; the round objects render sealed; no seed bytes, record digest, draw count or (before its reveal) outcome appear. No disclosure was found, so the engine is unchanged.
+
+Boundary tests: `test/boundaries.test.ts` (entry imports only the two barrels; the build script only Node built-ins, `rolldown` and `rolldown/parseAst`; nothing in `src/` imports or loads either). `src/seeded-round/security.test.ts` and `src/fairness/security.test.ts` now also scan `engine/` and `scripts/`; the only new exception is `engine/entry.ts` → `@/seeded-round`.
+
+Limitations and residual risks:
+
+- **Reflection.** D-1 removes the authority constructors from the export surface; it is not a hard capability boundary. `SeededRoundAuthority` stays reachable from a live round (`Object.getPrototypeOf(round.authority).constructor`), and `GameEngine` accepts any object with the `RoundAuthority` methods. Closing either needs a change to the unchanged engine or seeded-round source, which is not authorized; P8-4a orchestration must build every `GameEngine` from a `SeededRound`'s `deps`, and its review should check that.
+- **Static validation.** A computed property access whose key is not a literal (`o[k]`) cannot be resolved statically. Such a read of Math.random or a browser global is caught only at run time, by the test probe's poisoning; a clock or timer read that way is not caught. The rules apply to the engine bundle, not to the server's own code.
+- **Listener errors.** The content of a listener's own error message is that listener's responsibility: a P8-4a server listener must not throw, or must be wrapped.
+- No RoundScript, orchestration, scheduling, betting or network integration (P8-4a and later, not authorized).

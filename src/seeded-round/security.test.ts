@@ -2,6 +2,11 @@
 // - Production files import only the `@/engine` and `@/fairness` public barrels and each other.
 // - No Math.random, clock, logging, network, DOM, process, timers or eval in production.
 // - Nothing in the application or the server imports src/seeded-round.
+//   Amended for P8-4-0 (engine build integration): the one exception is the server's bundle
+//   entry server/engine/entry.ts, which may import only the public barrel `@/seeded-round`; the
+//   build bundles it and never runs this source directly. server/engine/ and server/scripts/ are
+//   scanned too. The server's tests build TEST-ONLY bundles of src/seeded-round/test/ helpers by
+//   file path (an input, not an import); no server file imports src/seeded-round.
 // - Before the reveal no draw count, outcome, seed or block leaks through serialization,
 //   string conversion, inspection, enumeration or error messages.
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -37,7 +42,7 @@ function walk(dir: string, out: string[] = []): string[] {
     if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
     const path = join(dir, name);
     if (statSync(path).isDirectory()) walk(path, out);
-    else if (/\.(ts|tsx|mts|cts|js|mjs)$/.test(name)) out.push(path);
+    else if (/\.(ts|tsx|mts|cts|js|mjs|cjs)$/.test(name)) out.push(path);
   }
   return out;
 }
@@ -99,9 +104,16 @@ describe("production import boundary", () => {
 });
 
 describe("isolation from the application and the server", () => {
-  it("no file outside src/seeded-round imports it", () => {
-    const roots = [join(repo, "src"), join(repo, "server", "src"), join(repo, "server", "test")];
+  it("no file outside src/seeded-round imports it, except the server's bundle entry", () => {
+    const roots = [
+      join(repo, "src"),
+      join(repo, "server", "src"),
+      join(repo, "server", "test"),
+      join(repo, "server", "engine"),
+      join(repo, "server", "scripts"),
+    ];
     const offenders: string[] = [];
+    const bundleEntryImports: string[] = [];
     for (const root of roots) {
       let files: string[] = [];
       try {
@@ -112,16 +124,22 @@ describe("isolation from the application and the server", () => {
       for (const f of files) {
         const rel = relative(repo, f).split(sep).join("/");
         if (rel.startsWith("src/seeded-round/")) continue;
-        if (
-          /(\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["'][^"']*seeded-round/.test(
-            readFileSync(f, "utf8"),
-          )
-        ) {
+        const found = [
+          ...readFileSync(f, "utf8").matchAll(
+            /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["']([^"']*seeded-round[^"']*)["']/g,
+          ),
+        ].map((m) => m[1]);
+        if (found.length === 0) continue;
+        // P8-4-0 exception: exactly server/engine/entry.ts → the public barrel, nothing else.
+        if (rel === "server/engine/entry.ts" && found.every((s) => s === "@/seeded-round")) {
+          bundleEntryImports.push(...found);
+        } else {
           offenders.push(rel);
         }
       }
     }
     expect(offenders).toEqual([]);
+    expect(bundleEntryImports).toEqual(["@/seeded-round"]); // the exception is exercised, once
   });
 });
 
