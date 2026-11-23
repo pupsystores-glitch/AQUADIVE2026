@@ -366,6 +366,22 @@ Status:
 | Gates | P8-3 **not complete** (P8-3c not started); P8-4 not started; D7 performance gate **not verified**; Node 22.18+ **not verified**; Phase 7 **IN PROGRESS**; Phase 8 **not complete**; E-RISK-1, zod S-1, public salt source, fairness-version freeze, selective voiding, Phase 7 audio licensing and physical-device QA open; play money only |
 | Next | **Stop.** P8-3c is not authorized. No push |
 
+## P8-3c — Server fairness integration (Phase 8 implementation exception, 2026-11-19)
+
+*Separate from the P8-3a and P8-3b entries above, which are preserved unchanged. P8-3b-0 / P8-3b are committed locally as `afc54c8` + `761a11c` (not pushed).*
+
+| Item | Status |
+| --- | --- |
+| Authorization | **Owner, 2026-11-19:** after the P8-3c architecture and security readiness report, P8-3c for **local development only** as three isolated work packages (P8-3c-0, P8-3c-1, P8-3c-2), decisions in docs/09 §40, with a narrow conditional Zod S-1 gate exception (S-1 not resolved). All work **unstaged and uncommitted** pending the owner's final acceptance. P8-4, P8-5, P8-7 and later not authorized; no Phase 7 gate waived; TASK 008 stays the active task |
+| P8-3c-0 deliverable | `server/tsconfig.json` (`allowImportingTsExtensions`, `rewriteRelativeImportExtensions`), the single bridge `server/src/fairness.ts` (public barrel only), `server/test/boundaries.test.ts` and `src/fairness/security.test.ts` amendments, `server/test/fairness/build.test.ts`. Existing server output byte-identical (31 / 31 files); 20 files added |
+| P8-3c-1 deliverable | `server/src/fairness/crypto-node.ts` (verified node:crypto SHA-256 / HMAC-SHA256 / randomBytes; per-round `KeyObject`; Node buffers copied and zeroed), `crypto-node.test.ts`, `crypto-node-faults.test.ts` |
+| P8-3c-2 deliverable | `server/src/fairness/` `errors`, `checkpoints`, `chain-store`, `memory-chain-store` (development-only), `chain-vault`, `round-keys`, `reveal`, `records`, `audit`; tests `memory-chain-store`, `chain-vault`, `failures` (incl. a two-process restart), `secrets`; helper `server/test/helpers/fairness.ts`; five `it.todo` P8-7 durable-store contract markers |
+| Verification | Server: 14 files, 297 tests + 5 todo; root: 102 files, 2,586 tests; clean install outside the repository (npm ci, typecheck, build, 297 tests, runtime probes); compiled dump = type-stripped dump (`9a5c227e…`) on three providers; spec-only re-implementation agrees on 246,960 draws of 120 fresh vault rounds; 20 / 20 injected defects caught; built entrypoint loads no fairness module; frontend build byte-identical except build-clock values (48 – 49 / 51; nitro date, mtimes, wrangler `compatibility_date`) |
+| Isolation | No change to `src/fairness` production files, `src/engine`, `src/seeded-round`, `src/shared`, `src/rendering`, `src/ui`, `src/audio`, `src/protocol`, root package / TypeScript / Vite / Vitest configuration, server dependencies or lockfiles, the Fastify app, gateway or startup |
+| Gates | P8-3c **accepted for local development (owner, 2026-11-23)**, not production fairness certification; P8-3 **not declared complete**; P8-4 not started; D7 performance gate **NOT VERIFIED** (measurements informational, docs/15; the 256-link slice p99 ≈ 2.04 – 2.10 ms is slightly above the provisional 2 ms target, slice unchanged); Node 22 **not verified**; zod S-1 **open** (limited exception only); public salt source, fv = 1 freeze, durable store (P8-7), selective voiding, E-RISK-1, Phase 7 audio licensing and physical-device QA open; play money only |
+| Acceptance and commits | **Owner, 2026-11-23: accepted for local development only; not production fairness certification.** Three isolated local commits on top of `761a11c`, **not pushed**: 1. `965487c` `build(server): compile shared fairness source in CommonJS (P8-3c-0)`; 2. `2bf7f01` `feat(server): add Node fairness crypto adapter (P8-3c-1)`; 3. `feat(server): add chain vault and dev-only store (P8-3c-2)` |
+| Next | **Stop.** P8-4 is not authorized. No push |
+
 ---
 
 Only one task may be active at a time.

@@ -51,3 +51,5 @@ qa/p8-2-server/
 qa/p8-3-fairness/
 # Local P8-3b seeded-round authority evidence (replay, distributions, build comparison); never committed
 qa/p8-3b-authority/
+# Local P8-3c server fairness evidence (build integration, vectors, benchmarks, build comparison); never committed
+qa/p8-3c-server-fairness/

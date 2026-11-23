@@ -2,6 +2,8 @@
 
 **Status: P8-2 skeleton, 2026-11-18. Accepted by the owner for local development only. Not production-ready. Not connected to the game. Play money only.** Security review: §11.
 
+**P8-3c, 2026-11-19 (local development only; accepted for local development on 2026-11-23, committed locally, not pushed):** the package also compiles the shared fairness library and contains a node:crypto fairness adapter, a chain vault and a development-only in-memory chain store (`src/fairness.ts`, `src/fairness/`; §12). None of it is imported by the entrypoint, the HTTP routes or the WebSocket gateway: the running server behaves exactly as in P8-2.
+
 A Fastify service with health endpoints and a WebSocket endpoint that performs the protocol v1 (DRAFT) `hello` → `welcome` handshake and nothing else. There is no round engine, no authentication, no wallet, no ledger, no database and no money. The running game does not talk to it: the frontend stays in local demo mode.
 
 The owner authorized P8-2 as a narrowly scoped Phase 8 implementation exception (2026-11-18) while Phase 7 stays open. Design: `docs/09_BACKEND_ARCHITECTURE.md` §29 P8-2, §8.3–§8.4, §9.1, §9.5, §23.2, §23.4; owner decisions A–D: docs/09 §37.
@@ -38,7 +40,10 @@ The owner authorized P8-2 as a narrowly scoped Phase 8 implementation exception 
 | `src/gateway/origin-policy.ts`       | Exact-match Origin allow-list                                                      |
 | `src/gateway/close-codes.ts`         | WebSocket close codes used                                                         |
 | `src/gateway/socket.ts`              | The typed subset of a `ws` socket the gateway uses (`ws` has no type declarations) |
+| `src/fairness.ts`                    | P8-3c: the only bridge to the shared fairness library `../src/fairness/index.ts`   |
+| `src/fairness/`                      | P8-3c: node:crypto adapter, chain vault, chain store, records, audit (§12)         |
 | `test/`                              | Unit, real-socket integration, hostile-input, lifecycle and boundary tests         |
+| `test/fairness/`                     | P8-3c: build equivalence, adapter, store, vault, failure, secret-handling tests    |
 
 ## 3. Commands (npm, inside `server/`)
 
@@ -227,3 +232,74 @@ ReDoS through repeated single-branch extglobs, range `<= 4.0.7`; 4.0.7 is the la
 Verified on the built server against the protocol's own client decoder and `classifyRequestResponse`: each of the six refused request types returns exactly one `error` frame, with `re` = the request id, the next `seq`, payload `{ code, retryable: true }` only, and outcome **transient**. The connection stays open. Only `welcome` and `error` frames are ever sent. The refusal path is a static table lookup: no lookup, storage, forwarding, round, wallet, ledger or identity logic runs. The registry contract (`src/protocol/README.md` §9.1) makes these answers conservative: "this delivery was refused before processing; keep the request unsettled; resend only the same id". A client therefore never treats a refused bet as accepted or as finally rejected.
 
 Limitations: `server-busy` is semantically imprecise (nothing is busy; the service does not exist yet). A well-behaved client following the contract will back off and retry indefinitely. This is harmless to the server (rate limit, connection bounds), but it is why **no network client may be built against this skeleton**. Before P8-6 each request type needs its real behavior, or the owner authorizes a dedicated code.
+
+## 12. Fairness infrastructure (P8-3c, local development only)
+
+**Status: delivered 2026-11-19; accepted for local development on 2026-11-23 (not production fairness certification); committed locally, not pushed. Not connected to the running server, the gateway or the game. Not production fairness. fv = 1 internal and experimental.** Owner decisions: `docs/09_BACKEND_ARCHITECTURE.md` §40. Local evidence: `qa/p8-3c-server-fairness/` (Git-ignored). Measurements: docs/15.
+
+### 12.1 Build integration (P8-3c-0)
+
+`tsconfig.json` adds `allowImportingTsExtensions` and `rewriteRelativeImportExtensions` (owner-approved), so `tsc` compiles the shared fairness source unchanged: its explicit relative `.ts` imports are emitted as `./x.js` into `dist/src/fairness/`. `src/fairness.ts` is the only bridge: it re-exports a named list from `../../src/fairness/index.ts` (the public barrel), never a private module, never through `@/`. Neither option changes the output of extensionless imports: the 31 P8-2 output files are byte-identical; 20 files are added. `test/fairness/build.test.ts` builds the server into a temporary directory and checks the emitted specifiers, the single compiled copy, the unchanged `main.ts` closure, and that the compiled code loads no `.ts` file and reproduces the full development dump. `npm start` is unchanged and loads no fairness module.
+
+### 12.2 node:crypto adapter (P8-3c-1)
+
+`src/fairness/crypto-node.ts` implements the library's injected `FairnessHashProvider` (SHA-256; HMAC-SHA256 with the key prepared once per round as a `KeyObject`) and `SecureRandomSource` (`randomBytes`). `createNodeFairnessCrypto()` returns it only after `assertFairnessCryptoReady`: the published SHA-256 / HMAC-SHA256 known answers, the fv = 1 development vectors end to end (chain link, round seed, three derived blocks), the HMAC key-copy contract (the provider must not keep the caller's key buffer) and random-source sanity (type, length, not all zero, two draws differ). Failures throw `crypto-provider-failed` or `secure-random-failed`; there is no fallback and no `Math.random`. Every Node `Buffer` is copied into a plain `Uint8Array` and zeroed; the `KeyObject` exists only in the prepared closure.
+
+### 12.3 Chain vault and development store (P8-3c-2)
+
+| Module                  | Responsibility                                                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `errors.ts`             | `ChainError` with a closed code set; messages carry no secret                                                             |
+| `checkpoints.ts`        | Checkpoint geometry: x_N and every multiple of the interval (default 1,024, provisional)                                  |
+| `chain-store.ts`        | The `ChainStore` interface, chain states and transitions, dispositions, stated guarantees                                 |
+| `memory-chain-store.ts` | **Development-only** in-memory store: refuses production; volatile, single-process, not transactional                     |
+| `chain-vault.ts`        | The only owner of chain secrets: new-chain workflow, reservation, round keys, classification, verified reveal, precompute |
+| `round-keys.ts`         | `RoundKeys`: the one `RoundDerivation` of a reserved index; disposal; public-only serialization                           |
+| `reveal.ts`             | Verification of a revealed seed against the revealed chain, in yielding slices                                            |
+| `records.ts`            | Allow-listed public records (commitment, status, reservation, disposition, reveal)                                        |
+| `audit.ts`              | Allow-listed audit events; `MemoryAuditSink` (neither durable nor tamper-evident)                                         |
+
+**Round lifecycle.** `createChain({ length })` draws a fresh secure seed and stores the checkpoints → `reserveRound(chainId, requestId)` → `prepareRound(chainId, index, salt)` returns `RoundKeys` (the caller disposes them) → `classifyRound(chainId, index, disposition, reasonCode)` → `revealRound(chainId, index)`. `precompute(chainId, from, count)` caches upcoming seeds ahead of time.
+
+**Rules.**
+
+- Reservation is monotonic and keyed by a request id: a retry returns the same index; an index is never released or reused.
+- The public salt is bound to the index before derivation and never changes (`salt-conflict`): a failed preparation cannot be retried with another salt.
+- A derivation is issued once per index (`derivation-already-issued`).
+- Dispositions `completed` (needs an issued derivation), `aborted`, `voided` and `indeterminate` are evidence only, with reason codes and history; `indeterminate` may be resolved once; final values never change. No settlement or payout rule exists here.
+- A reveal needs the round classified and every earlier reserved index classified or revealed, because revealing x_j discloses all earlier seeds (`reveal-order-violation`). Unreserved (future) indices cannot be revealed. A repeated reveal returns the same record; a reveal that fails verification or contradicts recorded data moves the chain to `compromised`.
+- The store compares and records but never hashes; the vault verifies every link before it records a reveal.
+
+**Chain states.**
+
+| State                                            | Reserve | Derive | Reveal / read secrets | Explicit transitions to               |
+| ------------------------------------------------ | ------- | ------ | --------------------- | ------------------------------------- |
+| `active`                                         | yes     | yes    | yes                   | `suspended`, `retired`, `compromised` |
+| `suspended`                                      | no      | no     | yes                   | `active`, `retired`, `compromised`    |
+| `exhausted` (automatic, at the last reservation) | no      | yes    | yes                   | `retired`, `compromised`              |
+| `retired`                                        | no      | no     | yes                   | `compromised`                         |
+| `compromised`                                    | no      | no     | no                    | none                                  |
+
+Classification is recorded in every state.
+
+**Failures and restart.** Nothing is rolled back into a reusable state. A failure before a reservation reserves nothing. A failure after it (an ambiguous result) is retried with the same request id and receives the same index. A failure while preparing round secrets returns no keys; the salt stays bound and a same-salt retry succeeds. If an issued derivation cannot be delivered, its keys are disposed and the index must be classified. A failure during a reveal records nothing; the retry succeeds or replays. **After a process restart every earlier chain is `unknown-chain`**: the in-memory store cannot recover, does not pretend to, and a new chain needs the explicit `createChain` workflow. Durable recovery, cross-process uniqueness and encrypted checkpoints are P8-7 (recorded as `it.todo` contract requirements in `test/fairness/memory-chain-store.test.ts`).
+
+**Production refusal.** `new MemoryChainStore({ mode })` requires `mode` `development` or `test` and refuses unless `NODE_ENV` is unset, `development` or `test`. Its `guarantees` state `durable`, `crossProcessIndexUniqueness`, `multiStepTransactions` and `productionUse` as `false`.
+
+### 12.4 Secret handling (defense in depth)
+
+Chain seeds, checkpoints and unrevealed round seeds exist only as `SecretBytes` or short-lived buffers that are zeroed after use. The vault, the store and `RoundKeys` serialize and inspect as redacted markers; records and audit events have fixed allow-listed fields with no free text; errors carry codes and public indices only. Tests render every object the vault produces (JSON, `String`, template literals, `util.inspect` with hidden fields, keys, error messages and stacks) and find no chain link before its reveal, and only the revealed links after it. Disposed secrets, disposed round keys, a disposed vault and a closed store refuse every later use. **Not protected:** memory inspection, heap snapshots, debuggers, the OpenSSL key behind a `KeyObject` (released by the garbage collector), engine-internal copies and deliberate extraction. Erasure is best effort.
+
+### 12.5 Event loop and performance
+
+Every hash walk (chain creation, precompute, seed reconstruction from a checkpoint, long reveal verification) runs in slices of at most 256 links and yields between slices. With precomputed seeds, preparing and revealing a round needs no hashing beyond the reveal's one-link check (p99 ≈ 0.2 – 0.3 ms measured). Measurements on battery with other load are **informational only; D7 stays NOT VERIFIED** (docs/15). The slice size (measured p99 ≈ 2.04 – 2.10 ms against the provisional 2 ms target) and the checkpoint interval are open tuning decisions. No scheduler, worker pool or background job exists.
+
+### 12.6 Zod S-1: limited gate exception (owner, 2026-11-19)
+
+§11.1 made the zod review a mandatory gate "before P8-3 or any later milestone starts". The owner granted a **narrow exception for this offline, development-only fairness infrastructure only**, conditional on: no new WebSocket handler, no new HTTP endpoint, no frontend network client, no untrusted protocol message decoding, no zod schema change, no expansion of production network exposure, and no connection to the live server lifecycle. P8-3c meets every condition: the fairness modules import neither zod nor the protocol (a source-rule test), the startup / HTTP / gateway import closure never reaches them (a boundary test), and the built entrypoint loads no fairness module (a run-time probe). No dependency changed. **S-1 is not resolved.** It remains mandatory before a new browser network client, before expanding the affected untrusted decoding paths, and before production readiness.
+
+### 12.7 Limitations and open items
+
+- Development only: no durable store, no encryption at rest, no KMS, no PostgreSQL or Redis, no tamper-evident audit, no cross-process index uniqueness (P8-7).
+- No round orchestration, no `SeededRoundAuthority` binding, no `GameEngine` on the server, no endpoint, message handler, public commitment or verifier (P8-4 and later).
+- Open: public salt source, fv = 1 freeze, Node 22 verification, controlled performance validation (D7), slice size and checkpoint interval, selective-voiding operations, Zod S-1.
