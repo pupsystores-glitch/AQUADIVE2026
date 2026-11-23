@@ -136,6 +136,16 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **P8-3c-3 — fairness vault security hardening (2026-11-23): ACCEPTED FOR LOCAL DEVELOPMENT BY THE OWNER (2026-11-23; NOT PRODUCTION SECURITY CERTIFICATION); COMMITTED LOCALLY, NOT PUSHED.** Baseline verified: `develop`, `HEAD` `a02dbf9`, 18 local commits ahead of `origin/develop`, clean tree. Fixes (docs/09 §40.1): an `indeterminate` round blocks its own and every later reveal until a final classification resolves it; the vault disposes a chain's cached seeds whenever it observes that the chain may no longer derive, and in-flight `precompute` / `prepareRound` fail closed. Server 328 tests + 5 todo, root 2,586 tests pass (docs/15). Owner decision recommended: the operational policy for resolving `indeterminate` rounds (D10). One isolated local commit `fix(server): harden fairness vault security (P8-3c-3)` on top of `a02dbf9`; no push; P8-4 not started.
 - **Stop condition:** no push; P8-4 is not authorized.
 
+## Also current: P8-4a-1 — Build integrity hardening (offline development only, not production activation) — ACCEPTED FOR LOCAL DEVELOPMENT ONLY (2026-11-24), COMMITTED LOCALLY, NOT PUSHED
+
+*A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*
+
+- **Authorization (owner, 2026-11-23):** P8-4a-1 only, under decisions I1 – I9 (docs/09 §43); uncommitted and unstaged for acceptance. No commit, push, P8-4b, live scheduler or production activation.
+- **Delivered:** trusted integrity manifest and verification before and after loading, build-time verification with fail-closed cleanup, `runtime-integrity-failed`, a tracked independent full-round reference and 45 vectors, 9 loader known answers, `.gitattributes` (`server/README.md` §15).
+- **Open:** Linux reproducibility and Node 22 (no environment available); the documented TOCTOU, same-process and build/deployment limits; D7, D10 / OD-11, Zod S-1, E-RISK-1, P8-7; owner approval of the A1 / B1 digest candidates; final-review residuals A-1 (the in-process check verifies itself; a deliberate edit of a pre-loaded protected module can disable it) and A-2 (8.3 / `\\?\` / UNC spellings not detected as duplicate instances), docs/09 §43. M-3 is addressed within the trusted-build model only: unreviewed output changes fail the build and an altered bundle is refused under intact server modules; it is not a defence against deliberate tampering of the deployed build, same-process code, TOCTOU or a rewritten manifest. The live scheduler is **not** authorized.
+- **Final acceptance (2026-11-24):** independent re-verification passed (docs/14, docs/15); committed locally as one isolated commit `feat(server): add build integrity verification (P8-4a-1)` on top of `011facc`, not pushed.
+- **Stop condition:** no push; P8-4b is not authorized (read-only readiness analysis only).
+
 ## Also current: P8-4a — Offline deterministic RoundScript precomputation (offline development only, not production activation) — ACCEPTED FOR LOCAL DEVELOPMENT ONLY (2026-11-23), COMMITTED LOCALLY, NOT PUSHED
 
 *A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*

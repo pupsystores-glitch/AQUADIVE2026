@@ -20,7 +20,8 @@
 //   imports only the runner. Exactly one server module loads the built bundle —
 //   src/round/engine-runtime.ts, with one literal-free `require(` of its fixed location — and
 //   src/round/ imports only node:path, the fairness bridge, server/src/fairness modules and its
-//   own files. The startup, HTTP routes and gateway never reach src/round/.
+//   own files — and, since P8-4a-1, node:fs in integrity.ts only (reading the build and the
+//   trusted manifest; nothing in src/round/ writes a file). The startup, HTTP routes and gateway never reach src/round/.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -164,7 +165,24 @@ describe("engine build integration (P8-4-0, P8-4a)", () => {
       "round-runner.ts",
       "tsconfig.json",
     ]);
-    expect(readdirSync(SCRIPTS_DIR).sort()).toEqual(["build-engine.d.mts", "build-engine.mjs"]);
+    // P8-4a-1: plus the build integrity tool (verify / candidate) and its types.
+    expect(readdirSync(SCRIPTS_DIR).sort()).toEqual([
+      "build-engine.d.mts",
+      "build-engine.mjs",
+      "engine-integrity.d.mts",
+      "engine-integrity.mjs",
+    ]);
+  });
+
+  it("the integrity tool imports only Node built-ins and nothing of the build it checks", () => {
+    for (const file of ["engine-integrity.mjs", "engine-integrity.d.mts"]) {
+      for (const spec of specifiers(join(SCRIPTS_DIR, file))) {
+        expect(spec, file).toMatch(/^node:/);
+      }
+      expect(readFileSync(join(SCRIPTS_DIR, file), "utf8"), file).not.toMatch(
+        /\brequire\s*\(|\bimport\s*\(/,
+      );
+    }
   });
 
   it("the entry imports only the runner; the runner only the engine and seeded-round barrels", () => {
@@ -213,12 +231,16 @@ describe("engine build integration (P8-4-0, P8-4a)", () => {
 
   it("src/round/ imports only node:path, the fairness bridge and modules, and itself", () => {
     const allowed = new Set([FAIRNESS_BRIDGE, ...walk(FAIRNESS_DIR), ...walk(ROUND_DIR)]);
-    expect(walk(ROUND_DIR).length).toBe(7);
+    expect(walk(ROUND_DIR).length).toBe(8);
+    const INTEGRITY = join(ROUND_DIR, "integrity.ts");
     for (const file of walk(ROUND_DIR)) {
       for (const spec of specifiers(file)) {
         if (spec.startsWith(".")) {
           const target = resolveServerImport(file, spec);
           expect(allowed.has(target!), `${relative(SERVER_DIR, file)}: ${spec}`).toBe(true);
+        } else if (file === INTEGRITY) {
+          // P8-4a-1: the integrity check reads files; it never writes one.
+          expect(["node:path", "node:fs"], relative(SERVER_DIR, file)).toContain(spec);
         } else {
           expect(spec, relative(SERVER_DIR, file)).toBe("node:path");
         }
@@ -226,6 +248,9 @@ describe("engine build integration (P8-4-0, P8-4a)", () => {
     }
     // Only the loader names the bundle location; only prepare.ts is the pipeline's entry.
     expect(specifiers(ENGINE_RUNTIME)).toContain("node:path");
+    expect(readFileSync(INTEGRITY, "utf8")).not.toMatch(
+      /\b(write|append|rm|unlink|rename|copy)\w*Sync\b/,
+    );
   });
 
   it("the application startup, HTTP routes and gateway never reach src/round/", () => {

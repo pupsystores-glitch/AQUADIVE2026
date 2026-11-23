@@ -2,7 +2,9 @@
 // TEST-ONLY bundles the compiled-runtime probes use (P8-4-0, P8-4a). Never shipped.
 //
 // - `buildServer(tmp)`: `tsc -p tsconfig.build.json --outDir <tmp>/dist`, then
-//   `node scripts/build-engine.mjs <tmp>/dist` (the production engine bundle).
+//   `node scripts/build-engine.mjs <tmp>/dist` (the production engine bundle), and a copy of the
+//   TRUSTED integrity manifest at <tmp>/integrity/ (P8-4a-1; `writeRehashedManifest` replaces it
+//   for a deliberately tampered copy).
 // - `buildQaBundles(dist)`: TEST-ONLY bundles in <dist>/qa/ of the UNCHANGED source the production
 //   bundle no longer exports (owner decision K2): `game-engine.cjs` (src/engine/game-engine.ts),
 //   `seeded-round.cjs` (the src/seeded-round barrel) and the original src/seeded-round/test helpers
@@ -11,7 +13,7 @@
 //   external (the server's compiled copy), like in the production bundle. Plus
 //   `local-authority.cjs` (src/engine/round-authority.ts alone).
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
@@ -38,7 +40,30 @@ export function buildServer(tmp: string): string {
     timeout: 120_000,
   });
   expect(cli.status, `${cli.stdout}${cli.stderr}`).toBe(0);
+  // P8-4a-1: the deployment layout — the build next to a copy of the TRUSTED manifest
+  // (<tmp>/integrity/engine-manifest.json), which the build itself never writes.
+  mkdirSync(join(tmp, "integrity"), { recursive: true });
+  copyFileSync(TRUSTED_MANIFEST, join(tmp, "integrity", "engine-manifest.json"));
   return dist;
+}
+
+/** The tracked trusted integrity manifest (P8-4a-1). */
+export const TRUSTED_MANIFEST = join(SERVER, "integrity", "engine-manifest.json");
+const INTEGRITY_CLI = join(SERVER, "scripts", "engine-integrity.mjs");
+
+/**
+ * TEST ONLY: replaces the manifest next to `dist` with a candidate computed from `dist` itself —
+ * the position of an attacker who rewrote BOTH the build and its manifest, so that the loader's
+ * later defence-in-depth layers (surface, profile, fairness instance, known answers) are reached.
+ */
+export function writeRehashedManifest(dist: string): void {
+  const run = spawnSync(process.execPath, [INTEGRITY_CLI, "candidate", dist], {
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  expect(run.status, run.stderr).toBe(0);
+  mkdirSync(join(dist, "..", "integrity"), { recursive: true });
+  writeFileSync(join(dist, "..", "integrity", "engine-manifest.json"), run.stdout);
 }
 
 /** Builds the TEST-ONLY bundles into `<dist>/qa/`; returns the local-authority module list. */

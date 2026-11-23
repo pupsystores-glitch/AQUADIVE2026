@@ -566,8 +566,9 @@ describe("the build-engine CLI (exit status, stale bundle, normal build workflow
     const pkg = JSON.parse(readFileSync(join(SERVER, "package.json"), "utf8")) as {
       scripts: Record<string, string>;
     };
+    // P8-4a-1: the last step verifies the build against the trusted integrity manifest.
     expect(pkg.scripts.build).toBe(
-      "npm run clean && tsc -p tsconfig.build.json && node scripts/build-engine.mjs",
+      "npm run clean && tsc -p tsconfig.build.json && node scripts/build-engine.mjs && node scripts/engine-integrity.mjs verify",
     );
     expect(pkg.scripts.clean).toBe(
       "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",

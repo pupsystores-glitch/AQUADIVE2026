@@ -19,13 +19,27 @@
 //   selectively throwing / forged / copied / proxied runtimes, unverified crypto, unsupported modes;
 // - that the compiled application module loads no round, engine or fairness module.
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ROUND_SCRIPT_ERROR_CODES } from "../../src/round/errors";
-import { SERVER, buildQaBundles, buildServer } from "../helpers/engine-build";
+import {
+  SERVER,
+  TRUSTED_MANIFEST,
+  buildQaBundles,
+  buildServer,
+  writeRehashedManifest,
+} from "../helpers/engine-build";
 
 const PROBE = fileURLToPath(new URL("./round-probe.cjs", import.meta.url));
 const ENGINE = join("engine", "engine.cjs");
@@ -50,10 +64,20 @@ const probe = (buildDir: string, scenario: string): Report => {
   return report;
 };
 
-/** A copy of the build whose engine bundle is patched (`patch` must change the text). */
-const patched = (name: string, patch: (code: string) => string | null): string => {
+/**
+ * A copy of the build whose engine bundle is patched (`patch` must change the text). `manifest`:
+ * "trusted" keeps the TRUSTED manifest next to the copy (the integrity check must refuse it);
+ * "rehashed" writes a manifest of the patched copy itself — an attacker who rewrote both — so
+ * the loader's later defence-in-depth layers are what is tested.
+ */
+const patched = (
+  name: string,
+  patch: (code: string) => string | null,
+  manifest: "trusted" | "rehashed" = "rehashed",
+): string => {
   const copy = join(tmp, name, "dist");
   cpSync(dist, copy, { recursive: true });
+  cpSync(join(tmp, "integrity"), join(tmp, name, "integrity"), { recursive: true });
   const file = join(copy, ENGINE);
   const code = readFileSync(file, "utf8");
   const next = patch(code);
@@ -64,6 +88,7 @@ const patched = (name: string, patch: (code: string) => string | null): string =
     writeFileSync(file, next);
   }
   writeFileSync(join(tmp, name, "package.json"), '{ "type": "commonjs" }\n');
+  if (manifest === "rehashed") writeRehashedManifest(copy);
   return copy;
 };
 const replaceOnce = (code: string, a: string, b: string) => {
@@ -122,8 +147,11 @@ describe("the production bundle and its loader", () => {
     });
   });
 
+  // Defence in depth: each bundle below comes with a REHASHED manifest (an attacker who rewrote
+  // both), so the integrity check passes and the later layer named in the test must refuse it.
+  // With the trusted manifest every one of them is refused earlier (`runtime-integrity-failed`,
+  // see "build integrity" below).
   it.each([
-    ["missing", "runtime-unavailable", () => null],
     ["unparsable", "runtime-unavailable", () => "exports.x = (;\n"],
     [
       "widened (GameEngine exported again)",
@@ -163,6 +191,7 @@ describe("the production bundle and its loader", () => {
   ])("refuses a bundle that is %s (%s)", (name, code, patch) => {
     const dir = patched(`load-${name.split(" ")[0]}`, patch as (c: string) => string | null);
     if (code === "runtime-duplicate-fairness") {
+      // Outside the protected directories, so the (rehashed) integrity check does not see it.
       cpSync(join(dir, "src", "fairness"), join(dir, "dup", "fairness"), { recursive: true });
     }
     const report = probe(dir, "load");
@@ -188,6 +217,359 @@ describe("the production bundle and its loader", () => {
       expect(report.result).toMatchObject({ ok: false, code: "runtime-duplicate-fairness" });
     },
   );
+});
+
+describe("build integrity (P8-4a-1, the trusted manifest)", () => {
+  /** A copy of the build and its manifest; `mutate` changes either; then the loader runs. */
+  const integrityCase = (
+    name: string,
+    mutate: (copy: string, root: string) => void,
+    manifest: "trusted" | "rehashed" = "trusted",
+  ): Report => {
+    const root = join(tmp, `int-${name}`);
+    const copy = join(root, "dist");
+    cpSync(dist, copy, { recursive: true });
+    cpSync(join(tmp, "integrity"), join(root, "integrity"), { recursive: true });
+    writeFileSync(join(root, "package.json"), '{ "type": "commonjs" }\n');
+    if (manifest === "rehashed") {
+      mutate(copy, root);
+      writeRehashedManifest(copy);
+    } else {
+      mutate(copy, root);
+    }
+    return probe(copy, "load").result;
+  };
+  const refused = (reason: string) => ({
+    ok: false,
+    name: "RoundScriptError",
+    code: "runtime-integrity-failed",
+    reason,
+    message: `runtime-integrity-failed: ${reason}`,
+  });
+  const edit = (file: string, a: string, b: string) => {
+    const text = readFileSync(file, "utf8");
+    expect(text.split(a).length - 1, `${file}: ${a}`).toBe(1);
+    writeFileSync(file, text.replace(a, b));
+  };
+  const flipOneByte = (file: string, offset: number) => {
+    const bytes = readFileSync(file);
+    bytes[offset] = bytes[offset]! ^ 0x01;
+    writeFileSync(file, bytes);
+  };
+  const manifestOf = (root: string) => join(root, "integrity", "engine-manifest.json");
+
+  it("the trusted manifest is canonical, lists exactly the runtime closure, and the clean build matches", () => {
+    const text = readFileSync(TRUSTED_MANIFEST, "utf8");
+    const m = JSON.parse(text);
+    expect(`${JSON.stringify(m, null, 2)}\n`).toBe(text);
+    expect(text).not.toContain("\r");
+    expect(m.schema).toBe("aquadive.engine-integrity");
+    expect(m.files.map((f: Report) => f.path)).toEqual(main.closure);
+    expect(m.files).toHaveLength(29);
+    expect(m.files.find((f: Report) => f.path === "engine/engine.cjs").sha256).toBe(
+      main.bundleSha256,
+    );
+    expect(probe(dist, "load").result).toEqual({ ok: true });
+  });
+
+  it.each([
+    [
+      "one byte of the bundle",
+      (c: string) => flipOneByte(join(c, ENGINE), 2000),
+      "digest-mismatch",
+    ],
+    [
+      "the 200× → 30× clamp (shorter file)",
+      (c: string) => edit(join(c, ENGINE), "Math.min(m, 200)", "Math.min(m, 30)"),
+      "size-mismatch",
+    ],
+    [
+      "the 200× → 30× clamp (same size)",
+      (c: string) => edit(join(c, ENGINE), "Math.min(m, 200)", "Math.min(m,  30)"),
+      "digest-mismatch",
+    ],
+    [
+      "compiled shared fairness code",
+      (c: string) => flipOneByte(join(c, "src", "fairness", "derive.js"), 1500),
+      "digest-mismatch",
+    ],
+    [
+      "compiled server fairness code",
+      (c: string) => flipOneByte(join(c, "server", "src", "fairness", "chain-vault.js"), 3000),
+      "digest-mismatch",
+    ],
+    [
+      "compiled round-preparation code",
+      (c: string) => flipOneByte(join(c, "server", "src", "round", "prepare.js"), 3000),
+      "digest-mismatch",
+    ],
+    [
+      "the compiled known answers",
+      (c: string) => flipOneByte(join(c, "server", "src", "round", "known-answers.js"), 3000),
+      "digest-mismatch",
+    ],
+    ["a missing bundle", (c: string) => rmSync(join(c, ENGINE)), "file-missing"],
+    // Modules the probe has not loaded before the loader runs (a module required earlier is
+    // already executing: it is hash-checked only afterwards — see the TOCTOU notes).
+    [
+      "a missing server fairness module",
+      (c: string) => rmSync(join(c, "server", "src", "fairness", "chain-vault.js")),
+      "file-missing",
+    ],
+    [
+      "a missing round-preparation module",
+      (c: string) => rmSync(join(c, "server", "src", "round", "prepare.js")),
+      "file-missing",
+    ],
+    [
+      "an unexpected round module",
+      (c: string) =>
+        writeFileSync(join(c, "server", "src", "round", "extra.js"), "'use strict';\n"),
+      "unexpected-file",
+    ],
+    [
+      "an unexpected second bundle",
+      (c: string) => cpSync(join(c, ENGINE), join(c, "engine", "second.cjs")),
+      "unexpected-file",
+    ],
+    [
+      "a subdirectory in a protected directory",
+      (c: string) => {
+        mkdirSync(join(c, "src", "fairness", "nested"));
+        writeFileSync(join(c, "src", "fairness", "nested", "index.js"), "'use strict';\n");
+      },
+      "unexpected-file",
+    ],
+    [
+      "a protected directory replaced by a junction",
+      (c: string, root: string) => {
+        const real = join(root, "elsewhere-fairness");
+        cpSync(join(c, "src", "fairness"), real, { recursive: true });
+        rmSync(join(c, "src", "fairness"), { recursive: true });
+        symlinkSync(real, join(c, "src", "fairness"), "junction");
+      },
+      "protected-directory-invalid",
+    ],
+  ])("refuses %s with the trusted manifest unchanged", (_name, mutate, reason) => {
+    expect(integrityCase(_name.replace(/\W+/g, "-"), mutate as never)).toEqual(refused(reason));
+  });
+
+  it.each([
+    ["missing", (root: string) => rmSync(manifestOf(root)), "manifest-missing"],
+    ["malformed", (root: string) => writeFileSync(manifestOf(root), "{"), "manifest-malformed"],
+    [
+      "not canonical (CRLF)",
+      (root: string) =>
+        writeFileSync(
+          manifestOf(root),
+          readFileSync(manifestOf(root), "utf8").replace(/\n/g, "\r\n"),
+        ),
+      "manifest-not-canonical",
+    ],
+    [
+      "not canonical (a duplicate key)",
+      (root: string) =>
+        writeFileSync(
+          manifestOf(root),
+          readFileSync(manifestOf(root), "utf8").replace(
+            '  "schemaVersion": 1,\n',
+            '  "schemaVersion": 1,\n  "schemaVersion": 1,\n',
+          ),
+        ),
+      "manifest-not-canonical",
+    ],
+    [
+      "with an extra field",
+      (root: string) => {
+        const m = JSON.parse(readFileSync(manifestOf(root), "utf8"));
+        writeFileSync(manifestOf(root), `${JSON.stringify({ ...m, approvedBy: "x" }, null, 2)}\n`);
+      },
+      "manifest-malformed",
+    ],
+    [
+      "with a path-traversal entry",
+      (root: string) => {
+        const m = JSON.parse(readFileSync(manifestOf(root), "utf8"));
+        m.files.unshift({ path: "../outside.js", bytes: 1, sha256: "0".repeat(64) });
+        writeFileSync(manifestOf(root), `${JSON.stringify(m, null, 2)}\n`);
+      },
+      "manifest-malformed",
+    ],
+    [
+      "incomplete (the bundle entry removed)",
+      (root: string) => {
+        const m = JSON.parse(readFileSync(manifestOf(root), "utf8"));
+        m.files = m.files.filter((f: Report) => f.path !== "engine/engine.cjs");
+        writeFileSync(manifestOf(root), `${JSON.stringify(m, null, 2)}\n`);
+      },
+      "manifest-incomplete",
+    ],
+    [
+      "stale (one recorded digest of another build)",
+      (root: string) => {
+        const m = JSON.parse(readFileSync(manifestOf(root), "utf8"));
+        const f = m.files.find((x: Report) => x.path === "server/src/round/round-script.js");
+        f.sha256 = f.sha256.replace(/^./, (ch: string) => (ch === "0" ? "1" : "0"));
+        writeFileSync(manifestOf(root), `${JSON.stringify(m, null, 2)}\n`);
+      },
+      "digest-mismatch",
+    ],
+    [
+      "reached through a linked directory",
+      (root: string) => {
+        const real = join(root, "elsewhere-integrity");
+        cpSync(join(root, "integrity"), real, { recursive: true });
+        rmSync(join(root, "integrity"), { recursive: true });
+        symlinkSync(real, join(root, "integrity"), "junction");
+      },
+      "manifest-not-regular",
+    ],
+  ])("refuses a trusted manifest that is %s", (_name, mutate, reason) => {
+    expect(
+      integrityCase(`manifest-${_name.replace(/\W+/g, "-")}`, (_c, root) =>
+        (mutate as (r: string) => void)(root),
+      ),
+    ).toEqual(refused(reason));
+  });
+
+  it("refuses a manifest mismatch although every known answer still passes", () => {
+    // A change that alters no behaviour: the bundle banner. With its own (rehashed) manifest it
+    // loads, so the known answers pass; with the trusted manifest it is refused.
+    const banner = (c: string) => edit(join(c, ENGINE), "// GENERATED by", "// GENERATED By");
+    expect(integrityCase("kat-pass-rehashed", banner, "rehashed")).toEqual({ ok: true });
+    expect(integrityCase("kat-pass-trusted", banner)).toEqual(refused("digest-mismatch"));
+  });
+
+  it("the 200× → 30× bundle with a rehashed manifest is still refused by the known answers", () => {
+    // The P8-4a M-3 demonstration passed the loader; the expanded independent known answers (a
+    // 200× clamp and a crash point above 100×) now refuse it as defence in depth. This is a
+    // regression check, not authentication: the trusted manifest is what authenticates.
+    const clamp = (c: string) => edit(join(c, ENGINE), "Math.min(m, 200)", "Math.min(m, 30)");
+    expect(integrityCase("clamp-rehashed", clamp, "rehashed")).toMatchObject({
+      ok: false,
+      code: "runtime-known-answer-failed",
+    });
+  });
+
+  it("refuses a bundle that requires a module outside the protected set (rehashed manifest)", () => {
+    const result = integrityCase(
+      "unprotected-require",
+      (c) => {
+        mkdirSync(join(c, "extra"), { recursive: true });
+        writeFileSync(join(c, "extra", "helper.js"), "'use strict';\n");
+        edit(join(c, ENGINE), "Do not edit.\n", 'Do not edit.\nrequire("../extra/helper.js");\n');
+      },
+      "rehashed",
+    );
+    expect(result).toEqual(refused("unexpected-module"));
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "refuses a protected round module loaded under another drive-letter case (Windows)",
+    () => {
+      const report = probe(dist, "case-round");
+      expect(report.flippedDiffers).toBe(true);
+      expect(report.result).toEqual(refused("duplicate-module-instance"));
+    },
+  );
+
+  it("the build tool verifies the clean build and fails closed on a tampered one", () => {
+    const cli = join(SERVER, "scripts", "engine-integrity.mjs");
+    const run = (args: string[]) =>
+      spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", timeout: 60_000 });
+    const ok = run(["verify", dist]);
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(run(["candidate", dist]).stdout).toBe(readFileSync(TRUSTED_MANIFEST, "utf8"));
+    const root = join(tmp, "cli-tampered");
+    cpSync(dist, join(root, "dist"), { recursive: true });
+    edit(join(root, "dist", ENGINE), "Math.min(m, 200)", "Math.min(m, 30)");
+    const bad = run(["verify", join(root, "dist")]);
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain("changed: engine/engine.cjs");
+    expect(bad.stderr).not.toMatch(/[0-9a-f]{16}/);
+    // Failed-build cleanup: no unverified bundle stays behind.
+    expect(() => readFileSync(join(root, "dist", ENGINE))).toThrow();
+  });
+
+  it("integrity errors are sanitized: a fixed code and reason, no path, size or digest", () => {
+    const r = integrityCase("sanitized", (c) => flipOneByte(join(c, ENGINE), 2000));
+    expect(r.message).toMatch(/^runtime-integrity-failed: [a-z-]+$/);
+    expect(r.message).not.toMatch(/[0-9a-f]{16}|dist|engine|\\|\//);
+    expect(ROUND_SCRIPT_ERROR_CODES).toContain("runtime-integrity-failed");
+  });
+});
+
+describe("independent known-answer vectors (P8-4a-1, I5 / I6)", () => {
+  let v: Report;
+  beforeAll(() => {
+    v = probe(dist, "vectors");
+  }, 240_000);
+
+  it("the production runner reproduces all 45 independent round records exactly", () => {
+    expect(v.count).toBe(45);
+    for (const r of v.results) {
+      expect(r.firstDifference, r.key).toBeNull();
+      expect(r.digestMatches, r.key).toBe(true);
+      expect(r.serverDigestMatches, r.key).toBe(true);
+    }
+    expect(v.results.filter((r: Report) => r.key.startsWith("dev-v1:"))).toHaveLength(16);
+    expect(v.disposal.liveDerivations).toBe(0);
+  });
+
+  it("every required scenario is covered for every salt of the known-answer chain", () => {
+    const required = [
+      "crash-exact-1x",
+      "crash-floor-1.01",
+      "crash-over-100",
+      "crash-clamp-200",
+      "crash-during-boost",
+      "floor-jackpot-tier-1",
+      "floor-jackpot-tier-2",
+      "floor-jackpot-tier-3",
+      "floor-chest-rare",
+      "goldfish-consumed",
+      "goldfish-consumed-twice",
+    ];
+    for (const salt of ["A", "B", "C"]) {
+      const covered = v.results
+        .filter((r: Report) => r.key.startsWith(`kat-v1:${salt}`))
+        .flatMap((r: Report) => r.categories);
+      expect([...new Set(covered)].sort(), salt).toEqual([...required].sort());
+    }
+    // World draw order is checked on every creature of every round (full record), with
+    // goldfish consumption in rounds that consume up to four.
+    expect(Math.max(...v.results.map((r: Report) => r.consumed))).toBeGreaterThanOrEqual(2);
+    expect(v.results.reduce((n: number, r: Report) => n + r.creatures, 0)).toBeGreaterThan(3000);
+  });
+
+  it("selection was not cherry-picked: each vector is the FIRST index of its category", () => {
+    expect(v.firstProof.length).toBe(33);
+    for (const [key, category, earlier] of v.firstProof) {
+      expect(earlier, `${key} ${category}`).toBe(0);
+    }
+  });
+
+  it("the tracked generator regenerates the committed vectors (data)", () => {
+    expect(v.regeneratedEqualsCommitted).toBe(true);
+  });
+
+  it("the loader's known answers are the generator's values and record digests", () => {
+    expect(v.knownAnswers.map((k: Report) => k.key)).toEqual([
+      "dev-v1:A1",
+      "dev-v1:B1",
+      "dev-v1:A7",
+      "kat-v1:A145",
+      "kat-v1:B212",
+      "kat-v1:A9",
+      "kat-v1:C200",
+      "kat-v1:B72",
+      "kat-v1:A1",
+    ]);
+    for (const k of v.knownAnswers) {
+      expect(k, k.key).toMatchObject({ inVectors: true, recordDigest: true, values: true });
+    }
+    expect(v.katChain).toEqual({ chainId: true, length: true, phrase: true, saltC: true });
+  });
 });
 
 describe("known answers and replay", () => {
@@ -690,7 +1072,8 @@ describe("acceptance corrections M-1, M-2, L-1 (adversarial)", () => {
   });
 
   it("L-1: known-answer derivations (loader and direct) dispose their seed copies", () => {
-    expect(adv.loadSecrets).toEqual({ created: 3, live: 0 });
+    // One temporary seed copy per loader known answer (9 since P8-4a-1), all disposed.
+    expect(adv.loadSecrets).toEqual({ created: 9, live: 0 });
     expect(adv.knownAnswerSecrets).toEqual({ created: 16, live: 0 });
     expect(adv.disposal.liveDerivations).toBe(0);
     expect(adv.disposal.liveKeys).toBe(0);
@@ -897,6 +1280,7 @@ describe("isolation from the running server", () => {
         "engine-runtime",
         "engine-types",
         "errors",
+        "integrity",
         "known-answers",
         "prepare",
         "round-script",

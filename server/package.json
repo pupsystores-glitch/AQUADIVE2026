@@ -10,7 +10,9 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/build-engine.mjs",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/build-engine.mjs && node scripts/engine-integrity.mjs verify",
+    "integrity:verify": "node scripts/engine-integrity.mjs verify",
+    "integrity:candidate": "node scripts/engine-integrity.mjs candidate",
     "start": "node dist/server/src/main.js",
     "dev": "tsx watch src/main.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p engine/tsconfig.json",

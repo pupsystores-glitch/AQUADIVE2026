@@ -127,6 +127,28 @@ if (scenario === "case") {
   return;
 }
 
+if (scenario === "case-round") {
+  // P8-4a-1: a protected round module (not fairness) first loaded under the other drive-letter
+  // case — a second instance the fairness-class check cannot see — then the loader normally.
+  // errors.js imports nothing, so no second fairness instance is created by the flipped copy.
+  const canonicalPath = path.join(out, "server", "src", "round", "errors.js");
+  const flipped = canonicalPath.replace(/^[A-Za-z]:/, (d) =>
+    d === d.toUpperCase() ? d.toLowerCase() : d.toUpperCase(),
+  );
+  require(flipped);
+  const { createNodeFairnessCrypto } = load("server/src/fairness/crypto-node.js");
+  const { loadEngineRuntime } = load("server/src/round/engine-runtime.js");
+  let result;
+  try {
+    loadEngineRuntime(createNodeFairnessCrypto());
+    result = { ok: true };
+  } catch (e) {
+    result = { ok: false, ...errorOf(e) };
+  }
+  emit({ flippedDiffers: flipped !== canonicalPath, result });
+  return;
+}
+
 // ---- 2. The compiled server, its fairness module, and lifecycle instrumentation ------------
 const bridge = load("server/src/fairness.js");
 const { createNodeFairnessCrypto } = load("server/src/fairness/crypto-node.js");
@@ -242,6 +264,121 @@ const PINS = [
   ["B", 8],
 ];
 const direct = (salt, index) => runtimeModule.knownAnswerScript(hash, runtime, { salt, index });
+
+if (scenario === "vectors") {
+  // P8-4a-1 (I5, I6): the production runner against every independent vector, and the loader's
+  // known answers against the independent generator they were copied from.
+  (async () => {
+    const { pathToFileURL } = require("node:url");
+    const independent = path.join(__dirname, "..", "independent");
+    const g = await import(pathToFileURL(path.join(independent, "generate-vectors.mjs")).href);
+    const ref = await import(pathToFileURL(path.join(independent, "reference-round.mjs")).href);
+    const committed = require(path.join(independent, "vectors-v1.json"));
+    const { dev, kat, salts } = g.chains();
+    const strip = (o) => {
+      const { profile, profileVersion, fv, chainIndex, ...rest } = o;
+      (void profile, void profileVersion, void fv, void chainIndex);
+      return JSON.parse(JSON.stringify(rest));
+    };
+    const firstDiff = (a, b, p = "") => {
+      if (typeof a !== "object" || a === null || typeof b !== "object" || b === null) {
+        return Object.is(a, b) ? null : p;
+      }
+      for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        const d = firstDiff(a[k], b[k], `${p}.${k}`);
+        if (d) return d;
+      }
+      return null;
+    };
+    const results = [];
+    for (const v of committed.vectors) {
+      const links = v.set === "dev-v1" ? dev : kat;
+      const seed = bridge.SecretBytes.fromBytes(new Uint8Array(links[v.index]));
+      const d = bridge.RoundDerivation.create(hash, {
+        fv: 1,
+        chainId: new Uint8Array(links[0]),
+        chainIndex: v.index,
+        salt: new Uint8Array(salts[v.salt]),
+        roundSeed: seed,
+      });
+      seed.dispose();
+      const production = strip(runtime.run(d));
+      const reference = JSON.parse(
+        JSON.stringify(ref.referenceRound(links, v.index, salts[v.salt]).record),
+      );
+      results.push({
+        key: `${v.set}:${v.salt}${v.index}`,
+        categories: v.categories,
+        digestMatches: g.recordDigest(production) === v.recordDigest,
+        serverDigestMatches:
+          runtimeModule.referenceRecordDigest(hash, production) === v.recordDigest,
+        firstDifference: firstDiff(reference, production),
+        samples: production.samples.multiplier.length,
+        creatures: production.creatures.length,
+        consumed: production.creatures.filter((c) => c.consumedTick !== null).length,
+      });
+    }
+    // "First index" proof of the selection rule: no earlier index of the same salt satisfies the
+    // category (crash-only categories from the crash stream alone; the others by full rounds).
+    const firstProof = [];
+    for (const v of committed.vectors.filter((x) => x.set === "kat-v1")) {
+      for (const cat of v.categories) {
+        let earlier = 0;
+        for (let i = 1; i < v.index; i++) {
+          const r = g.CRASH_ONLY.includes(cat)
+            ? ref.referenceCrash(kat, i, salts[v.salt])
+            : ref.referenceRound(kat, i, salts[v.salt]);
+          if (g.CATEGORIES[cat](r)) earlier += 1;
+        }
+        firstProof.push([`${v.salt}${v.index}`, cat, earlier]);
+      }
+    }
+    const regenerated = g.generate();
+    const kaReport = knownAnswers.ROUND_SCRIPT_KNOWN_ANSWERS.map((a) => {
+      const v = committed.vectors.find(
+        (x) => x.set === a.chain && x.salt === a.salt && x.index === a.index,
+      );
+      const r = ref.referenceRound(a.chain === "dev-v1" ? dev : kat, a.index, salts[a.salt]).record;
+      return {
+        key: `${a.chain}:${a.salt}${a.index}`,
+        inVectors: v !== undefined,
+        recordDigest: v !== undefined && a.recordDigest === v.recordDigest,
+        values:
+          a.outcome === r.outcome &&
+          a.crashAt === r.crashAt &&
+          a.crashDraws === r.drawCounts.crash &&
+          (a.outcome === "floor"
+            ? a.jackpot === r.jackpot && JSON.stringify(a.chests) === JSON.stringify(r.chests)
+            : true) &&
+          JSON.stringify(a.firstCreatures) ===
+            JSON.stringify(
+              r.creatures
+                .slice(0, 2)
+                .map(({ spawnTick, consumedTick, ...c }) => (void spawnTick, void consumedTick, c)),
+            ),
+      };
+    });
+    const K = knownAnswers.KNOWN_ANSWER_CHAIN_V1;
+    emit({
+      count: results.length,
+      results,
+      firstProof,
+      regeneratedEqualsCommitted: JSON.stringify(regenerated) === JSON.stringify(committed),
+      knownAnswers: kaReport,
+      katChain: {
+        chainId: K.chainIdHex === committed.chains["kat-v1"].chainId,
+        length: K.length === committed.chains["kat-v1"].length,
+        phrase: K.seedPhrase === committed.chains["kat-v1"].seedPhrase,
+        saltC: K.saltCHex === committed.chains["kat-v1"].salts.C.hex,
+      },
+      disposal: disposal(),
+    });
+  })().catch((e) => {
+    process.stderr.write(String(e && e.stack));
+    process.exit(1);
+  });
+  return;
+}
 
 if (scenario === "digests") {
   emit({ digests: PINS.map(([s, i]) => [`${s}${i}`, direct(s, i).secretDigest()]) });
@@ -1123,7 +1260,11 @@ function secretsOf(script, seedHex) {
   };
 
   // ---- Known answers vs the independent vectors --------------------------------------------
-  report.knownAnswers = knownAnswers.ROUND_SCRIPT_KNOWN_ANSWERS.map((a) => {
+  // The P8-3b vectors and the independent recorder cover the development chain; the "kat-v1"
+  // known answers (P8-4a-1) are checked against their generator in the "vectors" scenario.
+  report.knownAnswers = knownAnswers.ROUND_SCRIPT_KNOWN_ANSWERS.filter(
+    (a) => a.chain === "dev-v1",
+  ).map((a) => {
     const v = INDEPENDENT_OUTCOME_VECTORS.find((x) => x.salt === a.salt && x.index === a.index);
     const script = direct(a.salt, a.index);
     return {
@@ -1577,6 +1718,15 @@ function secretsOf(script, seedHex) {
     .filter((f) => f.startsWith(out + path.sep))
     .map(rel)
     .sort();
+  // P8-4a-1: the protected modules this whole run loaded (the runtime closure) and the bundle.
+  {
+    const { PROTECTED_PATH } = load("server/src/round/integrity.js");
+    report.closure = report.loaded.filter((p) => PROTECTED_PATH.test(p));
+    report.bundleSha256 = require("node:crypto")
+      .createHash("sha256")
+      .update(require("node:fs").readFileSync(path.join(out, "engine", "engine.cjs")))
+      .digest("hex");
+  }
   emit(report);
 })().catch((e) => {
   process.stderr.write(String(e && e.stack));

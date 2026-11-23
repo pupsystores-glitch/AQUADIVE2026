@@ -6,3 +6,7 @@ pnpm-lock.yaml
 package-lock.json
 bun.lock
 routeTree.gen.ts
+
+# P8-4a-1: a VERBATIM copy of the reviewed P8-3a spec implementation (its provenance is the
+# byte-identical body; see the file header). Not reformatted.
+server/test/independent/spec-impl.mjs

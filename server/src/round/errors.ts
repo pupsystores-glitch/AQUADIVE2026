@@ -14,6 +14,11 @@ export type RoundScriptErrorCode =
   | "runtime-duplicate-fairness"
   /** The bundle failed a known-answer vector. */
   | "runtime-known-answer-failed"
+  /**
+   * The build does not match the trusted integrity manifest, or the manifest is missing, stale or
+   * malformed (P8-4a-1; `reason`: a fixed integrity reason code, never a path or digest).
+   */
+  | "runtime-integrity-failed"
   /** An engine runtime that did not come from `loadEngineRuntime` was offered. */
   | "unverified-runtime"
   /** The sealed runner refused or failed the round (`reason`: the runner's code). */
@@ -45,6 +50,7 @@ export const ROUND_SCRIPT_ERROR_CODES = Object.freeze([
   "runtime-incompatible",
   "runtime-duplicate-fairness",
   "runtime-known-answer-failed",
+  "runtime-integrity-failed",
   "unverified-runtime",
   "runner-failed",
   "script-invalid",

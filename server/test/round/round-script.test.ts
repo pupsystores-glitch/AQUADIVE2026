@@ -367,13 +367,25 @@ describe("analytic tick bound and fixed constants", () => {
 
   it("the digest candidates are labelled as not owner-approved", () => {
     expect(KNOWN_ANSWER_DIGEST_STATUS).toBe("candidate-not-owner-approved");
+    // Only the P8-4a A1 / B1 rounds carry a RoundScript digest candidate; the P8-4a-1
+    // known-answer rounds are checked by their independent record digest instead.
     expect(
-      ROUND_SCRIPT_KNOWN_ANSWERS.map((k) => [`${k.salt}${k.index}`, k.digestCandidate !== null]),
+      ROUND_SCRIPT_KNOWN_ANSWERS.map((k) => [
+        `${k.chain}:${k.salt}${k.index}`,
+        k.digestCandidate !== null,
+      ]),
     ).toEqual([
-      ["A1", true],
-      ["B1", true],
-      ["A7", false],
+      ["dev-v1:A1", true],
+      ["dev-v1:B1", true],
+      ["dev-v1:A7", false],
+      ["kat-v1:A145", false],
+      ["kat-v1:B212", false],
+      ["kat-v1:A9", false],
+      ["kat-v1:C200", false],
+      ["kat-v1:B72", false],
+      ["kat-v1:A1", false],
     ]);
+    for (const k of ROUND_SCRIPT_KNOWN_ANSWERS) expect(k.recordDigest).toMatch(/^[0-9a-f]{64}$/);
     expect(Object.isFrozen(ROUND_SCRIPT_KNOWN_ANSWERS[0]!.firstCreatures[0])).toBe(true);
   });
 });

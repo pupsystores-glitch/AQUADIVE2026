@@ -1,0 +1,152 @@
+{
+  "schema": "aquadive.engine-integrity",
+  "schemaVersion": 1,
+  "algorithm": "sha256",
+  "files": [
+    {
+      "path": "engine/engine.cjs",
+      "bytes": 38938,
+      "sha256": "2d1e5bf8bc808ac10743feb8ad9b5ed438ee71da18f257bb29b7409a62f5741d"
+    },
+    {
+      "path": "server/src/fairness.js",
+      "bytes": 5086,
+      "sha256": "88864a98d06ae109f778a313d2768861e26d3c473f6b19bb11211109206b9c33"
+    },
+    {
+      "path": "server/src/fairness/audit.js",
+      "bytes": 4059,
+      "sha256": "f7f6b8ee9aadce09ef976e3aab907ad63c7b0515f41077445d064602216c3297"
+    },
+    {
+      "path": "server/src/fairness/chain-store.js",
+      "bytes": 5034,
+      "sha256": "4a6fc99d9303e7080efa3edfaa6e7bcf8d7d32a91639eb9fea75d77c6b3e2966"
+    },
+    {
+      "path": "server/src/fairness/chain-vault.js",
+      "bytes": 24795,
+      "sha256": "7d4cee49f1c352e6c3d2b33961ff8f93d42d1b3d0cc8f4cca3b8fd26f1873f90"
+    },
+    {
+      "path": "server/src/fairness/checkpoints.js",
+      "bytes": 2129,
+      "sha256": "f93a7e7126d24a95757bffdf67076f94400cab2570203e38dc47ee8cae34bca3"
+    },
+    {
+      "path": "server/src/fairness/crypto-node.js",
+      "bytes": 9058,
+      "sha256": "a591c55b7fbe634bd94c3f1a2ecae07b35c47b59f37273d247d10bb58ffb9321"
+    },
+    {
+      "path": "server/src/fairness/errors.js",
+      "bytes": 834,
+      "sha256": "6991e1ae8e0e566fe96150dc321a8aa59efc5d3d8b6c81fd5746b48882a14e1d"
+    },
+    {
+      "path": "server/src/fairness/memory-chain-store.js",
+      "bytes": 17183,
+      "sha256": "666e47fd6ac185cec3ead169b24cecb93818381f6841acc56abb4971ae19b245"
+    },
+    {
+      "path": "server/src/fairness/records.js",
+      "bytes": 4298,
+      "sha256": "0598e64cefa26e46a83de1680dc2d63aa7d313b1da508c93a8e2ead55ae4a0bf"
+    },
+    {
+      "path": "server/src/fairness/reveal.js",
+      "bytes": 2886,
+      "sha256": "a98a9936f94462fdd577c8530e45aba764918bba7982d193dae1006abcf10837"
+    },
+    {
+      "path": "server/src/fairness/round-keys.js",
+      "bytes": 3066,
+      "sha256": "92bfc8c0dd2d5e9c097ee6e639e072d1a132ffc09aa7e88adaafebcaa0e88b34"
+    },
+    {
+      "path": "server/src/round/canonical.js",
+      "bytes": 5530,
+      "sha256": "b2c4067c2c17420c9a8e343e2d2597796c822064fdf5f880f4a7e6b828972494"
+    },
+    {
+      "path": "server/src/round/engine-runtime.js",
+      "bytes": 15503,
+      "sha256": "408d5fb83429ea4e3d4bf09abc3c642a88227b4eca308e4e689d0f677f45f00f"
+    },
+    {
+      "path": "server/src/round/engine-types.js",
+      "bytes": 1980,
+      "sha256": "68fcc1498ab967292f8dcb7a573a92b6e6da63f6e1c0131f43119895d21a0f38"
+    },
+    {
+      "path": "server/src/round/errors.js",
+      "bytes": 1802,
+      "sha256": "b19f60f12063c102c31e73bdd19f4f10185c9de4fd4551f5fdbeff4897e052d2"
+    },
+    {
+      "path": "server/src/round/integrity.js",
+      "bytes": 15156,
+      "sha256": "3439b8da4322127ffd01b114aba18d10661b3e759f0c0917938b01fa07c5c453"
+    },
+    {
+      "path": "server/src/round/known-answers.js",
+      "bytes": 12474,
+      "sha256": "bf15b4df2899cb02566b2e64785257056c53cef93ac7917a1550e7c4b31f4a3a"
+    },
+    {
+      "path": "server/src/round/prepare.js",
+      "bytes": 24166,
+      "sha256": "1b566dd7a7b188a65c9938c65eed37b1551dfe212d9bdf3540c3920df0d0b53f"
+    },
+    {
+      "path": "server/src/round/round-script.js",
+      "bytes": 15308,
+      "sha256": "286f7d6ca2251fc36f066fa970b9f53d2aa2ecbd71a3a6e7eabbd989b4687992"
+    },
+    {
+      "path": "src/fairness/chain.js",
+      "bytes": 9985,
+      "sha256": "2640fc2b99bfe45b34b88d7861bfc3772e2fa3139c80048192ff2503a3e225ea"
+    },
+    {
+      "path": "src/fairness/crypto.js",
+      "bytes": 3718,
+      "sha256": "62ca6cbb80017cadb297b67c293324a3985c4afeb6f7055fa6c5915abc039740"
+    },
+    {
+      "path": "src/fairness/derive.js",
+      "bytes": 6529,
+      "sha256": "b035f059410f9972fa5440ccfd4696c8d29952e7572035bfd0520531baf22d60"
+    },
+    {
+      "path": "src/fairness/encoding.js",
+      "bytes": 8843,
+      "sha256": "c32d6e8adb486cbdd15deaca868eff4efce2294fd2e765ad0038c00fca625db9"
+    },
+    {
+      "path": "src/fairness/index.js",
+      "bytes": 7954,
+      "sha256": "ebef793793ca9866695653fe79edbedbb7cc6defffd47127cb374c802cff3d65"
+    },
+    {
+      "path": "src/fairness/secret.js",
+      "bytes": 3444,
+      "sha256": "b3233b35ad5ea2d59e8a5ea9aa79bf06cf0c20b2200a550a3b7e44321263734c"
+    },
+    {
+      "path": "src/fairness/seeded-rng.js",
+      "bytes": 4843,
+      "sha256": "8c750943c0063a68d255da5642a6dde91c01a64d81fd651d33e0e60dd9861f2c"
+    },
+    {
+      "path": "src/fairness/vectors.js",
+      "bytes": 6497,
+      "sha256": "04cf4886c27dd580e67978ad25c885f3aec99c5a26deb17490bc3ff6cc8bc866"
+    },
+    {
+      "path": "src/fairness/version.js",
+      "bytes": 4534,
+      "sha256": "99c1c8569c8e56a64ca56aa6ed42409d9a2a0070b0b10c39b7abc719a1164c2e"
+    }
+  ]
+}

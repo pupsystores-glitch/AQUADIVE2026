@@ -81,6 +81,7 @@ export const SCRIPT_FAILURE_CODES: readonly string[] = Object.freeze([
   "runtime-incompatible",
   "runtime-duplicate-fairness",
   "runtime-known-answer-failed",
+  "runtime-integrity-failed",
   "unverified-runtime",
   "runner-failed",
   "script-invalid",

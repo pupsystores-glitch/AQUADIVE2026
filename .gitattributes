@@ -1,0 +1,17 @@
+# P8-4a-1 (owner decision I7): the protected engine, fairness and round sources, their build inputs,
+# the trusted integrity manifest and the independent reference generator are LF in every checkout,
+# whatever core.autocrlf says. The protected build output was verified to be line-ending
+# independent (server/README.md §15); these rules keep the sources themselves reproducible.
+/package.json                  text eol=lf
+/src/engine/**                 text eol=lf
+/src/shared/**                 text eol=lf
+/src/seeded-round/**           text eol=lf
+/src/fairness/**               text eol=lf
+/server/engine/**              text eol=lf
+/server/src/**                 text eol=lf
+/server/scripts/**             text eol=lf
+/server/integrity/**           text eol=lf
+/server/test/independent/**    text eol=lf
+/server/package.json           text eol=lf
+/server/tsconfig.json          text eol=lf
+/server/tsconfig.build.json    text eol=lf
