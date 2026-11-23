@@ -7,9 +7,14 @@
 //   src/seeded-round/, whose production files may import only the public barrel `@/fairness` and
 //   whose tests may also import the test-only providers under src/fairness/test/. Every other file
 //   in src/ and server/ still may not import src/fairness at all.
+//   Amended for P8-3c-0 (owner-approved CommonJS integration): the second exception is exactly one
+//   server file, the bridge server/src/fairness.ts, which may import only the public barrel
+//   src/fairness/index.ts by a relative specifier (no `@/` alias, no private module). Server files
+//   that import the server's own bridge or server/src/fairness/ stay inside server/ and are not
+//   imports of src/fairness; every other server specifier that names fairness is refused.
 // - Errors and commitments never carry secret material.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { computeRoundSeed, createChainCommitment, generateChainSeed } from "./chain.ts";
@@ -98,6 +103,13 @@ describe("isolation from the application and the server", () => {
     const roots = [join(repo, "src"), join(repo, "server", "src"), join(repo, "server", "test")];
     const offenders: string[] = [];
     let seededRoundImports = 0;
+    const serverBridgeImports: string[] = [];
+    const fairnessSpecifiers = (src: string) =>
+      [
+        ...src.matchAll(
+          /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["']([^"']*\bfairness\b[^"']*)["']/g,
+        ),
+      ].map((m) => m[1]);
     for (const root of roots) {
       let files: string[] = [];
       try {
@@ -124,6 +136,20 @@ describe("isolation from the application and the server", () => {
           if (found.some((s) => !allowed.test(s))) offenders.push(rel);
           continue;
         }
+        if (rel.startsWith("server/")) {
+          // P8-3c-0 exception: only server/src/fairness.ts → src/fairness/index.ts (relative).
+          for (const s of fairnessSpecifiers(src)) {
+            const target = s.startsWith(".") ? resolve(dirname(f), s) : null;
+            const targetRel = target && relative(repo, target).split(sep).join("/");
+            if (targetRel?.startsWith("server/")) continue; // the server's own bridge / modules
+            if (rel === "server/src/fairness.ts" && targetRel === "src/fairness/index.ts") {
+              serverBridgeImports.push(rel);
+            } else {
+              offenders.push(rel);
+            }
+          }
+          continue;
+        }
         if (
           /(\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["'][^"']*\bfairness\b/.test(
             src,
@@ -135,6 +161,7 @@ describe("isolation from the application and the server", () => {
     }
     expect(offenders).toEqual([]);
     expect(seededRoundImports).toBeGreaterThan(0); // the exception is exercised, not dead code
+    expect(serverBridgeImports).toEqual(["server/src/fairness.ts"]); // exactly one server bridge
   });
 
   it("fairness tests never import the engine, UI, rendering, audio or shared floor", () => {

@@ -5,12 +5,21 @@
   // `paths.zod` makes TypeScript resolve `zod` from THIS package for every file,
   // including the shared protocol source in ../src/protocol, which would
   // otherwise resolve upwards to the root's node_modules.
+  //
+  // The two import-extension options (P8-3c-0, owner-approved) let the server
+  // compile the shared fairness source in ../src/fairness unchanged: it uses
+  // explicit relative `.ts` imports (so Node can run it by type stripping).
+  // `allowImportingTsExtensions` accepts them; `rewriteRelativeImportExtensions`
+  // emits them as `.js`, so the CommonJS build never loads a `.ts` file at run
+  // time. Neither option changes the output of extensionless imports.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],
     "types": ["node"],
     "module": "preserve",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "paths": {
       "zod": ["./node_modules/zod"]
     },
