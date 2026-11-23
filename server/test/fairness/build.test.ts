@@ -9,7 +9,7 @@
 //   existing server and protocol output is byte-identical with and without them);
 // - at run time the compiled code loads no `.ts` file and nothing outside the build, and the
 //   full per-purpose dump of every development round is byte-identical between the original
-//   type-stripped source and the compiled source.
+//   type-stripped source, the compiled source, and the compiled source on the server adapter.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -147,9 +147,11 @@ Module._resolveFilename = function (...args) { const f = resolve.apply(this, arg
 const { dumpAll } = require(path.join(out, "src/fairness/test/vector-dump.js"));
 const { nodeHashProvider } = require(path.join(out, "src/fairness/test/node-provider.js"));
 const { referenceHashProvider } = require(path.join(out, "src/fairness/test/sha256-reference.js"));
+const { createNodeFairnessCrypto } = require(path.join(out, "server/src/fairness/crypto-node.js"));
 const result = {
   testProvider: dumpAll(nodeHashProvider),
   reference: dumpAll(referenceHashProvider),
+  adapter: dumpAll(createNodeFairnessCrypto().hash),
 };
 const files = [...seen].filter((f) => path.isAbsolute(f));
 result.files = files.length;
@@ -177,5 +179,6 @@ process.stdout.write(JSON.stringify(result));
     expect(createHash("sha256").update(original.stdout).digest("hex")).toBe(DUMP_SHA256);
     expect(result.testProvider).toBe(original.stdout);
     expect(result.reference).toBe(original.stdout);
+    expect(result.adapter).toBe(original.stdout);
   }, 180_000);
 });
