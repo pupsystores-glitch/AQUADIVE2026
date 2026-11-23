@@ -53,3 +53,5 @@ qa/p8-3-fairness/
 qa/p8-3b-authority/
 # Local P8-3c server fairness evidence (build integration, vectors, benchmarks, build comparison); never committed
 qa/p8-3c-server-fairness/
+# Local P8-4a RoundScript evidence (benchmarks, mutation, build comparison); never committed
+qa/p8-4a-round-script/

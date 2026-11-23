@@ -1,9 +1,11 @@
-// Engine build integration (P8-4-0). PLAY MONEY ONLY; nothing here is connected.
+// Engine build integration (P8-4-0; export surface hardened in P8-4a, owner decision K2). PLAY
+// MONEY ONLY; nothing here is connected.
 //
 // Builds the server exactly as `npm run build` does — `tsc -p tsconfig.build.json`, then
-// `node scripts/build-engine.mjs <dist>` — into a temporary directory, adds TEST-ONLY bundles of
-// the original src/seeded-round/test helpers (reference runner, replay pins, independent
-// vectors) that load the production bundle, and checks:
+// `node scripts/build-engine.mjs <dist>` — into a temporary directory, adds TEST-ONLY bundles
+// (test/helpers/engine-build.ts) of the unchanged GameEngine and SeededRound source, which the
+// production bundle no longer exports, and of the original src/seeded-round/test helpers
+// (reference runner, replay pins, independent vectors), and checks:
 // - the bundle holds only engine, shared and seeded-round modules (no rendering, UI, audio,
 //   protocol or fairness code) and requires exactly one thing: the compiled fairness module;
 // - the emitted code passes the syntax-aware validation (no randomness, clock, process, eval,
@@ -11,12 +13,14 @@
 //   a positive and a negative test below; the build is reproducible and fails closed (no bundle
 //   left at the target, non-zero CLI exit, a stale bundle removed);
 // - in a fresh Node process with Math.random and every browser global poisoned: the export
-//   surface (no authority constructor, owner decision D-1), ONE fairness instance shared with
-//   the server's bridge (a second copy is refused by SeededRound.bind), the A1–A8 and B1–B8
+//   surface (only the sealed runner: no engine, round or authority constructor; D-1, K2), ONE
+//   fairness instance shared with the server's bridge (a second copy is refused by
+//   SeededRound.bind and by the production runner), the A1–A8 and B1–B8
 //   replay pins through SeededRound.create, through the server's RoundDerivation and through
 //   the vault, agreement with the independent vectors, no secret in a live round's renderings
 //   or in the EventBus's listener-error output, and a deterministic round of the production
-//   GameEngine over LocalRoundAuthority from a TEST-ONLY bundle.
+//   GameEngine over LocalRoundAuthority from a TEST-ONLY bundle. The production runner itself
+//   (RoundScript precomputation) is tested in test/round/.
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
@@ -40,17 +44,18 @@ import {
   buildEngineBundle,
   validateEngineCode,
 } from "../../scripts/build-engine.mjs";
+import { SEEDED_TEST, SERVER, buildQaBundles, buildServer } from "../helpers/engine-build";
 
-const SERVER = fileURLToPath(new URL("../..", import.meta.url));
-const TSC = join(SERVER, "node_modules", "typescript", "bin", "tsc");
 const PROBE = fileURLToPath(new URL("./compiled-probe.cjs", import.meta.url));
-const SEEDED_TEST = join(REPO_DIR, "src", "seeded-round", "test");
 
-/** The production bundle's modules (repository-relative), as approved for P8-4-0. */
+/**
+ * The production bundle's modules (repository-relative): the P8-4-0 list plus the sealed
+ * runner (P8-4a); src/engine/commands.ts dropped out with the BET_SLOTS export (K2).
+ */
 const BUNDLED_MODULES = [
   "server/engine/entry.ts",
+  "server/engine/round-runner.ts",
   "src/engine/clock.ts",
-  "src/engine/commands.ts",
   "src/engine/domain/creatures.ts",
   "src/engine/domain/descent.ts",
   "src/engine/domain/multiplier.ts",
@@ -71,15 +76,11 @@ const BUNDLED_MODULES = [
   "src/shared/world.ts",
 ];
 
-/** The production export surface. D-1: neither authority constructor is exported. */
+/** The production export surface (K2): the sealed runner only. */
 const EXPORTS = {
-  BET_SLOTS: "object",
-  ENGINE_STATE_TO_PHASE: "object",
-  GameEngine: "function",
-  OUTCOME_DECISIONS: "object",
-  SNAPSHOT_SCHEMA_VERSION: "number",
-  SeededRound: "function",
-  SeededRoundError: "function",
+  ROUND_RUNNER_PROFILE: "object",
+  RoundRunnerError: "function",
+  runSeededRound: "function",
 };
 
 /** The TEST-ONLY LocalRoundAuthority bundle (src/engine/round-authority.ts, unchanged). */
@@ -115,6 +116,7 @@ interface ProbeReport {
   duplicate: {
     distinctClass: boolean;
     refusal: { isSeededRoundError: boolean; code: string; message: string } | null;
+    production: { isRunnerError: boolean; code: string; message: string } | null;
   };
   secrecy: { json: string; leakedViews: number; errorRaised: boolean; errorLeaks: boolean };
   local: {
@@ -126,6 +128,7 @@ interface ProbeReport {
   authorityRoute: {
     functionExports: string[];
     authorityClassExported: boolean;
+    productionExportsEngineOrRound: boolean;
     authorityIsSeeded: boolean;
     depsAuthorityIsRoundAuthority: boolean;
     reflectionReachable: boolean;
@@ -160,45 +163,14 @@ const stripComments = (code: string) =>
 
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "aquadive-p8-4-0-engine-"));
-  dist = join(tmp, "dist");
-  // The build lives outside server/, so state the module format the server package declares.
-  writeFileSync(join(tmp, "package.json"), '{ "type": "commonjs" }\n');
 
   // 1. The two `npm run build` steps, into the temporary directory.
-  const tsc = spawnSync(process.execPath, [TSC, "-p", "tsconfig.build.json", "--outDir", dist], {
-    cwd: SERVER,
-    encoding: "utf8",
-    timeout: 180_000,
-  });
-  expect(tsc.status, `${tsc.stdout}${tsc.stderr}`).toBe(0);
-  const cli = spawnSync(process.execPath, [join("scripts", "build-engine.mjs"), dist], {
-    cwd: SERVER,
-    encoding: "utf8",
-    timeout: 120_000,
-  });
-  expect(cli.status, `${cli.stdout}${cli.stderr}`).toBe(0);
+  dist = buildServer(tmp);
   bundleCode = readFileSync(join(dist, ENGINE_BUNDLE), "utf8");
 
-  // 2. TEST-ONLY bundles of the original seeded-round test helpers, on the production bundle.
-  await buildEngineBundle({
-    dist,
-    dir: "qa",
-    input: {
-      "reference-runner": join(SEEDED_TEST, "reference-runner.ts"),
-      "replay-pins": join(SEEDED_TEST, "replay-pins.ts"),
-      "independent-vectors": join(SEEDED_TEST, "independent-vectors.ts"),
-    },
-    external: { "@/engine": "../engine/engine.cjs", "../index": "../engine/engine.cjs" },
-    allowTestModules: true,
-  });
-  // D-1: LocalRoundAuthority is not exported by the production bundle. A TEST-ONLY bundle of
-  // its unchanged source module gives the deterministic-round check below its constructor.
-  const [local] = await buildEngineBundle({
-    dist,
-    dir: "qa",
-    input: { "local-authority": join(REPO_DIR, "src", "engine", "round-authority.ts") },
-  });
-  localAuthorityModules = local!.modules;
+  // 2. TEST-ONLY bundles (K2: GameEngine, SeededRound and the seeded-round test helpers; D-1:
+  // LocalRoundAuthority from its unchanged source module alone).
+  localAuthorityModules = await buildQaBundles(dist);
 
   // 3. A second, separate copy of the compiled fairness module (negative control only).
   cpSync(join(dist, "src", "fairness"), join(tmp, "duplicate", "fairness"), { recursive: true });
@@ -694,6 +666,12 @@ describe("compiled run time (fresh Node process, Math.random and browser globals
       code: "derivation-unusable",
       message: "derivation-unusable: a RoundDerivation is required",
     });
+    // The production bundle's sealed runner refuses it with its fixed code and nothing else.
+    expect(report.duplicate.production).toEqual({
+      isRunnerError: true,
+      code: "derivation-unusable",
+      message: "derivation-unusable",
+    });
   });
 
   it("the compiled pins are the source pins (A1–A8, B1–B8)", () => {
@@ -758,15 +736,17 @@ describe("compiled run time (fresh Node process, Math.random and browser globals
 
   it("seeded authority is reachable only through SeededRound (no constructor is exported)", () => {
     expect(report.authorityRoute).toEqual({
-      // The only constructors: the engine, SeededRound and its error class.
-      functionExports: ["GameEngine", "SeededRound", "SeededRoundError"],
+      // K2: the production bundle's only functions are the sealed runner and its error class.
+      functionExports: ["RoundRunnerError", "runSeededRound"],
       authorityClassExported: false,
+      productionExportsEngineOrRound: false,
       authorityIsSeeded: true,
       depsAuthorityIsRoundAuthority: true,
       // RESIDUAL RISK (server/README.md §13): JavaScript reflection still reaches the class
       // through an instance's prototype, and GameEngine accepts any object with the
       // RoundAuthority methods. Closing either needs a change to unchanged engine or
-      // seeded-round source, which P8-4-0 does not authorize.
+      // seeded-round source, which is not authorized. Since P8-4a (K2) no round instance
+      // leaves the production bundle, so this holds for the TEST-ONLY bundles here only.
       reflectionReachable: true,
     });
   });

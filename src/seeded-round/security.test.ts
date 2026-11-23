@@ -104,7 +104,7 @@ describe("production import boundary", () => {
 });
 
 describe("isolation from the application and the server", () => {
-  it("no file outside src/seeded-round imports it, except the server's bundle entry", () => {
+  it("no file outside src/seeded-round imports it, except the server's sealed round runner", () => {
     const roots = [
       join(repo, "src"),
       join(repo, "server", "src"),
@@ -130,8 +130,10 @@ describe("isolation from the application and the server", () => {
           ),
         ].map((m) => m[1]);
         if (found.length === 0) continue;
-        // P8-4-0 exception: exactly server/engine/entry.ts → the public barrel, nothing else.
-        if (rel === "server/engine/entry.ts" && found.every((s) => s === "@/seeded-round")) {
+        // P8-4-0 exception, moved in P8-4a (owner decision K3): exactly the bundle's sealed
+        // round runner server/engine/round-runner.ts → the public barrel, nothing else (the
+        // bundle entry re-exports only the runner since P8-4a and imports no seeded-round module).
+        if (rel === "server/engine/round-runner.ts" && found.every((s) => s === "@/seeded-round")) {
           bundleEntryImports.push(...found);
         } else {
           offenders.push(rel);

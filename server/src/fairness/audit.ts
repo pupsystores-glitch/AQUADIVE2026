@@ -22,7 +22,12 @@ export type AuditEventKind =
   | "reveal-recorded"
   | "reveal-replayed"
   | "seeds-precomputed"
-  | "operation-failed";
+  | "operation-failed"
+  // P8-4a (owner decision K7): offline RoundScript preparation. `code` is null for
+  // `script-built` and a fixed RoundScriptError code for `script-failed`; like every event they
+  // hold no seed, derivation, outcome, digest or text.
+  | "script-built"
+  | "script-failed";
 
 export const AUDIT_EVENT_KINDS: readonly AuditEventKind[] = Object.freeze([
   "chain-created",
@@ -36,6 +41,8 @@ export const AUDIT_EVENT_KINDS: readonly AuditEventKind[] = Object.freeze([
   "reveal-replayed",
   "seeds-precomputed",
   "operation-failed",
+  "script-built",
+  "script-failed",
 ]);
 
 /** What a producer supplies. */
@@ -65,6 +72,38 @@ export interface AuditSink {
 const CODE_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 const CHAIN_ID_PATTERN = /^[0-9a-f]{64}$/;
 
+/**
+ * The only codes a `script-failed` event may carry (P8-4a, K7): exactly the RoundScriptError
+ * codes of server/src/round/errors.ts (a test keeps both lists equal).
+ */
+export const SCRIPT_FAILURE_CODES: readonly string[] = Object.freeze([
+  "runtime-unavailable",
+  "runtime-incompatible",
+  "runtime-duplicate-fairness",
+  "runtime-known-answer-failed",
+  "unverified-runtime",
+  "runner-failed",
+  "script-invalid",
+  "script-digest-mismatch",
+  "chain-unavailable",
+  "request-replayed",
+  "disposition-failed",
+  "audit-failed",
+  "reveal-mismatch",
+  "environment-closed",
+  "development-only",
+  "invalid-request",
+]);
+
+/** P8-4a script events: one operation, and a code from a fixed set (K7). */
+const scriptEventOk = (event: AuditEventInput): boolean => {
+  if (event.kind !== "script-built" && event.kind !== "script-failed") return true;
+  if (event.operation !== "prepare-script") return false;
+  return event.kind === "script-built"
+    ? event.code === null && event.chainId !== null && event.chainIndex !== null
+    : event.code !== null && SCRIPT_FAILURE_CODES.includes(event.code);
+};
+
 /** Validates an event's shape; refuses anything outside the allow-list. */
 export function assertAuditEvent(event: AuditEventInput): void {
   const keys = Object.keys(event ?? {}).sort();
@@ -74,7 +113,8 @@ export function assertAuditEvent(event: AuditEventInput): void {
     CODE_PATTERN.test(event.operation) &&
     (event.chainId === null || CHAIN_ID_PATTERN.test(event.chainId)) &&
     (event.chainIndex === null || (Number.isInteger(event.chainIndex) && event.chainIndex >= 0)) &&
-    (event.code === null || CODE_PATTERN.test(event.code));
+    (event.code === null || CODE_PATTERN.test(event.code)) &&
+    scriptEventOk(event);
   if (!ok) throw new ChainError("audit-failed", "audit event is malformed");
 }
 

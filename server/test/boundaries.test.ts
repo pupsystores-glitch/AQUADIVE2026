@@ -15,6 +15,12 @@
 //   `@/seeded-round`; scripts/build-engine.mjs imports only Node built-ins and rolldown (the
 //   bundler and its parser `rolldown/parseAst`, used by the syntax-aware validation). Nothing
 //   in src/ (startup, routes, gateway, fairness) imports either or loads the built bundle.
+// - P8-4a (offline RoundScript precomputation; owner decision K3): engine/ also holds the sealed
+//   round runner (round-runner.ts), the only file there that imports the two barrels; the entry
+//   imports only the runner. Exactly one server module loads the built bundle —
+//   src/round/engine-runtime.ts, with one literal-free `require(` of its fixed location — and
+//   src/round/ imports only node:path, the fairness bridge, server/src/fairness modules and its
+//   own files. The startup, HTTP routes and gateway never reach src/round/.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -146,19 +152,28 @@ describe("server import boundary", () => {
   });
 });
 
-describe("engine build integration (P8-4-0)", () => {
+describe("engine build integration (P8-4-0, P8-4a)", () => {
   const ENGINE_DIR = join(SERVER_DIR, "engine");
   const SCRIPTS_DIR = join(SERVER_DIR, "scripts");
+  const ROUND_DIR = join(SERVER_SRC, "round");
+  const ENGINE_RUNTIME = join(ROUND_DIR, "engine-runtime.ts");
 
-  it("engine/ and scripts/ hold exactly the bundle entry, its type check and the build script", () => {
-    expect(readdirSync(ENGINE_DIR).sort()).toEqual(["entry.ts", "tsconfig.json"]);
+  it("engine/ and scripts/ hold exactly the entry, the sealed runner, its type check and the build script", () => {
+    expect(readdirSync(ENGINE_DIR).sort()).toEqual([
+      "entry.ts",
+      "round-runner.ts",
+      "tsconfig.json",
+    ]);
     expect(readdirSync(SCRIPTS_DIR).sort()).toEqual(["build-engine.d.mts", "build-engine.mjs"]);
   });
 
-  it("the bundle entry imports only the engine and seeded-round public barrels", () => {
-    expect(specifiers(join(ENGINE_DIR, "entry.ts"))).toEqual(["@/engine", "@/seeded-round"]);
-    const source = readFileSync(join(ENGINE_DIR, "entry.ts"), "utf8");
-    expect(source).not.toMatch(/\brequire\s*\(|\bimport\s*\(/);
+  it("the entry imports only the runner; the runner only the engine and seeded-round barrels", () => {
+    expect(specifiers(join(ENGINE_DIR, "entry.ts"))).toEqual(["./round-runner"]);
+    expect(specifiers(join(ENGINE_DIR, "round-runner.ts"))).toEqual(["@/engine", "@/seeded-round"]);
+    for (const file of ["entry.ts", "round-runner.ts"]) {
+      const source = readFileSync(join(ENGINE_DIR, file), "utf8");
+      expect(source, file).not.toMatch(/\brequire\s*\(|\bimport\s*\(/);
+    }
   });
 
   it("the build script imports only Node built-ins and rolldown (bundler and its parser)", () => {
@@ -173,15 +188,61 @@ describe("engine build integration (P8-4-0)", () => {
     expect(specifiers(join(SCRIPTS_DIR, "build-engine.mjs"))).toContain("rolldown/parseAst");
   });
 
-  it("nothing in src/ imports the bundle entry, the build script or the built bundle", () => {
+  it("nothing in src/ imports the bundle entry, the runner, the build script or the bundle", () => {
     for (const file of walk(SERVER_SRC)) {
-      const source = readFileSync(file, "utf8");
+      let source = readFileSync(file, "utf8");
       for (const spec of specifiers(file)) {
-        expect(spec, relative(SERVER_DIR, file)).not.toMatch(/engine|seeded-round|scripts/);
+        // A path segment named engine, seeded-round or scripts (./engine-runtime is not one).
+        expect(spec, relative(SERVER_DIR, file)).not.toMatch(
+          /(^|\/)(engine|seeded-round|scripts)(\/|$)|round-runner|engine\.cjs|^@\//,
+        );
+      }
+      if (file === ENGINE_RUNTIME) {
+        // P8-4a exception (K3): the loader's one require of its fixed location and the bundle's
+        // name (engine/engine.cjs); nothing else of the rule is relaxed.
+        expect(source.match(/\brequire\s*\(/g)).toEqual(["require("]);
+        expect(source).toContain("const exports: unknown = require(path);");
+        expect(source).toContain('ENGINE_BUNDLE_LOCATION = "engine/engine.cjs"');
+        source = source.replace("require(path)", "").replaceAll("engine.cjs", "");
       }
       expect(source, relative(SERVER_DIR, file)).not.toMatch(
         /engine\.cjs|build-engine|seeded-round|\brequire\s*\(/,
       );
+    }
+  });
+
+  it("src/round/ imports only node:path, the fairness bridge and modules, and itself", () => {
+    const allowed = new Set([FAIRNESS_BRIDGE, ...walk(FAIRNESS_DIR), ...walk(ROUND_DIR)]);
+    expect(walk(ROUND_DIR).length).toBe(7);
+    for (const file of walk(ROUND_DIR)) {
+      for (const spec of specifiers(file)) {
+        if (spec.startsWith(".")) {
+          const target = resolveServerImport(file, spec);
+          expect(allowed.has(target!), `${relative(SERVER_DIR, file)}: ${spec}`).toBe(true);
+        } else {
+          expect(spec, relative(SERVER_DIR, file)).toBe("node:path");
+        }
+      }
+    }
+    // Only the loader names the bundle location; only prepare.ts is the pipeline's entry.
+    expect(specifiers(ENGINE_RUNTIME)).toContain("node:path");
+  });
+
+  it("the application startup, HTTP routes and gateway never reach src/round/", () => {
+    const entries = [join(SERVER_SRC, "main.ts"), join(SERVER_SRC, "app.ts")];
+    const reached = new Set(entries.flatMap((entry) => [...closure(entry)]));
+    for (const file of reached) {
+      expect(file.startsWith(ROUND_DIR + sep), relative(SERVER_DIR, file)).toBe(false);
+    }
+    for (const dir of ["gateway", "http", "ops", "fairness"]) {
+      for (const file of walk(join(SERVER_SRC, dir))) {
+        for (const spec of specifiers(file)) {
+          expect(spec, relative(SERVER_DIR, file)).not.toMatch(/(^|\/)round(\/|$)/);
+        }
+      }
+    }
+    for (const file of [join(SERVER_SRC, "main.ts"), join(SERVER_SRC, "app.ts")]) {
+      expect(readFileSync(file, "utf8"), relative(SERVER_DIR, file)).not.toMatch(/round\//);
     }
   });
 });

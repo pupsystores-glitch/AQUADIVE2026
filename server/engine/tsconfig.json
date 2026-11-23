@@ -1,11 +1,12 @@
 {
-  // Type-checks the engine bundle entry (P8-4-0) under the frontend's own configuration: the
-  // engine's type closure reaches the rendering layer through type-only imports, which needs the
-  // DOM library and the `@/` paths of the root tsconfig. Emits nothing; the bundle itself is
-  // built by scripts/build-engine.mjs. `npm run typecheck` runs it after the server check.
+  // Type-checks the engine bundle entry (P8-4-0) and the sealed round runner (P8-4a) under the
+  // frontend's own configuration: the engine's type closure reaches the rendering layer through
+  // type-only imports, which needs the DOM library and the `@/` paths of the root tsconfig. Emits
+  // nothing; the bundle itself is built by scripts/build-engine.mjs. `npm run typecheck` runs it
+  // after the server check.
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["entry.ts"]
+  "include": ["entry.ts", "round-runner.ts"]
 }

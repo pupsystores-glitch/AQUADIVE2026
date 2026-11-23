@@ -1,12 +1,14 @@
-// Compiled-runtime probe for the engine bundle (P8-4-0). TEST ONLY; run by
+// Compiled-runtime probe for the engine bundle (P8-4-0; P8-4a export surface). TEST ONLY; run by
 // engine-bundle.test.ts in a fresh Node process:
 //
 //   node compiled-probe.cjs <server build dir> <duplicate fairness index.js>
 //
 // The build dir holds `tsc -p tsconfig.build.json` output plus engine/engine.cjs (production
-// bundle) and qa/*.cjs (TEST-ONLY bundles of the original src/seeded-round/test helpers, which
-// load the production bundle). Before anything loads, Math.random and every browser global
-// throw on use and are counted. Prints one JSON report on stdout and nothing else.
+// bundle: since P8-4a only the sealed round runner, owner decision K2) and qa/*.cjs (TEST-ONLY
+// bundles, test/helpers/engine-build.ts: the unchanged GameEngine and SeededRound source the
+// production bundle no longer exports, and the original src/seeded-round/test helpers). Before
+// anything loads, Math.random and every browser global throw on use and are counted. Prints one
+// JSON report on stdout and nothing else.
 "use strict";
 const Module = require("node:module");
 const path = require("node:path");
@@ -72,6 +74,8 @@ const rel = (f) => path.relative(out, f).split(path.sep).join("/");
 // ---- 3. Load the compiled server fairness, the production bundle and the QA bundles --------
 const bridge = load("server/src/fairness.js");
 const engine = load("engine/engine.cjs");
+// K2: GameEngine and SeededRound come from the TEST-ONLY bundles of their unchanged source.
+const internals = { ...load("qa/game-engine.cjs"), ...load("qa/seeded-round.cjs") };
 const fairnessIndex = load("src/fairness/index.js");
 const { createNodeFairnessCrypto } = load("server/src/fairness/crypto-node.js");
 const { MemoryChainStore } = load("server/src/fairness/memory-chain-store.js");
@@ -130,7 +134,7 @@ report.replay = {
 // ---- 6. Bind path: the server's RoundDerivation → the bundle's SeededRound.bind --------------
 report.bind = pins.map(([salt, index]) => {
   const derivation = bridge.RoundDerivation.create(hash, input(bridge, salt, index));
-  const round = engine.SeededRound.bind(derivation);
+  const round = internals.SeededRound.bind(derivation);
   return { key: `${salt}${index}`, ...summary(runner.runReferenceRound(hash, round)) };
 });
 
@@ -140,25 +144,40 @@ report.bind = pins.map(([salt, index]) => {
   const derivation = duplicate.RoundDerivation.create(hash, input(duplicate, "A", 1));
   let refusal = null;
   try {
-    engine.SeededRound.bind(derivation);
+    internals.SeededRound.bind(derivation);
   } catch (e) {
     refusal = {
-      isSeededRoundError: e instanceof engine.SeededRoundError,
+      isSeededRoundError: e instanceof internals.SeededRoundError,
       code: e.code,
       message: e.message,
     };
   } finally {
     derivation.dispose();
   }
+  // The production bundle's sealed runner refuses it as well (fixed code, no detail).
+  const derivation2 = duplicate.RoundDerivation.create(hash, input(duplicate, "A", 1));
+  let production = null;
+  try {
+    engine.runSeededRound(derivation2);
+  } catch (e) {
+    production = {
+      isRunnerError: e instanceof engine.RoundRunnerError,
+      code: e.code,
+      message: e.message,
+    };
+  } finally {
+    derivation2.dispose();
+  }
   report.duplicate = {
     distinctClass: duplicate.RoundDerivation !== bridge.RoundDerivation,
     refusal,
+    production,
   };
 }
 
 // ---- 8. Secrecy of a live compiled round before its reveal ----------------------------------
 {
-  const round = engine.SeededRound.create(hash, input(bridge, "A", 7));
+  const round = internals.SeededRound.create(hash, input(bridge, "A", 7));
   const crash = round.authority.sampleCrashPoint();
   const world = [];
   for (let i = 0; i < 25; i++) world.push(round.worldRng.next());
@@ -194,7 +213,7 @@ report.bind = pins.map(([salt, index]) => {
     return { next: () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 2 ** 32 };
   };
   const play = () => {
-    const e = new engine.GameEngine({
+    const e = new internals.GameEngine({
       authority: new LocalRoundAuthority(lcg(7)),
       worldRng: lcg(11),
     });
@@ -214,25 +233,31 @@ report.bind = pins.map(([salt, index]) => {
   const a = play();
   const b = play();
   report.local = {
-    exportedByProduction: Object.hasOwn(engine, "LocalRoundAuthority"),
+    exportedByProduction:
+      Object.hasOwn(engine, "LocalRoundAuthority") || Object.hasOwn(engine, "GameEngine"),
     terminal: a.terminal,
     ticks: a.ticks,
     identical: JSON.stringify(a) === JSON.stringify(b),
   };
 }
 
-// ---- 9b. Seeded authority only through SeededRound (D-1) ----------------------------------
+// ---- 9b. Seeded authority only through SeededRound (D-1); none at all from production (K2) -
 {
-  const round = engine.SeededRound.create(hash, input(bridge, "B", 3));
+  const round = internals.SeededRound.create(hash, input(bridge, "B", 3));
   const authorityClass = Object.getPrototypeOf(round.authority).constructor;
   report.authorityRoute = {
     functionExports: Object.keys(engine)
       .filter((k) => typeof engine[k] === "function")
       .sort(),
     authorityClassExported: Object.values(engine).includes(authorityClass),
+    // K2: the production bundle exports no engine, round or authority constructor at all.
+    productionExportsEngineOrRound: ["GameEngine", "SeededRound", "SeededRoundAuthority"].some(
+      (k) => Object.hasOwn(engine, k),
+    ),
     authorityIsSeeded: authorityClass.name === "SeededRoundAuthority",
     depsAuthorityIsRoundAuthority: round.deps.authority === round.authority,
-    // Residual risk, recorded (not fixed): reflection reaches the class from an instance.
+    // Residual risk, recorded (not fixed): reflection reaches the class from an instance. Since
+    // K2 a live round exists only inside the production bundle's sealed runner.
     reflectionReachable: typeof authorityClass === "function",
   };
   round.dispose();
@@ -269,8 +294,8 @@ report.bind = pins.map(([salt, index]) => {
   const reference = runner.runReferenceRoundFromInput(hash, input(bridge, "A", 7)).record;
 
   const derivation = bridge.RoundDerivation.create(hash, input(bridge, "A", 7));
-  const round = engine.SeededRound.bind(derivation);
-  const game = new engine.GameEngine(round.deps);
+  const round = internals.SeededRound.bind(derivation);
+  const game = new internals.GameEngine(round.deps);
 
   const thrown = [];
   const calls = [];
@@ -384,7 +409,7 @@ report.bind = pins.map(([salt, index]) => {
         r.chainIndex,
         bridge.hexToBytes(saltHex(salt)),
       );
-      const round = engine.SeededRound.bind(keys.derivation);
+      const round = internals.SeededRound.bind(keys.derivation);
       vaultRuns.push({
         key: `${salt}${r.chainIndex}`,
         ...summary(runner.runReferenceRound(hash, round)),
