@@ -64,6 +64,21 @@
       "sha256": "92bfc8c0dd2d5e9c097ee6e639e072d1a132ffc09aa7e88adaafebcaa0e88b34"
     },
     {
+      "path": "server/src/prep/controller.js",
+      "bytes": 16236,
+      "sha256": "72c9e0f6ac7d6c1d1b6bfcf4e11a1b95c955156a1ad22f5d234b159fee6026ab"
+    },
+    {
+      "path": "server/src/prep/prep-worker.js",
+      "bytes": 9808,
+      "sha256": "f93efdcd412ecc7cef0b836fc34ee46c9fad3192cdaa51743d29c1c3ef67e48e"
+    },
+    {
+      "path": "server/src/prep/protocol.js",
+      "bytes": 12094,
+      "sha256": "cd09b64034a89b8d8024f412d68759bbd03cd5f4e733d2cd8f02c3fc901cc7ed"
+    },
+    {
       "path": "server/src/round/canonical.js",
       "bytes": 5530,
       "sha256": "b2c4067c2c17420c9a8e343e2d2597796c822064fdf5f880f4a7e6b828972494"
@@ -85,8 +100,8 @@
     },
     {
       "path": "server/src/round/integrity.js",
-      "bytes": 15156,
-      "sha256": "3439b8da4322127ffd01b114aba18d10661b3e759f0c0917938b01fa07c5c453"
+      "bytes": 15344,
+      "sha256": "afc463c79d7fa17e174b76c3dcc8cd6967bd119d28aae879e05eb08c22ab4fbd"
     },
     {
       "path": "server/src/round/known-answers.js",

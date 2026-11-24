@@ -431,6 +431,21 @@ Status:
 | Acceptance and commit | **Accepted for LOCAL DEVELOPMENT ONLY (2026-11-24)**; committed locally as one isolated commit `feat(server): add build integrity verification (P8-4a-1)` on top of `011facc`, not pushed. M-3 addressed within the trusted-build model only (not against deliberate tampering of the deployed build, same-process code, TOCTOU or a rewritten manifest); the live scheduler stays **not** authorized |
 | Next | **Stop.** No push. P8-4b readiness analysis only (read-only); P8-4b implementation not authorized |
 
+## P8-4b-0 — Offline preparation worker (Phase 8 implementation exception, offline development only, 2026-11-24)
+
+*Separate from the entries above, which are preserved unchanged. P8-4a-1 is committed locally as `7ecfe67` (not pushed).*
+
+| Item | Status |
+| --- | --- |
+| Authorization | **Owner, 2026-11-24:** P8-4b-0 only — an offline `worker_threads` RoundScript preparation prototype; then a narrowly scoped final hardening and acceptance review with the **approved protected-set expansion** (`server/src/prep`). No push, scheduler, live betting, settlement, production persistence, network integration, dependency or Endless Ocean V2 |
+| Deliverable | A `server/src/prep/{controller,prep-worker,protocol}.ts`, `server/test/prep/{prep-probe.cjs,prep-worker.test.ts,protocol.test.ts}`; M `server/src/round/integrity.ts`, `server/scripts/engine-integrity.mjs`, `server/integrity/engine-manifest.json` (29 → 32 files), `server/test/boundaries.test.ts`, `server/test/round/integrity.test.ts`, `server/test/round/round-runtime.test.ts`, `server/README.md` §16, docs 04 / 09 §44 / 14 / 15 / 16 |
+| Result | Preparation runs in one worker that owns its environment and chain; only canonical bytes + digest (SECRET) cross, transferred, and are fully re-validated on the main thread; ≤ 2 in flight, duplicates and excess refused before sending; fail closed with INDETERMINATE pending requests and no retry or restart; the worker files are protected by the trusted manifest and checked by the controller, the worker and the out-of-process verifier |
+| Verification (2026-11-24, battery power, Node 24.21.0) | server + engine typecheck and root `tsc` clean; server Vitest 23 files / 726 passed + 5 todo; root Vitest 102 files / 2,586 passed (`--maxWorkers=6`); focused prep / round / boundary 8 files / 320 passed (16 replay pins, 45 independent records, A1 / B1 candidates); clean `npm run build` verifies against the 32-file manifest, which the build leaves byte-identical; out-of-process `engine-integrity.mjs verify` passes; tampered-worker negatives refused; ESLint 0 problems and Prettier clean on changed files; client assets 27 / 27 identical to the baseline |
+| Final acceptance re-verification (2026-11-24) | Baseline `7ecfe67`, 22 ahead / 0 behind, nothing staged; all of the above re-run and reproduced (server 726 + 5 todo, root 2,586, focused 320, 16 pins, 45 records, two builds 63 / 63 identical, 32 / 32 manifest entries re-hashed independently, manifest unchanged by the build, out-of-process verify, ESLint / Prettier, client 27 / 27, `git diff --check`); no critical or high finding |
+| Acceptance and commit | **ACCEPTED FOR OFFLINE LOCAL DEVELOPMENT ONLY (owner, 2026-11-24, with conditions)**; committed locally as one isolated commit `feat(server): add isolated round preparation worker (P8-4b-0)` on top of `7ecfe67`, not pushed. Not production, live scheduling, multiplayer integration, betting or settlement |
+| Open | **D7 NOT VERIFIED** (main-thread validation p95 ≈ 8.6 ms > 2 ms slice); `MemoryChainStore` not durable — crash recovery and durable uniqueness not provided (P8-7); D10 / OD-11, C4 / OD-8, A-1, A-2, Zod S-1, E-RISK-1, A1 / B1 approval, Node 22, Linux. Known limitations: the worker can halt before the controller's state reflects it; `start()` has no timeout; used request ids accumulate for the controller's lifetime; a caller can abandon an observed result or terminate the whole development-only chain; worker threads are event-loop isolation, not a security sandbox; offline only |
+| Next | **Stop.** No push. P8-4b-1 readiness analysis only (read-only); P8-4b-1 implementation and the live scheduler not authorized |
+
 ---
 
 Only one task may be active at a time.

@@ -33,6 +33,7 @@ const FILES: Record<string, string> = {
   "engine/engine.cjs": "'use strict';\nexports.x = 1;\n",
   "server/src/fairness.js": "'use strict';\n",
   "server/src/fairness/audit.js": "'use strict';\n// audit\n",
+  "server/src/prep/protocol.js": "'use strict';\n// prep protocol\n",
   "server/src/round/engine-runtime.js": "'use strict';\n// loader\n",
   "server/src/round/integrity.js": "'use strict';\n// integrity\n",
   "server/src/round/prepare.js": "'use strict';\n// prepare\n",
@@ -218,6 +219,25 @@ describe("protected set on a build", () => {
 
   it("refuses a missing protected directory", () => {
     rmSync(join(dist, "src", "fairness"), { recursive: true });
+    expect(reasonOf(() => listProtectedFiles(dist))).toBe("protected-directory-invalid");
+  });
+
+  it("protects the offline preparation worker directory (owner-approved P8-4b-0 expansion)", () => {
+    expect(PROTECTED_DIRECTORIES).toEqual([
+      "engine",
+      "server/src/fairness",
+      "server/src/prep",
+      "server/src/round",
+      "src/fairness",
+    ]);
+    for (const p of ["controller", "prep-worker", "protocol"]) {
+      expect(PROTECTED_PATH.test(`server/src/prep/${p}.js`), p).toBe(true);
+    }
+    expect(PROTECTED_PATH.test("server/src/prep/sub/x.js")).toBe(false);
+    const m = computeIntegrityManifest(dist, hash);
+    writeFileSync(join(dist, "server", "src", "prep", "extra.js"), "x");
+    expect(reasonOf(() => verifyBuildIntegrity(dist, m, hash))).toBe("unexpected-file");
+    rmSync(join(dist, "server", "src", "prep"), { recursive: true });
     expect(reasonOf(() => listProtectedFiles(dist))).toBe("protected-directory-invalid");
   });
 

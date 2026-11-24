@@ -136,6 +136,16 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **P8-3c-3 — fairness vault security hardening (2026-11-23): ACCEPTED FOR LOCAL DEVELOPMENT BY THE OWNER (2026-11-23; NOT PRODUCTION SECURITY CERTIFICATION); COMMITTED LOCALLY, NOT PUSHED.** Baseline verified: `develop`, `HEAD` `a02dbf9`, 18 local commits ahead of `origin/develop`, clean tree. Fixes (docs/09 §40.1): an `indeterminate` round blocks its own and every later reveal until a final classification resolves it; the vault disposes a chain's cached seeds whenever it observes that the chain may no longer derive, and in-flight `precompute` / `prepareRound` fail closed. Server 328 tests + 5 todo, root 2,586 tests pass (docs/15). Owner decision recommended: the operational policy for resolving `indeterminate` rounds (D10). One isolated local commit `fix(server): harden fairness vault security (P8-3c-3)` on top of `a02dbf9`; no push; P8-4 not started.
 - **Stop condition:** no push; P8-4 is not authorized.
 
+## Also current: P8-4b-0 — Offline preparation worker (offline development only, not production activation) — ACCEPTED FOR OFFLINE LOCAL DEVELOPMENT ONLY (2026-11-24), COMMITTED LOCALLY, NOT PUSHED
+
+*A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*
+
+- **Authorization (owner, 2026-11-24):** P8-4b-0 only, then a narrowly scoped final hardening with the approved protected-set expansion (`server/src/prep`, trusted manifest 29 → 32 files). No commit, push, scheduler, network integration, settlement or production persistence.
+- **Delivered:** `server/src/prep/` (worker entry, message contract, development-only controller), tests and probe; integrity rules and the trusted manifest extended (docs/09 §44, `server/README.md` §16).
+- **Acceptance (owner, 2026-11-24):** ACCEPTED WITH CONDITIONS FOR OFFLINE LOCAL DEVELOPMENT ONLY after an independent final re-verification (docs/15); one isolated local commit `feat(server): add isolated round preparation worker (P8-4b-0)` on top of `7ecfe67`, not pushed. Not production, live scheduling, multiplayer integration, betting or settlement.
+- **Open:** D7 (**NOT VERIFIED**), `MemoryChainStore` not durable (no crash recovery, P8-7), D10 / OD-11, C4 / OD-8, A-1, A-2, Zod S-1, E-RISK-1, A1 / B1 approval, Node 22, Linux. Known limitations: worker halt not yet mirrored in the controller state; `start()` without timeout; used request ids accumulate; a caller can abandon an observed result or end the whole development chain; worker threads are not a security sandbox; offline only.
+- **Stop condition:** no push; P8-4b-1 implementation and the live scheduler are not authorized (read-only readiness analysis only).
+
 ## Also current: P8-4a-1 — Build integrity hardening (offline development only, not production activation) — ACCEPTED FOR LOCAL DEVELOPMENT ONLY (2026-11-24), COMMITTED LOCALLY, NOT PUSHED
 
 *A narrowly scoped Phase 8 implementation exception. It does not replace or edit the sections above or below; TASK 008 / Phase 7 remain the active task and phase.*

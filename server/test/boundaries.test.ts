@@ -272,6 +272,82 @@ describe("engine build integration (P8-4-0, P8-4a)", () => {
   });
 });
 
+describe("offline preparation worker (P8-4b-0)", () => {
+  const PREP_DIR = join(SERVER_SRC, "prep");
+  const ROUND_DIR = join(SERVER_SRC, "round");
+  const CONTROLLER = join(PREP_DIR, "controller.ts");
+  const WORKER = join(PREP_DIR, "prep-worker.ts");
+
+  it("src/prep/ holds exactly the controller, the worker entry and the message contract", () => {
+    expect(readdirSync(PREP_DIR).sort()).toEqual([
+      "controller.ts",
+      "prep-worker.ts",
+      "protocol.ts",
+    ]);
+  });
+
+  it("src/prep/ imports only worker_threads, path, the fairness and round modules, and itself", () => {
+    const allowed = new Set([
+      FAIRNESS_BRIDGE,
+      join(FAIRNESS_DIR, "crypto-node.ts"),
+      ...["prepare", "errors", "engine-runtime", "integrity", "round-script"].map((f) =>
+        join(ROUND_DIR, `${f}.ts`),
+      ),
+      ...walk(PREP_DIR),
+    ]);
+    for (const file of walk(PREP_DIR)) {
+      for (const spec of specifiers(file)) {
+        if (spec.startsWith(".")) {
+          const target = resolveServerImport(file, spec);
+          expect(allowed.has(target!), `${relative(SERVER_DIR, file)}: ${spec}`).toBe(true);
+        } else {
+          expect(["node:worker_threads", "node:path"], relative(SERVER_DIR, file)).toContain(spec);
+        }
+      }
+      // No dynamic code, no module loading by name, no network, no file writes.
+      expect(readFileSync(file, "utf8"), relative(SERVER_DIR, file)).not.toMatch(
+        /\beval\s*\(|new\s+Function\b|\bimport\s*\(|\brequire\s*\(|eval:\s*true|node:(?:http|net|fs|child_process)/,
+      );
+    }
+    // The protocol is pure: it imports only the round error codes.
+    expect(specifiers(join(PREP_DIR, "protocol.ts"))).toEqual(["../round/errors"]);
+    // Only the worker entry creates the environment; only the controller creates a worker.
+    for (const file of walk(PREP_DIR)) {
+      const source = readFileSync(file, "utf8");
+      expect(/createOfflineRoundEnvironment\(/.test(source), relative(SERVER_DIR, file)).toBe(
+        file === WORKER,
+      );
+      expect((source.match(/new Worker\(/g) ?? []).length, relative(SERVER_DIR, file)).toBe(
+        file === CONTROLLER ? 1 : 0,
+      );
+    }
+    // The one worker: the fixed entry next to the controller, no eval, no inherited execArgv.
+    const controller = readFileSync(CONTROLLER, "utf8");
+    expect(controller).toContain('PREP_WORKER_ENTRY = "prep-worker.js"');
+    expect(controller).toContain("new Worker(join(__dirname, PREP_WORKER_ENTRY), {");
+    expect(controller).toContain("eval: false,");
+    expect(controller).toContain("execArgv: [],");
+  });
+
+  it("the startup, routes, gateway and the round / fairness modules never reach src/prep/", () => {
+    const entries = [join(SERVER_SRC, "main.ts"), join(SERVER_SRC, "app.ts")];
+    const reached = new Set(entries.flatMap((entry) => [...closure(entry)]));
+    for (const file of reached) {
+      expect(file.startsWith(PREP_DIR + sep), relative(SERVER_DIR, file)).toBe(false);
+    }
+    for (const dir of ["gateway", "http", "ops", "fairness", "round"]) {
+      for (const file of walk(join(SERVER_SRC, dir))) {
+        for (const spec of specifiers(file)) {
+          expect(spec, relative(SERVER_DIR, file)).not.toMatch(/(^|\/)prep(\/|$)/);
+        }
+      }
+    }
+    for (const file of entries) {
+      expect(readFileSync(file, "utf8"), relative(SERVER_DIR, file)).not.toMatch(/prep\//);
+    }
+  });
+});
+
 describe("zod resolution", () => {
   it("this package resolves zod from its own node_modules", () => {
     const resolved = createRequire(import.meta.url).resolve("zod");

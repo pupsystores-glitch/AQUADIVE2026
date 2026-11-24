@@ -264,8 +264,17 @@ describe("build integrity (P8-4a-1, the trusted manifest)", () => {
     expect(`${JSON.stringify(m, null, 2)}\n`).toBe(text);
     expect(text).not.toContain("\r");
     expect(m.schema).toBe("aquadive.engine-integrity");
-    expect(m.files.map((f: Report) => f.path)).toEqual(main.closure);
-    expect(m.files).toHaveLength(29);
+    // The round runtime's loaded closure (29 files) plus the offline preparation worker's three
+    // compiled components (owner-approved P8-4b-0 expansion; they are not part of this closure).
+    const prep = [
+      "server/src/prep/controller.js",
+      "server/src/prep/prep-worker.js",
+      "server/src/prep/protocol.js",
+    ];
+    expect(main.closure).toHaveLength(29);
+    expect(main.closure.some((p: string) => p.startsWith("server/src/prep/"))).toBe(false);
+    expect(m.files.map((f: Report) => f.path)).toEqual([...main.closure, ...prep].sort());
+    expect(m.files).toHaveLength(32);
     expect(m.files.find((f: Report) => f.path === "engine/engine.cjs").sha256).toBe(
       main.bundleSha256,
     );
