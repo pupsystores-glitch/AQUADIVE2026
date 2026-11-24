@@ -26,6 +26,12 @@
 // digest), SECRET until the round's reveal, transferred (not copied) out of the worker.
 //
 // Errors are fixed codes (PrepWorkerError); a `reason` is a fixed kebab-case code, never data.
+//
+// P8-4b-1: a `prepared` message's bytes must be a plain Uint8Array that covers the whole of its
+// own, non-shared, non-resizable ArrayBuffer (what a transfer of the worker's fresh copy yields)
+// and at most MAX_SCRIPT_BYTES long — checked with the intrinsic accessors before anything reads
+// the bytes. A SharedArrayBuffer view (another thread could change it while it is validated), a
+// resizable buffer, an offset or partial view, or a longer message is a contract violation.
 
 import { ROUND_SCRIPT_ERROR_CODES } from "../round/errors";
 
@@ -41,8 +47,12 @@ export const DEFAULT_PREP_CHAIN_LENGTH = 1024;
 export const MAX_PREP_CHAIN_LENGTH = 65_536;
 /** The length of the public fv = 1 development-vector chain (FAIRNESS_DEV_VECTORS_V1). */
 export const PUBLIC_TEST_VECTOR_CHAIN_LENGTH = 8;
-/** Upper bound of one canonical RoundScript (the longest dive is far below it). */
-export const MAX_SCRIPT_BYTES = 4 * 1024 * 1024;
+/**
+ * Upper bound of one canonical RoundScript: round-script.ts MAX_ROUND_SCRIPT_BYTES, the proved cap
+ * (stated here, not imported, so that this contract stays pure; a test keeps the two equal).
+ * P8-4a-1 … P8-4b-0 allowed 4 MiB, which only invalid scripts can use.
+ */
+export const MAX_SCRIPT_BYTES = 196_608;
 
 /**
  * The worker's compiled components in the build. They are part of the TRUSTED integrity
@@ -164,6 +174,11 @@ export type PrepWorkerErrorCode =
   | "invalid-request"
   /** The request id was used before on this controller; nothing was sent. */
   | "request-replayed"
+  /**
+   * The controller has retained chainLength + 64 request ids (P8-4b-1 bound; none is ever
+   * evicted, so replay detection stays complete): it sends no further request.
+   */
+  | "request-ids-exhausted"
   /** The in-flight limit is reached; nothing was sent. */
   | "backpressure"
   /** The controller is not accepting requests (`reason`: its state). */
@@ -245,6 +260,43 @@ function exact(value: unknown, keys: readonly string[]): Record<string, unknown>
   return value as Record<string, unknown>;
 }
 
+// Intrinsic accessors, captured once: own properties or replaced prototype members of a
+// received object cannot change what they report.
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const intrinsicGetter = (target: object, key: string): ((this: unknown) => unknown) | undefined =>
+  Object.getOwnPropertyDescriptor(target, key)?.get as ((this: unknown) => unknown) | undefined;
+const viewBuffer = intrinsicGetter(TYPED_ARRAY_PROTOTYPE, "buffer")!;
+const viewByteOffset = intrinsicGetter(TYPED_ARRAY_PROTOTYPE, "byteOffset")!;
+const viewByteLength = intrinsicGetter(TYPED_ARRAY_PROTOTYPE, "byteLength")!;
+/** Throws for anything but a non-shared ArrayBuffer (SharedArrayBuffer included). */
+const bufferByteLength = intrinsicGetter(ArrayBuffer.prototype, "byteLength")!;
+/** Absent on runtimes without resizable buffers (then no buffer can be resizable). */
+const bufferResizable = intrinsicGetter(ArrayBuffer.prototype, "resizable");
+
+/**
+ * True for a plain Uint8Array of 2 … MAX_SCRIPT_BYTES bytes that is the whole of its own
+ * non-shared, fixed-length ArrayBuffer. Reads no byte of it.
+ */
+function isWholeOwnedBytes(bytes: unknown): bytes is Uint8Array {
+  if (!(bytes instanceof Uint8Array) || Object.getPrototypeOf(bytes) !== Uint8Array.prototype) {
+    return false;
+  }
+  try {
+    const buffer = viewBuffer.call(bytes);
+    const total = bufferByteLength.call(buffer) as number; // throws for a SharedArrayBuffer
+    if (bufferResizable !== undefined && bufferResizable.call(buffer) !== false) return false;
+    const length = viewByteLength.call(bytes) as number;
+    return (
+      viewByteOffset.call(bytes) === 0 &&
+      length === total &&
+      length >= 2 &&
+      length <= MAX_SCRIPT_BYTES
+    );
+  } catch {
+    return false;
+  }
+}
+
 const isInt = (v: unknown, min: number, max: number): v is number =>
   Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max;
 const isReason = (v: unknown): v is string | null =>
@@ -317,15 +369,7 @@ export const parseWorkerMessage = guarded((value: unknown): WorkerMessage => {
       const v = exact(value, ["type", "requestId", "chainIndex", "digest", "bytes"]);
       if (!isRequestId(v.requestId) || !isInt(v.chainIndex, 1, MAX_PREP_CHAIN_LENGTH)) refuse();
       if (typeof v.digest !== "string" || !HEX64.test(v.digest)) refuse();
-      const bytes = v.bytes;
-      if (
-        !(bytes instanceof Uint8Array) ||
-        bytes.length < 2 ||
-        bytes.length > MAX_SCRIPT_BYTES ||
-        Object.getPrototypeOf(bytes) !== Uint8Array.prototype
-      ) {
-        refuse();
-      }
+      if (!isWholeOwnedBytes(v.bytes)) refuse();
       return Object.freeze({ ...v }) as unknown as PreparedMessage;
     }
     case "failed": {

@@ -446,6 +446,21 @@ Status:
 | Open | **D7 NOT VERIFIED** (main-thread validation p95 ≈ 8.6 ms > 2 ms slice); `MemoryChainStore` not durable — crash recovery and durable uniqueness not provided (P8-7); D10 / OD-11, C4 / OD-8, A-1, A-2, Zod S-1, E-RISK-1, A1 / B1 approval, Node 22, Linux. Known limitations: the worker can halt before the controller's state reflects it; `start()` has no timeout; used request ids accumulate for the controller's lifetime; a caller can abandon an observed result or terminate the whole development-only chain; worker threads are event-loop isolation, not a security sandbox; offline only |
 | Next | **Stop.** No push. P8-4b-1 readiness analysis only (read-only); P8-4b-1 implementation and the live scheduler not authorized |
 
+## P8-4b-1 — Hardened and bounded RoundScript verification (Phase 8 implementation exception, offline development only, 2026-11-24)
+
+*Separate from the entries above, which are preserved unchanged. P8-4b-0 is committed locally as `2994be1` (not pushed).*
+
+| Item | Status |
+| --- | --- |
+| Authorization | **Owner, 2026-11-24:** P8-4b-1 only — copy-first, bounded and sliced RoundScript verification and the P8-4b-0 lifecycle fixes, with an owner-approved update of 5 trusted-manifest entries. No push, Global Scheduler, live scheduling, betting, settlement, production persistence, network integration, gameplay or dependency change |
+| Deliverable | M `server/src/round/{canonical,round-script}.ts`, `server/src/prep/{controller,prep-worker,protocol}.ts`, `server/integrity/engine-manifest.json` (32 files, 5 entries changed), `server/test/prep/{prep-probe.cjs,prep-worker.test.ts,protocol.test.ts}`, `server/test/round/canonical.test.ts`; A `server/test/helpers/round-scripts.ts`, `server/test/round/{round-verification,round-race,verify-differential}.test.ts`, `server/test/round/verify-probe.cjs`, `server/test/round/oracle/head-{canonical,round-script}.ts` (verbatim `2994be1` copies, imports re-pointed); `server/README.md` §17, docs 04 / 09 §45 / 14 / 15 / 16 |
+| Result | One private copy before any read (intrinsic accessors; no iterator, no shared-buffer race); proved cap 196,608 B (bound 148,738 B); rejection-only prescan; `RoundScriptVerification` in bounded slices with identical results to the P8-4b-0 parser; the controller verifies results in slices through one serial event queue; halt mirroring, 30 s start timeout, bounded request ids |
+| Acceptance audit (2026-11-24) | Accepted after corrections (test and documentation only, no protected edit): a regression test for the P8-4b-0 iterator-copy inconsistency (own and subclass `Symbol.iterator`; the P8-4b-0 oracle keeps the iterator's bytes, the new parser never reads the iterator) and the delivery-vs-durability note (docs/09 §45) |
+| Verification (2026-11-24, AC power, Node 24.21.0) | Root Vitest 102 / 2,586 (`--maxWorkers=6`, default timeouts); server Vitest 26 / 776 + 5 todo; server + engine + build + root `tsc` clean; ESLint 0 problems on `server/`; Prettier clean on changed files; `git diff --check` clean; clean `npm run build` verifies, candidate manifest byte-identical to the tracked one (`d1a022d7…`); differential 0 mismatches (346,365 comparisons, earlier audit run) |
+| Acceptance and commit | **ACCEPTED FOR OFFLINE LOCAL DEVELOPMENT ONLY (owner, 2026-11-24)**; committed locally as one isolated commit `perf(server): harden and optimize RoundScript verification (P8-4b-1)` on top of `2994be1`, not pushed |
+| Open | **D7 NOT VERIFIED**; delivered ≠ durable (a fulfilled `prepare()` is no durable disposition; P8-7, D10 / OD-11); `state` reads `ready` while a queued worker loss already refuses `prepare()`; A-1, A-2, C4 / OD-8, Zod S-1, E-RISK-1, A1 / B1 approval, Node 22, Linux |
+| Next | **Stop.** No push. The Global Scheduler and live scheduling are not authorized |
+
 ---
 
 Only one task may be active at a time.

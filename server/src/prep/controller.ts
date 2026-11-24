@@ -22,8 +22,9 @@
 // anything, so no index is reserved — a malformed id or salt, a request id it has seen before,
 // and any request beyond `maxInFlight` (≤ 2) outstanding (`backpressure`; there is no queue).
 // The result is the worker's canonical bytes re-parsed and fully re-validated here
-// (`parseRoundScript` with the reported digest): a RoundScript of this worker's chain whose index
-// is exactly the previous one + 1 — a skipped, repeated or foreign index is a protocol violation.
+// (RoundScriptVerification with the reported digest): a RoundScript of this worker's chain whose
+// index is exactly the previous one + 1 — a skipped, repeated or foreign index is a protocol
+// violation.
 //
 // Failure behaviour (fail closed; no production D10 / OD-11 / OD-8 policy is implemented):
 //
@@ -36,6 +37,22 @@
 //
 // The worker thread isolates the main event loop from round preparation; it is not a security
 // boundary against compromised code running in this process.
+//
+// P8-4b-1 (lifecycle and verification):
+//
+// - every worker event — message, error, exit — goes through ONE serial queue, in arrival order:
+//   a `prepared` result is verified in slices of DEFAULT_VERIFICATION_BUDGET operations
+//   (RoundScriptVerification), yielding to the event loop between them, and no later event (a
+//   second result, `failed`, `closed`, `exit`) is handled before it is finished;
+//   the received bytes are zeroed right after their private copy is taken;
+// - `terminate()` or any terminal failure during a verification cancels it (its copy is zeroed)
+//   and nothing is delivered: the request is rejected as INDETERMINATE, never retried;
+// - a worker that halted (`worker-halted`, or any failure that touched an index) halts the
+//   controller too;
+// - `start()` fails with `startup-timeout` if the worker is not ready within
+//   PREP_START_TIMEOUT_MS (30 s, fixed);
+// - at most chainLength + REQUEST_ID_SLACK request ids are retained, none evicted; once they are
+//   used up every new request is refused (`request-ids-exhausted`) without being sent.
 
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -44,7 +61,11 @@ import type { FairnessHashProvider } from "../fairness";
 import { REQUIRED_PROTECTED_FILES } from "../round/engine-runtime";
 import { RoundScriptError } from "../round/errors";
 import { assertLoadedClosure, readTrustedManifest, verifyBuildIntegrity } from "../round/integrity";
-import { parseRoundScript, type RoundScript } from "../round/round-script";
+import {
+  DEFAULT_VERIFICATION_BUDGET,
+  RoundScriptVerification,
+  type RoundScript,
+} from "../round/round-script";
 import {
   DEFAULT_PREP_CHAIN_LENGTH,
   MAX_IN_FLIGHT_LIMIT,
@@ -62,12 +83,17 @@ import {
   type PrepMode,
   type PrepWorkerConfig,
   type PrepWorkerErrorCode,
+  type PreparedMessage,
   type ReadyMessage,
   type WorkerMessage,
 } from "./protocol";
 
 /** The worker's compiled entry, next to this file (no caller can choose another). */
 export const PREP_WORKER_ENTRY = "prep-worker.js";
+/** How long `start()` waits for the worker's `ready` (fixed; not an option). */
+export const PREP_START_TIMEOUT_MS = 30_000;
+/** Request ids retained beyond the chain length (for requests that reserve no index). */
+export const REQUEST_ID_SLACK = 64;
 
 export interface PrepWorkerOptions {
   readonly mode: PrepMode;
@@ -131,6 +157,14 @@ interface Pending {
   readonly reject: (error: PrepWorkerError) => void;
 }
 
+type WorkerEvent =
+  | { readonly kind: "message"; readonly raw: unknown }
+  | { readonly kind: "error" }
+  | { readonly kind: "exit"; readonly code: number };
+
+/** One turn of the event loop (between verification slices). */
+const nextTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
 export class PrepWorkerController {
   readonly chain: PrepChainInfo;
   readonly maxInFlight: number;
@@ -138,6 +172,13 @@ export class PrepWorkerController {
   readonly #hash: FairnessHashProvider;
   readonly #pending = new Map<string, Pending>();
   readonly #used = new Set<string>();
+  /** chainLength + REQUEST_ID_SLACK: the most request ids this controller ever retains. */
+  readonly #idLimit: number;
+  /** Worker events not yet handled, in arrival order (see the file comment). */
+  readonly #events: WorkerEvent[] = [];
+  #draining = false;
+  /** An `error` or `exit` event arrived (it may still wait behind a verification). */
+  #lost = false;
   #state: PrepControllerState = "ready";
   #lastIndex = 0;
   #closed: ClosedMessage | null = null;
@@ -163,9 +204,10 @@ export class PrepWorkerController {
       fv: ready.fv,
       threadId: ready.threadId,
     });
-    worker.on("message", (raw: unknown) => this.#receive(raw));
-    worker.on("error", () => this.#fail("worker-lost", "worker-error"));
-    worker.on("exit", (code: number) => this.#exited(code));
+    this.#idLimit = ready.chainLength + REQUEST_ID_SLACK;
+    worker.on("message", (raw: unknown) => this.#push({ kind: "message", raw }));
+    worker.on("error", () => this.#push({ kind: "error" }));
+    worker.on("exit", (code: number) => this.#push({ kind: "exit", code }));
     Object.freeze(this);
   }
 
@@ -206,9 +248,15 @@ export class PrepWorkerController {
         name: "aquadive-prep",
       });
       let settled = false;
+      // Fixed startup bound: a worker that never reports is terminated, never waited on forever.
+      const timer = setTimeout(
+        () => settle(new PrepWorkerError("start-failed", "startup-timeout")),
+        PREP_START_TIMEOUT_MS,
+      );
       const settle = (error: PrepWorkerError | null, controller?: PrepWorkerController) => {
         if (settled) return;
         settled = true;
+        clearTimeout(timer);
         worker.off("message", onMessage);
         worker.off("error", onError);
         worker.off("exit", onExit);
@@ -257,6 +305,10 @@ export class PrepWorkerController {
     if (this.#state !== "ready") {
       return Promise.reject(new PrepWorkerError("not-ready", this.#state));
     }
+    if (this.#lost) {
+      // The worker's error / exit is queued behind a verification: send nothing more.
+      return Promise.reject(new PrepWorkerError("not-ready", "worker-lost"));
+    }
     if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) {
       return Promise.reject(new PrepWorkerError("invalid-request", "invalid-request-id"));
     }
@@ -265,6 +317,9 @@ export class PrepWorkerController {
     }
     if (this.#used.has(requestId)) {
       return Promise.reject(new PrepWorkerError("request-replayed"));
+    }
+    if (this.#used.size >= this.#idLimit) {
+      return Promise.reject(new PrepWorkerError("request-ids-exhausted"));
     }
     if (this.#pending.size >= this.maxInFlight) {
       return Promise.reject(new PrepWorkerError("backpressure"));
@@ -312,8 +367,53 @@ export class PrepWorkerController {
     return `PrepWorkerController(${this.#state})`;
   }
 
-  #receive(raw: unknown): void {
-    if (this.#state === "failed" || this.#state === "terminated") return;
+  /** True once nothing more is handled: every pending request has been settled. */
+  #ended(): boolean {
+    return this.#state === "failed" || this.#state === "terminated" || this.#state === "closed";
+  }
+
+  /** Queues one worker event; handles the queue unless it is already being handled. */
+  #push(event: WorkerEvent): void {
+    if (event.kind !== "message") this.#lost = true;
+    if (this.#ended()) return PrepWorkerController.#discard(event);
+    this.#events.push(event);
+    if (!this.#draining) void this.#drain();
+  }
+
+  /** Strictly one event at a time, in arrival order; a verification finishes before the next. */
+  async #drain(): Promise<void> {
+    this.#draining = true;
+    try {
+      while (this.#events.length > 0) {
+        const event = this.#events.shift()!;
+        if (this.#ended()) {
+          PrepWorkerController.#discard(event);
+          continue;
+        }
+        if (event.kind === "error") this.#fail("worker-lost", "worker-error");
+        else if (event.kind === "exit") this.#exited(event.code);
+        else await this.#receive(event.raw);
+      }
+    } catch {
+      // Not reachable by design (#receive settles everything itself); fail closed regardless.
+      this.#fail("protocol-violation", "controller-error");
+    } finally {
+      this.#draining = false;
+    }
+  }
+
+  /** An event that arrived after the end: an owned result buffer is still zeroed. */
+  static #discard(event: WorkerEvent): void {
+    if (event.kind !== "message") return;
+    try {
+      const message = parseWorkerMessage(event.raw);
+      if (message.type === "prepared") message.bytes.fill(0);
+    } catch {
+      // Not a contract message: nothing of ours to clear.
+    }
+  }
+
+  async #receive(raw: unknown): Promise<void> {
     let message: WorkerMessage;
     try {
       message = parseWorkerMessage(raw);
@@ -323,15 +423,14 @@ export class PrepWorkerController {
     switch (message.type) {
       case "prepared": {
         const pending = this.#pending.get(message.requestId);
-        if (pending === undefined) return this.#fail("protocol-violation", "unknown-request");
-        let script: RoundScript;
-        try {
-          script = parseRoundScript(this.#hash, message.bytes, message.digest);
-        } catch {
-          return this.#fail("protocol-violation", "result-invalid");
-        } finally {
-          message.bytes.fill(0); // parseRoundScript keeps its own copy
+        if (pending === undefined) {
+          message.bytes.fill(0);
+          return this.#fail("protocol-violation", "unknown-request");
         }
+        const script = await this.#verify(message);
+        // Refused (protocol violation) or cancelled: settled already. Ended in the last slice (a
+        // re-entrant terminate): the request was rejected as INDETERMINATE; nothing is delivered.
+        if (script === null || this.#ended()) return;
         if (
           script.public.chainId !== this.chain.chainId ||
           script.public.chainIndex !== message.chainIndex ||
@@ -355,7 +454,13 @@ export class PrepWorkerController {
           }
           this.#lastIndex = message.chainIndex!;
         }
-        if (message.indexState !== "untouched" && this.#state === "ready") this.#state = "halted";
+        // The worker halted (it touched an index, or reports that it is halted): so does this.
+        if (
+          (message.indexState !== "untouched" || message.code === "worker-halted") &&
+          this.#state === "ready"
+        ) {
+          this.#state = "halted";
+        }
         this.#pending.delete(message.requestId);
         pending.reject(
           new PrepWorkerError("preparation-failed", message.code, {
@@ -376,6 +481,40 @@ export class PrepWorkerController {
       default:
         // ready / fatal / rejected after start: the controller never sends malformed messages.
         return this.#fail("protocol-violation", "unexpected-message");
+    }
+  }
+
+  /**
+   * Verifies one result in slices of DEFAULT_VERIFICATION_BUDGET operations, yielding to the
+   * event loop between them. Null if it was refused (the controller failed) or the controller
+   * ended meanwhile (terminate: the request was already rejected as INDETERMINATE, and the
+   * cancelled verification zeroed its copy). The received bytes were transferred to this thread,
+   * so it owns them: they are zeroed as soon as the private copy exists (or the copy failed).
+   */
+  async #verify(message: PreparedMessage): Promise<RoundScript | null> {
+    let verification: RoundScriptVerification;
+    try {
+      verification = RoundScriptVerification.begin(this.#hash, message.bytes, message.digest);
+    } catch {
+      this.#fail("protocol-violation", "result-invalid");
+      return null;
+    } finally {
+      message.bytes.fill(0);
+    }
+    try {
+      for (;;) {
+        const script = verification.step(DEFAULT_VERIFICATION_BUDGET);
+        // The caller resumes a microtask later and re-checks #ended() before it delivers.
+        if (script !== null) return script;
+        await nextTurn();
+        if (this.#ended()) {
+          verification.cancel();
+          return null;
+        }
+      }
+    } catch {
+      this.#fail("protocol-violation", "result-invalid");
+      return null;
     }
   }
 

@@ -22,7 +22,9 @@
 // Failures (fail closed; NOT a production D10 / OD-11 policy). A failed request reports the fixed
 // code and what it did to the chain, read from the vault's reservation frontier before and after.
 // If it touched an index (`consumed`), or the frontier cannot be read (`unknown`), the worker
-// HALTS: every later request is refused with `worker-halted` and reserves nothing. Nothing is
+// HALTS: every later request is refused with `worker-halted` and reserves nothing (and a request
+// refused because the frontier could not be read BEFORE it is reported as `worker-halted` with
+// reason `chain-unavailable`, so the controller halts as well; P8-4b-1). Nothing is
 // retried here or in the controller, so an ambiguous failure can never consume a fresh index.
 // A crash of this thread loses its in-memory store, and with it every seed, reservation and
 // disposition of its chain: the controller reports the pending requests as INDETERMINATE, never
@@ -146,9 +148,10 @@ class PreparationWorker {
     }
     const before = await this.#frontier();
     if (before === null) {
-      // Nothing was reserved yet, but the chain can no longer be read: stop.
+      // Nothing was reserved yet, but the chain can no longer be read: stop, and say so — the
+      // controller halts on `worker-halted` (P8-4b-1; the reason names the cause).
       this.#halted = true;
-      this.#postFailed(message.requestId, "chain-unavailable", null, "untouched", null);
+      this.#postFailed(message.requestId, "worker-halted", "chain-unavailable", "untouched", null);
       return;
     }
     let script;

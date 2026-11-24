@@ -65,23 +65,23 @@
     },
     {
       "path": "server/src/prep/controller.js",
-      "bytes": 16236,
-      "sha256": "72c9e0f6ac7d6c1d1b6bfcf4e11a1b95c955156a1ad22f5d234b159fee6026ab"
+      "bytes": 22425,
+      "sha256": "821f8ad8064807750d56bf7d1e7844942dafba6baa9a494c05a3f71907462d4e"
     },
     {
       "path": "server/src/prep/prep-worker.js",
-      "bytes": 9808,
-      "sha256": "f93efdcd412ecc7cef0b836fc34ee46c9fad3192cdaa51743d29c1c3ef67e48e"
+      "bytes": 10112,
+      "sha256": "499f3311ea27683df88c071719514e25ae79a2f28e3721c667910294dc710769"
     },
     {
       "path": "server/src/prep/protocol.js",
-      "bytes": 12094,
-      "sha256": "cd09b64034a89b8d8024f412d68759bbd03cd5f4e733d2cd8f02c3fc901cc7ed"
+      "bytes": 14242,
+      "sha256": "ec685ff013c15e8b3a5a044e46538316a8dc259e3897618de89220620a66418e"
     },
     {
       "path": "server/src/round/canonical.js",
-      "bytes": 5530,
-      "sha256": "b2c4067c2c17420c9a8e343e2d2597796c822064fdf5f880f4a7e6b828972494"
+      "bytes": 15555,
+      "sha256": "de6c0b5ae3e31fa8bf7894444e70d022738ff6362dbe9b6272b866711ff74a70"
     },
     {
       "path": "server/src/round/engine-runtime.js",
@@ -115,8 +115,8 @@
     },
     {
       "path": "server/src/round/round-script.js",
-      "bytes": 15308,
-      "sha256": "286f7d6ca2251fc36f066fa970b9f53d2aa2ecbd71a3a6e7eabbd989b4687992"
+      "bytes": 26489,
+      "sha256": "b985b21c42ab3b8c44154133c3556ef55574943eb6d6d53132f0e4c6813c5a1e"
     },
     {
       "path": "src/fairness/chain.js",

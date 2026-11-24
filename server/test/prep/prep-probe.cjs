@@ -17,6 +17,11 @@
 //   contract    worker-config / message / option / construction injection, duplicates, backpressure
 //   lifecycle   start, close, close while busy, terminate while busy, use after close / terminate
 //   crash       (patched builds) pending requests after a worker crash / protocol violation
+//               (P8-4b-1: also halts, results followed by an exit, hostile payloads; with the
+//               longest main-thread event-loop gap while the two requests were handled)
+//   start       (patched builds, P8-4b-1) start() of a worker that never reports ready
+//   ids         (P8-4b-1) the request-id bound: chainLength + 64 ids, none evicted
+//   slice       (patched controller, P8-4b-1) terminate() between two verification slices
 //   integrity   (tampered builds) controller start and a raw worker refuse the build
 //   startup     the compiled application loads no prep, round, engine or fairness module
 //   respond     main-thread event-loop gaps while 1, 10 and 50 rounds are prepared (worker)
@@ -687,16 +692,91 @@ const CONFIG = (over = {}) => ({
       return emit(report);
     }
     const c = started.value;
+    const stopGaps = gapTicker();
     const results = await Promise.all([
       settle(c.prepare("x-1", V.saltAHex)),
       settle(c.prepare("x-2", V.saltAHex)),
     ]);
+    report.maxGapMs = stats(stopGaps()).max;
     report.results = results.map((x) => (x.ok ? { ok: true, chainIndex: x.value.chainIndex } : x));
     report.state = c.state;
     report.after = await settle(c.prepare("x-3", V.saltAHex));
     report.close = await settle(c.close());
     await new Promise((res) => setImmediate(res));
     report.workerHandles = process.getActiveResourcesInfo().filter((x) => /Worker/.test(x)).length;
+    return emit(report);
+  }
+
+  // ==== start (P8-4b-1; run on a build whose worker never reports ready) ========================
+  if (scenario === "start") {
+    const t0 = performance.now();
+    report.result = await settle(
+      PrepWorkerController.start({ mode: "test", chain: "public-test-vectors" }),
+    );
+    report.elapsedMs = Math.round(performance.now() - t0);
+    report.timeoutMs = load("server/src/prep/controller.js").PREP_START_TIMEOUT_MS;
+    await new Promise((res) => setTimeout(res, 50));
+    report.workerHandles = process.getActiveResourcesInfo().filter((x) => /Worker/.test(x)).length;
+    return emit(report);
+  }
+
+  // ==== ids (P8-4b-1): chainLength + 64 request ids, none evicted ================================
+  if (scenario === "ids") {
+    const { REQUEST_ID_SLACK } = load("server/src/prep/controller.js");
+    const c = await PrepWorkerController.start({
+      mode: "development",
+      chain: "random",
+      chainLength: 1,
+    });
+    const r = { slack: REQUEST_ID_SLACK, sent: 0, outcomes: {} };
+    const count = (key) => (r.outcomes[key] = (r.outcomes[key] ?? 0) + 1);
+    // One prepared round (index 1), then requests the exhausted chain refuses untouched.
+    for (let i = 1; i <= c.chain.chainLength + REQUEST_ID_SLACK; i++) {
+      const x = await settle(c.prepare(`id-${i}`, SALT_C));
+      r.sent += 1;
+      count(
+        x.ok
+          ? `prepared:${x.value.chainIndex}`
+          : `${x.error.code}:${x.error.reason}:${x.error.indexState}`,
+      );
+    }
+    r.state = c.state;
+    r.exhausted = await settle(c.prepare("id-new", SALT_C));
+    r.replayedOld = await settle(c.prepare("id-1", SALT_C));
+    r.replayedLast = await settle(
+      c.prepare(`id-${c.chain.chainLength + REQUEST_ID_SLACK}`, SALT_C),
+    );
+    r.inFlight = c.inFlight;
+    r.stateAfter = c.state;
+    r.closed = await c.close();
+    report.ids = r;
+    return emit(report);
+  }
+
+  // ==== slice (P8-4b-1; run on a build whose controller calls a test hook per slice) ============
+  if (scenario === "slice") {
+    const c = await PrepWorkerController.start({ mode: "test", chain: "public-test-vectors" });
+    const r = { slices: 0, receivedBytesZeroed: null, stateAtTerminate: null, verification: [] };
+    let verification = null;
+    globalThis.__p84b1Slice = (bytes, v) => {
+      r.slices += 1;
+      verification = v;
+      if (r.slices === 1) r.receivedBytesZeroed = bytes.every((b) => b === 0);
+      if (r.slices === 2) {
+        r.stateAtTerminate = v.state;
+        void c.terminate();
+      }
+    };
+    const results = await Promise.all([
+      settle(c.prepare("s-1", V.saltAHex)),
+      settle(c.prepare("s-2", V.saltAHex)),
+    ]);
+    await new Promise((res) => setTimeout(res, 50));
+    r.verification = [verification && verification.state, JSON.stringify(verification)];
+    r.results = results;
+    r.state = c.state;
+    r.slicesAfterTerminate = r.slices;
+    report.slice = r;
     return emit(report);
   }
 

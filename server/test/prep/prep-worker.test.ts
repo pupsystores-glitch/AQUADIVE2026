@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as tool from "../../scripts/engine-integrity.mjs";
+import { PREP_START_TIMEOUT_MS, REQUEST_ID_SLACK } from "../../src/prep/controller";
 import {
   SERVER,
   TRUSTED_MANIFEST,
@@ -82,6 +83,21 @@ const patched = (
   if (manifest === "rehashed") writeRehashedManifest(copy);
   return copy;
 };
+
+/** As `patched`, with several [file, anchor, replacement] patches; always a rehashed manifest. */
+const patchedMany = (name: string, patches: readonly [string, string, string][]): string => {
+  const [first, ...rest] = patches;
+  const copy = patched(name, first![0], first![1], first![2], "trusted");
+  for (const [file, anchor, replacement] of rest) {
+    const path = join(copy, ...file.split("/"));
+    const code = readFileSync(path, "utf8");
+    expect(code.split(anchor).length - 1, anchor).toBe(1);
+    writeFileSync(path, code.replace(anchor, replacement));
+  }
+  writeRehashedManifest(copy);
+  return copy;
+};
+const WORKER_POST = "this.#port.postMessage(prepared, [bytes.buffer]);";
 
 const INDETERMINATE = (code: string, reason: string) => ({
   ok: false,
@@ -379,6 +395,173 @@ describe("lifecycle and failures", () => {
       expectEnded(r, reason);
     },
   );
+});
+
+describe("P8-4b-1 lifecycle: ordering, halt, timeout, cancellation, request ids", () => {
+  const expectEnded = (r: Report) => {
+    expect(r.state).toBe("failed");
+    expect(r.after.error).toMatchObject({ code: "not-ready", reason: "failed" });
+    expect(r.close.error).toMatchObject({ code: "not-ready", reason: "failed" });
+    expect(r.workerHandles).toBe(0);
+  };
+
+  it("fixed constants: a 30 s startup bound, chainLength + 64 request ids", () => {
+    expect(PREP_START_TIMEOUT_MS).toBe(30_000);
+    expect(REQUEST_ID_SLACK).toBe(64);
+  });
+
+  it("a worker halted before a request (unreadable frontier) halts the controller", () => {
+    // P8-4b-0 reported this as an ordinary `chain-unavailable` failure and stayed `ready`.
+    const copy = patched(
+      "halt-frontier",
+      "server/src/prep/prep-worker.js",
+      "return (await this.#env.chainStatus(this.#chainId)).lastReservedIndex;",
+      "if (!globalThis.__p84b1Halt) { globalThis.__p84b1Halt = true; return null; } " +
+        "return (await this.#env.chainStatus(this.#chainId)).lastReservedIndex;",
+      "rehashed",
+    );
+    const r = probe(copy, "crash");
+    const halted = {
+      ok: false,
+      error: expect.objectContaining({
+        code: "preparation-failed",
+        reason: "worker-halted",
+        indexState: "untouched",
+        chainIndex: null,
+        indeterminate: false,
+      }),
+    };
+    expect(r.results).toEqual([halted, halted]);
+    expect(r.state).toBe("halted");
+    expect(r.after.error).toMatchObject({ code: "not-ready", reason: "halted" });
+    // Nothing was reserved; the worker still closes cleanly.
+    expect(r.close).toMatchObject({
+      ok: true,
+      value: { prepared: 0, failed: 0, lastReservedIndex: 0, chainState: "active" },
+    });
+  });
+
+  it("a result then an exit: events are handled in order (the result first, then the loss)", () => {
+    const copy = patched(
+      "post-then-exit",
+      "server/src/prep/prep-worker.js",
+      WORKER_POST,
+      `${WORKER_POST} process.exit(3);`,
+      "rehashed",
+    );
+    const r = probe(copy, "crash");
+    expect(r.results).toEqual([
+      { ok: true, chainIndex: 1 },
+      INDETERMINATE("worker-lost", "worker-exited"),
+    ]);
+    expectEnded(r);
+  });
+
+  it.each([
+    [
+      "a 4 MiB number array (the P8-4b-0 2 s / OOM payload)",
+      "hostile-4mib",
+      '{ const h = new TextEncoder().encode("[" + "1,".repeat(2097150) + "1]"); ' +
+        "this.#port.postMessage({ ...prepared, bytes: h }, [h.buffer]); }",
+    ],
+    [
+      "one byte over the proved cap",
+      "hostile-cap",
+      "{ const h = new Uint8Array(196609).fill(32); h.set(bytes); " +
+        "this.#port.postMessage({ ...prepared, bytes: h }, [h.buffer]); }",
+    ],
+    [
+      "a valid script in a SharedArrayBuffer",
+      "hostile-sab",
+      "{ const s = new Uint8Array(new SharedArrayBuffer(bytes.length)); s.set(bytes); " +
+        "this.#port.postMessage({ ...prepared, bytes: s }); }",
+    ],
+    [
+      "a valid script in an offset view",
+      "hostile-offset",
+      "{ const o = new Uint8Array(bytes.length + 8); o.set(bytes, 8); " +
+        "this.#port.postMessage({ ...prepared, bytes: o.subarray(8) }, [o.buffer]); }",
+    ],
+  ])("%s is a contract violation, refused before any byte is read", (_name, dir, replacement) => {
+    const r = probe(
+      patched(dir, "server/src/prep/prep-worker.js", WORKER_POST, replacement, "rehashed"),
+      "crash",
+    );
+    expect(r.results).toEqual([
+      INDETERMINATE("protocol-violation", "invalid-message"),
+      INDETERMINATE("protocol-violation", "invalid-message"),
+    ]);
+    expectEnded(r);
+    // No main-thread turn was held for anything like a parse of the payload (P8-4b-0: 2.1 s).
+    expect(r.maxGapMs).toBeLessThan(250);
+  });
+
+  it("start() fails with startup-timeout when the worker never reports ready", () => {
+    const copy = patchedMany("start-timeout", [
+      [
+        "server/src/prep/prep-worker.js",
+        "void start(node_worker_threads_1.parentPort);",
+        "setInterval(() => {}, 1000);",
+      ],
+      // the fixed 30 s bound, shortened in this patched copy only
+      [
+        "server/src/prep/controller.js",
+        "exports.PREP_START_TIMEOUT_MS = 30_000;",
+        "exports.PREP_START_TIMEOUT_MS = 400;",
+      ],
+    ]);
+    const r = probe(copy, "start");
+    expect(r.result).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: "start-failed", reason: "startup-timeout" }),
+    });
+    expect(r.timeoutMs).toBe(400);
+    expect(r.elapsedMs).toBeGreaterThanOrEqual(390);
+    expect(r.elapsedMs).toBeLessThan(10_000);
+    expect(r.workerHandles).toBe(0); // the silent worker was terminated
+  });
+
+  it("retains chainLength + 64 request ids, evicts none, then refuses without sending", () => {
+    const { ids: r } = probe(dist, "ids");
+    expect(r.sent).toBe(1 + 64);
+    expect(r.outcomes).toEqual({
+      "prepared:1": 1,
+      "preparation-failed:chain-unavailable:untouched": 64,
+    });
+    expect(r.state).toBe("ready");
+    expect(r.exhausted.error).toMatchObject({ code: "request-ids-exhausted", reason: null });
+    // old ids are still known: replays are still detected, never re-sent
+    expect(r.replayedOld.error).toMatchObject({ code: "request-replayed" });
+    expect(r.replayedLast.error).toMatchObject({ code: "request-replayed" });
+    expect(r.inFlight).toBe(0);
+    expect(r.stateAfter).toBe("ready");
+    // the worker saw exactly the 65 sent requests
+    expect(r.closed).toMatchObject({ prepared: 1, failed: 64, lastReservedIndex: 1 });
+  });
+
+  it("terminate() between verification slices: cancelled, zeroed, INDETERMINATE, not delivered", () => {
+    const copy = patched(
+      "slice-hook",
+      "server/src/prep/controller.js",
+      "const script = verification.step(round_script_1.DEFAULT_VERIFICATION_BUDGET);",
+      "globalThis.__p84b1Slice?.(message.bytes, verification); " +
+        "const script = verification.step(round_script_1.DEFAULT_VERIFICATION_BUDGET);",
+      "rehashed",
+    );
+    const { slice: r } = probe(copy, "slice");
+    expect(r.receivedBytesZeroed).toBe(true); // zeroed once the private copy existed
+    expect(r.stateAtTerminate).toBe("running");
+    expect(r.slicesAfterTerminate).toBe(2); // no slice ran after the next turn
+    expect(r.verification).toEqual([
+      "cancelled",
+      '{"verification":"RoundScriptVerification","state":"cancelled"}',
+    ]);
+    expect(r.results).toEqual([
+      INDETERMINATE("worker-terminated", "terminated-by-owner"),
+      INDETERMINATE("worker-terminated", "terminated-by-owner"),
+    ]);
+    expect(r.state).toBe("terminated");
+  });
 });
 
 describe("integrity (src/prep is protected: owner-approved P8-4b-0 expansion)", () => {

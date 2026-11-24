@@ -1,8 +1,10 @@
 // The offline preparation worker's message contract (P8-4b-0), on the TypeScript source. Pure:
 // no worker, no engine. The compiled run time is tested by prep-worker.test.ts.
 import { describe, expect, it } from "vitest";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   MAX_IN_FLIGHT_LIMIT,
+  MAX_SCRIPT_BYTES,
   PrepWorkerError,
   WORKER_FAILURE_CODES,
   parseMainMessage,
@@ -10,6 +12,7 @@ import {
   parseWorkerMessage,
 } from "../../src/prep/protocol";
 import { ROUND_SCRIPT_ERROR_CODES } from "../../src/round/errors";
+import { MAX_ROUND_SCRIPT_BYTES } from "../../src/round/round-script";
 
 const HEX64 = "ab".repeat(32);
 const SALT = "cd".repeat(32);
@@ -167,6 +170,74 @@ describe("worker → main messages", () => {
     ["unknown type", { type: "completed", requestId: "r-1" }],
   ])("refuses %s", (_name, value) => {
     expect(refused(() => parseWorkerMessage(value))).toBe(true);
+  });
+
+  describe("prepared bytes (P8-4b-1: a deliberate narrowing of the P8-4b-0 contract)", () => {
+    // P8-4b-0 accepted any plain Uint8Array of 2 … 4 MiB. Since P8-4b-1 the bytes must also be
+    // the whole of their own non-shared, fixed-length ArrayBuffer — exactly what a transfer of
+    // the worker's fresh copy yields — and at most the proved 196,608 bytes.
+    const view = (buffer: ArrayBufferLike, offset = 0, length?: number) => {
+      const v = new Uint8Array(buffer, offset, length);
+      v.fill(0x20);
+      return v;
+    };
+    const withBytes = (bytes: unknown) => ({ ...prepared, bytes });
+
+    it("accepts a whole plain buffer up to the proved cap", () => {
+      expect(MAX_SCRIPT_BYTES).toBe(196_608);
+      expect(MAX_SCRIPT_BYTES).toBe(MAX_ROUND_SCRIPT_BYTES);
+      for (const n of [2, 1000, MAX_SCRIPT_BYTES]) {
+        expect(parseWorkerMessage(withBytes(view(new ArrayBuffer(n)))).type).toBe("prepared");
+      }
+      // what the worker's transfer yields
+      const sent = Uint8Array.from([123, 125]);
+      const received = structuredClone({ ...prepared, bytes: sent }, { transfer: [sent.buffer] });
+      expect(parseWorkerMessage(received).type).toBe("prepared");
+    });
+
+    it.each([
+      ["a SharedArrayBuffer view", () => view(new SharedArrayBuffer(64))],
+      [
+        "a growable SharedArrayBuffer view",
+        () => {
+          const sab = new (SharedArrayBuffer as any)(64, { maxByteLength: 128 });
+          return view(sab);
+        },
+      ],
+      [
+        "a resizable ArrayBuffer view",
+        () => view(new (ArrayBuffer as any)(64, { maxByteLength: 128 })),
+      ],
+      [
+        "a length-tracking view",
+        () => new Uint8Array(new (ArrayBuffer as any)(64, { maxByteLength: 128 })),
+      ],
+      ["an offset view", () => view(new ArrayBuffer(64), 1)],
+      ["a partial view", () => view(new ArrayBuffer(64), 0, 63)],
+      ["an inner view", () => view(new ArrayBuffer(64), 8, 16)],
+      ["one byte over the cap", () => view(new ArrayBuffer(MAX_SCRIPT_BYTES + 1))],
+      ["the old 4 MiB maximum", () => view(new ArrayBuffer(4 * 1024 * 1024))],
+      ["one byte", () => view(new ArrayBuffer(1))],
+      [
+        "a detached buffer",
+        () => {
+          const v = view(new ArrayBuffer(64));
+          structuredClone(v.buffer, { transfer: [v.buffer] });
+          return v;
+        },
+      ],
+      [
+        "a view with a lying length",
+        () => {
+          const v = view(new ArrayBuffer(MAX_SCRIPT_BYTES + 64));
+          Object.defineProperty(v, "length", { value: 64 });
+          Object.defineProperty(v, "byteLength", { value: 64 });
+          return v;
+        },
+      ],
+    ])("refuses %s", (_name, make) => {
+      expect(refused(() => parseWorkerMessage(withBytes(make())))).toBe(true);
+    });
   });
 
   it("worker failure codes extend the round codes with fixed worker codes only", () => {

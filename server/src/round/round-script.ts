@@ -17,9 +17,27 @@
 // analytic tick bound, value ranges, draw-count rules, creature lifecycle) and the canonical
 // encoding (canonical.ts). A script holds no seed, key, stream, derivation, RoundKeys or engine.
 // The digest (SHA-256 over the canonical bytes, domain-separated) is INTERNAL (K11).
+//
+// Parsing untrusted bytes (P8-4b-1): `RoundScriptVerification` verifies canonical bytes in
+// bounded slices (`step(budget)`), so a caller on an event loop can yield between them;
+// `parseRoundScript` is the same verification run to completion. Its atomic head refuses an
+// input above MAX_ROUND_SCRIPT_BYTES before copying anything, takes one private copy, prescans
+// it (rejection only) and JSON-parses it; every later slice reads only that copy. Nothing is
+// returned before every check and the digest succeeded; a failed or cancelled verification
+// zeroes its copy.
 
 import { REDACTED, type FairnessHashProvider } from "../fairness";
-import { canonicalBytes, canonicalDigest, canonicalJson, decodeCanonical } from "./canonical";
+import {
+  CANONICAL_MAX_DEPTH,
+  CanonicalCheck,
+  canonicalBytes,
+  canonicalDigest,
+  canonicalJson,
+  decodeUtf8,
+  prescanCanonical,
+  snapshotBytes,
+  type CanonicalShapeLimits,
+} from "./canonical";
 import {
   CREATURE_KINDS,
   EXPECTED_RUNNER_PROFILE,
@@ -50,6 +68,28 @@ const CRASH_MIN = 1;
 const CRASH_MAX = 200;
 /** fv = 1 world draw limit (src/fairness PURPOSE_DRAW_LIMITS_V1.world). */
 const WORLD_DRAW_LIMIT = 2048;
+
+/**
+ * The longest canonical RoundScript the validators below can accept is shorter than this (a
+ * schema-derived upper bound of 148,738 bytes, recomputed by round-verification.test.ts from these
+ * rules: every field at its longest text, every array at its longest length). Larger inputs are
+ * refused before any copy.
+ */
+export const MAX_ROUND_SCRIPT_BYTES = 196_608;
+/** Operations per verification slice unless the caller chooses another budget. */
+export const DEFAULT_VERIFICATION_BUDGET = 512;
+/**
+ * Rejection-only prescan bounds (canonical.ts `prescanCanonical`). Each is at least the most the
+ * validators accept (tests prove it): nesting — the canonical depth rule alone allows 9; array
+ * elements — the longest array is a sample series of ≤ ANALYTIC_MAX_DIVE_TICKS; object members —
+ * the widest object has 12 keys; containers — a document has at most 303.
+ */
+export const ROUND_SCRIPT_SHAPE_LIMITS: CanonicalShapeLimits = Object.freeze({
+  maxNesting: CANONICAL_MAX_DEPTH + 1,
+  maxArrayElements: ANALYTIC_MAX_DIVE_TICKS,
+  maxObjectMembers: 16,
+  maxContainers: 512,
+});
 
 export interface RoundScriptPublic {
   readonly scriptVersion: number;
@@ -139,8 +179,26 @@ function validateCreature(c: unknown, id: number, exitDiveTick: number): void {
   }
 }
 
-/** Validates the secret part against the engine's fixed rules. */
+/** What the per-tick and per-creature checks need from the validated head of the secret part. */
+interface SecretContext {
+  readonly v: RoundScriptSecret;
+  readonly floor: boolean;
+  readonly diveTicks: number;
+}
+
+/**
+ * Validates the secret part against the engine's fixed rules. The rules are split into a head,
+ * one step per dive tick, one step per creature and a tail, so that RoundScriptVerification can
+ * run them in slices; run in this order they are exactly the P8-4a checks.
+ */
 function validateSecret(s: unknown): asserts s is RoundScriptSecret {
+  const ctx = validateSecretHead(s);
+  for (let i = 0; i < ctx.diveTicks; i++) validateSampleAt(ctx, i);
+  for (let i = 0; i < ctx.v.creatures.length; i++) validateCreatureAt(ctx, i);
+  validateSecretTail(ctx);
+}
+
+function validateSecretHead(s: unknown): SecretContext {
   check(
     keysAre(s, [
       "outcome",
@@ -190,20 +248,30 @@ function validateSecret(s: unknown): asserts s is RoundScriptSecret {
     check(Array.isArray(series) && series.length === diveTicks);
   }
   check(multiplier[0] === 1 && boost[0] === 0 && worldY[0] === 0);
-  for (let i = 0; i < diveTicks; i++) {
-    check(num(multiplier[i], 1, CRASH_MAX) && num(boost[i], 0, 1) && num(worldY[i], 0, FLOOR_Y));
-    // After the dive's start (multiplier 1, which a 1.00× crash point equals) the multiplier
-    // of every diving tick is below the crash point, and the anchor is above the floor.
-    check((i === 0 || multiplier[i]! < v.crashAt) && worldY[i]! < FLOOR_Y);
-    if (i > 0) check(worldY[i]! > worldY[i - 1]!);
-  }
-
-  // ---- Creatures: ids 1 … n in spawn order, one lifecycle each ----------------------------
+  // (The per-tick checks: validateSampleAt.) The creature list must be an array before its
+  // per-creature checks run; every check here is a pure predicate, so the order is immaterial.
   check(Array.isArray(v.creatures));
-  v.creatures.forEach((c, i) => validateCreature(c, i + 1, v.exitDiveTick));
-  for (let i = 1; i < v.creatures.length; i++) {
-    check(v.creatures[i]!.spawnTick >= v.creatures[i - 1]!.spawnTick);
-  }
+  return { v, floor, diveTicks };
+}
+
+/** Dive tick `i` (index i is tick diveStartTick + i). */
+function validateSampleAt({ v }: SecretContext, i: number): void {
+  const { multiplier, boost, worldY } = v.samples;
+  check(num(multiplier[i], 1, CRASH_MAX) && num(boost[i], 0, 1) && num(worldY[i], 0, FLOOR_Y));
+  // After the dive's start (multiplier 1, which a 1.00× crash point equals) the multiplier
+  // of every diving tick is below the crash point, and the anchor is above the floor.
+  check((i === 0 || multiplier[i]! < v.crashAt) && worldY[i]! < FLOOR_Y);
+  if (i > 0) check(worldY[i]! > worldY[i - 1]!);
+}
+
+/** Creature `i`: ids 1 … n in spawn order, one lifecycle each (creature i − 1 checked before). */
+function validateCreatureAt({ v }: SecretContext, i: number): void {
+  validateCreature(v.creatures[i], i + 1, v.exitDiveTick);
+  if (i > 0) check(v.creatures[i]!.spawnTick >= v.creatures[i - 1]!.spawnTick);
+}
+
+function validateSecretTail({ v, floor, diveTicks }: SecretContext): void {
+  const { worldY } = v.samples;
 
   // ---- The final world (the engine snapshot at the terminal tick) -------------------------
   check(keysAre(v.final, ["worldY", "boost", "multiplier", "nextSpawnAt", "nextCreatureId"]));
@@ -353,24 +421,236 @@ export function buildRoundScript(
 /**
  * Parses canonical RoundScript bytes (for example a stored copy) and validates them fully.
  * With `expectedDigest`, refuses any alteration (`script-digest-mismatch`). Errors carry no
- * detail: before the reveal the content is secret.
+ * detail: before the reveal the content is secret. Synchronous: RoundScriptVerification run to
+ * completion in one call.
  */
 export function parseRoundScript(
   provider: FairnessHashProvider,
   bytes: Uint8Array,
   expectedDigest?: string,
 ): RoundScript {
-  const doc = decodeCanonical(bytes);
-  check(keysAre(doc, ["public", "secret"]));
-  const { public: pub, secret } = doc as { public: unknown; secret: unknown };
-  validatePublic(pub);
-  validateSecret(secret);
-  const copy = Uint8Array.from(bytes);
-  const digest = canonicalDigest(provider, copy);
-  if (expectedDigest !== undefined && digest !== expectedDigest) {
-    throw new RoundScriptError("script-digest-mismatch");
+  return RoundScriptVerification.begin(provider, bytes, expectedDigest).step(
+    Number.POSITIVE_INFINITY,
+  )!;
+}
+
+export type RoundScriptVerificationState = "running" | "verified" | "failed" | "cancelled";
+
+// Phases of a verification, in order.
+const PHASE_CANONICAL = 0; // the canonical check, one value or container end per operation
+const PHASE_DOCUMENT = 1; // document keys, public part, head of the secret part (one operation)
+const PHASE_SAMPLES = 2; // one dive tick per operation
+const PHASE_CREATURES = 3; // one creature per operation
+const PHASE_TAIL = 4; // final world and draw counts (one operation)
+const PHASE_FREEZE = 5; // one object or array frozen per operation
+const PHASE_DIGEST = 6; // the digest over the private copy and the result (one operation)
+
+/**
+ * The verification of untrusted canonical RoundScript bytes, in slices (P8-4b-1).
+ *
+ * `begin(provider, bytes, expectedDigest?)` is the atomic head: it refuses an input longer than
+ * MAX_ROUND_SCRIPT_BYTES before copying or allocating anything, takes ONE private copy, runs the
+ * rejection-only prescan on it, decodes it (strict UTF-8) and JSON-parses it. `step(budget)` then
+ * performs at most `budget` operations of the remaining checks and returns null until the last
+ * one; the step that completes them computes the digest over the private copy, compares it with
+ * `expectedDigest` and returns the deeply frozen RoundScript — nothing is exposed before that.
+ * Every check is the one `parseRoundScript` has always run, with the same errors (`script-invalid`,
+ * then `script-digest-mismatch`), whatever the budget.
+ *
+ * A failed step (it throws) or `cancel()` ends the verification and zeroes the private copy; a
+ * completed one hands the copy to the RoundScript. The decoded text and parsed values are
+ * JavaScript strings and numbers that cannot be zeroed; they become unreachable. Everything a
+ * verification holds is SECRET before the reveal: it shows its state only.
+ */
+export class RoundScriptVerification {
+  readonly #provider: FairnessHashProvider;
+  readonly #expectedDigest: string | undefined;
+  #copy: Uint8Array | null;
+  #check: CanonicalCheck | null;
+  #state: RoundScriptVerificationState = "running";
+  #phase = PHASE_CANONICAL;
+  #pub: RoundScriptPublic | null = null;
+  #secret: RoundScriptSecret | null = null;
+  #context: SecretContext | null = null;
+  #index = 0;
+  #freeze: object[] = [];
+
+  /** Use `RoundScriptVerification.begin`. */
+  private constructor(
+    token: symbol,
+    provider: FairnessHashProvider,
+    copy: Uint8Array,
+    check: CanonicalCheck,
+    expectedDigest: string | undefined,
+  ) {
+    if (token !== CONSTRUCT) throw new RoundScriptError("script-invalid");
+    this.#provider = provider;
+    this.#copy = copy;
+    this.#check = check;
+    this.#expectedDigest = expectedDigest;
+    Object.freeze(this);
   }
-  return new RoundScript(CONSTRUCT, deepFreeze(pub), deepFreeze(secret), copy, digest);
+
+  /** The atomic head (see the class comment). Throws `script-invalid`. */
+  static begin(
+    provider: FairnessHashProvider,
+    bytes: Uint8Array,
+    expectedDigest?: string,
+  ): RoundScriptVerification {
+    const copy = snapshotBytes(bytes, MAX_ROUND_SCRIPT_BYTES);
+    try {
+      if (!prescanCanonical(copy, ROUND_SCRIPT_SHAPE_LIMITS)) invalid();
+      const check = CanonicalCheck.parse(decodeUtf8(copy));
+      return new RoundScriptVerification(CONSTRUCT, provider, copy, check, expectedDigest);
+    } catch (error) {
+      copy.fill(0);
+      throw error;
+    }
+  }
+
+  get state(): RoundScriptVerificationState {
+    return this.#state;
+  }
+
+  /**
+   * Performs at most `budget` (≥ 1; `Infinity` runs to the end) operations. Returns the verified
+   * RoundScript from the step that completes the verification, null before. Throws the
+   * verification's error (and ends it), or `invalid-request` once it has ended.
+   */
+  step(budget: number = DEFAULT_VERIFICATION_BUDGET): RoundScript | null {
+    if (this.#state !== "running") {
+      throw new RoundScriptError("invalid-request", "verification-ended");
+    }
+    if (!(typeof budget === "number" && budget >= 1)) {
+      throw new RoundScriptError("invalid-request", "invalid-budget");
+    }
+    try {
+      return this.#run(budget);
+    } catch (error) {
+      this.#end("failed");
+      throw error;
+    }
+  }
+
+  /** Ends a running verification without a result and zeroes its private copy. */
+  cancel(): void {
+    if (this.#state === "running") this.#end("cancelled");
+  }
+
+  toJSON(): { verification: string; state: RoundScriptVerificationState } {
+    return { verification: "RoundScriptVerification", state: this.#state };
+  }
+
+  toString(): string {
+    return `RoundScriptVerification(${this.#state}) ${REDACTED}`;
+  }
+
+  [INSPECT](): string {
+    return this.toString();
+  }
+
+  #run(budget: number): RoundScript | null {
+    let used = 0;
+    for (;;) {
+      if (used >= budget) return null;
+      switch (this.#phase) {
+        case PHASE_CANONICAL: {
+          const canonical = this.#check!;
+          const before = canonical.operations;
+          const done = canonical.step(budget - used);
+          used += canonical.operations - before;
+          if (!done) return null;
+          this.#phase = PHASE_DOCUMENT;
+          break;
+        }
+        case PHASE_DOCUMENT: {
+          used += 1;
+          const doc = this.#check!.value;
+          this.#check = null;
+          check(keysAre(doc, ["public", "secret"]));
+          const { public: pub, secret } = doc as { public: unknown; secret: unknown };
+          this.#pub = pub as RoundScriptPublic;
+          this.#secret = secret as RoundScriptSecret;
+          validatePublic(this.#pub);
+          this.#context = validateSecretHead(this.#secret);
+          this.#phase = PHASE_SAMPLES;
+          this.#index = 0;
+          break;
+        }
+        case PHASE_SAMPLES: {
+          const ctx = this.#context!;
+          while (this.#index < ctx.diveTicks) {
+            if (used >= budget) return null;
+            used += 1;
+            validateSampleAt(ctx, this.#index);
+            this.#index += 1;
+          }
+          this.#phase = PHASE_CREATURES;
+          this.#index = 0;
+          break;
+        }
+        case PHASE_CREATURES: {
+          const ctx = this.#context!;
+          while (this.#index < ctx.v.creatures.length) {
+            if (used >= budget) return null;
+            used += 1;
+            validateCreatureAt(ctx, this.#index);
+            this.#index += 1;
+          }
+          this.#phase = PHASE_TAIL;
+          break;
+        }
+        case PHASE_TAIL: {
+          used += 1;
+          validateSecretTail(this.#context!);
+          this.#freeze = [this.#pub!, this.#secret!];
+          this.#phase = PHASE_FREEZE;
+          break;
+        }
+        case PHASE_FREEZE: {
+          // deepFreeze, iteratively: JSON.parse output is a tree of fresh plain objects and
+          // arrays that only this verification references.
+          const stack = this.#freeze;
+          while (stack.length > 0) {
+            if (used >= budget) return null;
+            used += 1;
+            const node = stack.pop()!;
+            const children = Array.isArray(node) ? node : Object.values(node);
+            for (const child of children) {
+              if (child !== null && typeof child === "object") stack.push(child as object);
+            }
+            Object.freeze(node);
+          }
+          this.#phase = PHASE_DIGEST;
+          break;
+        }
+        default: {
+          // PHASE_DIGEST: the digest of exactly the bytes that were validated (the private copy).
+          used += 1;
+          const copy = this.#copy!;
+          const digest = canonicalDigest(this.#provider, copy);
+          if (this.#expectedDigest !== undefined && digest !== this.#expectedDigest) {
+            throw new RoundScriptError("script-digest-mismatch");
+          }
+          const script = new RoundScript(CONSTRUCT, this.#pub!, this.#secret!, copy, digest);
+          this.#copy = null; // owned by the script now
+          this.#end("verified");
+          return script;
+        }
+      }
+    }
+  }
+
+  #end(state: RoundScriptVerificationState): void {
+    this.#state = state;
+    this.#copy?.fill(0);
+    this.#copy = null;
+    this.#check = null;
+    this.#pub = null;
+    this.#secret = null;
+    this.#context = null;
+    this.#freeze = [];
+  }
 }
 
 /**
