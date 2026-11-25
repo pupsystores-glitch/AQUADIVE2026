@@ -235,7 +235,9 @@ describe("admission, contract and failure behaviour (compiled)", () => {
     expect(r.pollBeforeStart.error).toMatchObject({ reason: "not-started" });
     expect(r.duplicate.error).toMatchObject({ code: "duplicate-instance" });
     expect(r.duplicateOtherSource.error).toMatchObject({ code: "duplicate-instance" });
-    expect(r.claimAgain.error).toMatchObject({ reason: "source-claimed" });
+    // R-1: no public claim; the one-time binder belongs to the compiled scheduler module.
+    expect(r.publicClaim).toBe("undefined");
+    expect(r.claimAgain.error).toMatchObject({ code: "invalid-state", reason: "binder-claimed" });
     expect(r.startTwice.error).toMatchObject({ reason: "started" });
     expect(r.keys).toEqual(["chain"]);
     expect(r.closedState).toBe("halted");
@@ -351,13 +353,18 @@ describe("security corrections H-1 / M-1 / L-1 / L-2 (compiled CommonJS)", () =>
       expect(round1.outcome).toBe("crash");
       expect(r.crashed).toEqual([expect.objectContaining({ round: 1, crashAt: round1.crashAt })]);
       expect(r.crashed[0].crashAt).not.toBe(99.99);
-      expect(r.claimAgain.error).toMatchObject({ reason: "source-claimed" });
+      expect(r.claimAgain.error).toMatchObject({ reason: "binder-claimed" });
     },
   );
 
   it("M-1: the compiled sealed module exposes no opener; a fresh module instance cannot open", () => {
     const r = probe(dist, "sealed");
-    expect(r.exports).toEqual(["SealedRound", "claimSealedRoundOpener", "sealRoundScript"]);
+    expect(r.exports).toEqual([
+      "SealedRound",
+      "claimSealedRoundOpener",
+      "claimSourceSealing",
+      "sealRoundScript",
+    ]);
     expect(r.classKeys).toEqual(["length", "name", "prototype", "seal"]);
     expect(r.classSymbols).toEqual([]);
     expect(r.protoSymbols).toEqual(["Symbol(nodejs.util.inspect.custom)"]);
@@ -456,6 +463,12 @@ describe("security corrections H-1 / M-1 / L-1 / L-2 (compiled CommonJS)", () =>
       sealState: "discarded",
       sourceState: "closed",
     });
+    // R-1: this process claimed the binder before scheduler.js loaded, so it cannot load.
+    expect(r.schedulerLoad.error).toMatchObject({
+      code: "invalid-state",
+      reason: "binder-claimed",
+    });
+    expect(r.bindAgain.error).toMatchObject({ reason: "source-claimed" });
   });
 
   it.each(["internal-delivery", "internal-poll"])(
@@ -500,6 +513,162 @@ describe("security corrections H-1 / M-1 / L-1 / L-2 (compiled CommonJS)", () =>
       expect(JSON.stringify(r)).not.toContain("injected");
     },
   );
+});
+
+describe("R-1 source authenticity (compiled CommonJS)", () => {
+  /** The independent vectors of the public chain's rounds 1 and 2 (salt A). */
+  const expected = [1, 2].map((index) => {
+    const v = VECTORS.find(
+      (x: Report) => x.set === "dev-v1" && x.salt === "A" && x.index === index,
+    );
+    expect(v.outcome).toBe("crash");
+    return { round: index, crashAt: v.crashAt, jackpot: null };
+  });
+
+  // Before the correction every vector played the chosen 77.77x on the legitimate chain id
+  // (R-1: reproduced on 5d90e5f; R-1b, the controller's verifier path: reproduced on the R-1
+  // correction; docs/09 §46, server README §18).
+  /** R-1b vectors: the frozen module refuses the replacement; the binding is tested below. */
+  const R1B_REFUSED = [
+    "verification-step",
+    "verification-export",
+    "verification-begin",
+    "canonical-check",
+    "canonical-value",
+    "decode-utf8",
+    "parse-message",
+    "worker-entry",
+  ];
+  it.each([
+    "claim-proto",
+    "claim-define",
+    "claim-setproto",
+    "seal-export",
+    "seal-static",
+    "seal-hasinstance",
+    "core-deliver",
+    "core-export",
+    "disclosure-open",
+    "disclosure-export",
+    "event-log",
+    "verify-export",
+    // R-1b: RoundScript and the controller are frozen too now.
+    "secret-content",
+    "controller-prepare",
+    "controller-start",
+    "controller-export",
+    ...R1B_REFUSED,
+  ])("%s: the replacement is refused; the legitimate rounds are played", (v) => {
+    const r = probe(dist, "r1", v);
+    expect(r.armed).toBe(false);
+    expect(r.armError).toBe("TypeError");
+    expect(r.forgedUsed).toBe(0);
+    expect(r.outcomes).toEqual(expected);
+    expect(r.admitted).toEqual([1, 2, 3]); // round 3 opens as round 2 ends
+    expect(r.failures).toEqual([]);
+  });
+
+  it.each(["worker-class", "node-options", "integrity-export"])(
+    "%s (R-1b; installed after load): never reached; the legitimate rounds are played",
+    (v) => {
+      // node:worker_threads, process.env and integrity.js stay writable; the controller bound
+      // Worker and the integrity checks as it loaded and gives the worker an explicit env.
+      const r = probe(dist, "r1", v);
+      expect(r.armed).toBe(true);
+      expect(r.forgedUsed).toBe(0); // incl. code run inside the worker (marker file)
+      expect(r.outcomes).toEqual(expected);
+      expect(r.failures).toEqual([]);
+    },
+  );
+
+  // The load-time BINDING layer alone (R-1b): classes, prototypes and exports left unfrozen
+  // (Object.freeze skips them, before any module loads), so every replacement takes effect.
+  it.each([
+    ...R1B_REFUSED,
+    "worker-class",
+    "node-options",
+    "secret-content",
+    "controller-prepare",
+    "controller-start",
+    "controller-export",
+  ])("%s, nothing frozen: installed, never reached (load-time bindings)", (v) => {
+    const r = probe(dist, "r1-unfrozen", v);
+    expect(r.armed).toBe(true);
+    expect(r.forgedUsed).toBe(0);
+    expect(r.outcomes).toEqual(expected);
+    expect(r.failures).toEqual([]);
+  });
+
+  it.each(["approved-export", "weakset"])(
+    "%s: a forged source is not approved (private-field brand)",
+    (v) => {
+      const r = probe(dist, "r1", v);
+      expect(r.armed).toBe(v === "weakset"); // the shared built-in itself can be patched
+      expect(r.createError).toMatchObject({ code: "source-not-approved" });
+      expect(r.forgedUsed).toBe(0);
+      expect(r.outcomes).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ["test seal", "(0, sealed_1.sealRoundScript)(round.script)"],
+    ["other origin", "sealing.seal(round.script, Object.freeze({}))"],
+  ])("a delivered %s is never admitted: source contract violation, source stopped", (_, by) => {
+    const copy = patched(
+      `foreign-${by.length}`,
+      "server/src/scheduler/source.js",
+      "sealing.seal(round.script, this)",
+      by,
+      "rehashed",
+    );
+    const r = probe(copy, "foreign");
+    expect(r.admitted).toEqual([]);
+    expect(r.outcomes).toEqual([]);
+    expect(r.failures).toEqual(["contract-violation"]);
+    expect(r.halts).toEqual(["source-contract-violation"]);
+    expect(r.state).toBe("halted");
+    expect(r.residency).toEqual({ active: 0, next: "none", total: 0 });
+    expect(r.sourceState).toBe("closed");
+  });
+
+  it.each([
+    ["binder", null, "binder-claimed"],
+    ["sealing", "sealing-claimed", "sealing-claimed"],
+    ["opener", null, "opener-claimed"],
+  ])("a %s claimed before the scheduler loads only prevents it (fail closed)", (v, src, sch) => {
+    const r = probe(dist, "r1-preload", v);
+    expect(r.claim).toEqual({
+      ok: true,
+      value: v === "binder" ? "function" : v === "sealing" ? "object" : "function",
+    });
+    if (v !== "binder") {
+      if (src === null) expect(r.sourceLoad.ok).toBe(true);
+      else expect(r.sourceLoad.error).toMatchObject({ reason: src });
+    }
+    expect(r.schedulerLoad.error).toMatchObject({ reason: sch });
+  });
+
+  it("module cache deletion after create: a fresh module copy cannot create a second scheduler", () => {
+    const r = probe(dist, "r1-cache", "after-create");
+    expect(r.freshClass).toBe(true);
+    expect(r.second.error).toMatchObject({ code: "duplicate-instance" });
+    expect(r.crossSource.error).toMatchObject({ code: "source-not-approved" });
+    expect(r.otherState).toBe("ready"); // the refusal bound nothing
+    expect(r.outcomes).toEqual(expected); // the first scheduler is unaffected
+  });
+
+  it("module cache deletion before create: one scheduler per process, whichever copy is first", () => {
+    const r = probe(dist, "r1-cache", "fresh-first");
+    expect(r.staleSource.error).toMatchObject({ code: "source-not-approved" });
+    expect(r.originalAfter.error).toMatchObject({ code: "duplicate-instance" });
+    expect(r.outcomes).toEqual(expected);
+  });
+
+  it("a pre-set process record only prevents the scheduler (fail closed)", () => {
+    const r = probe(dist, "r1-cache", "preset");
+    expect(r.second.error).toMatchObject({ code: "duplicate-instance" });
+    expect(r.sourceState).toBe("ready");
+  });
 });
 
 describe("integrity (src/scheduler is protected: owner-approved P8-4b-2 expansion)", () => {

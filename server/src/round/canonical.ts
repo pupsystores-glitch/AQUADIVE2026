@@ -29,12 +29,30 @@
 // `CanonicalCheck` replaces `canonicalJson(JSON.parse(text)) === text` for values JSON.parse just
 // produced: it compares the canonical form position by position, with an explicit stack, in
 // slices of a bounded number of operations, and accepts exactly the same texts.
+//
+// Load-time binding (P8-4b-2 R-1b correction). The main thread verifies every prepared result
+// with this module (round-script.ts RoundScriptVerification). Its imports are bound once, as it
+// loads, and its own constants are read from module-private bindings, so a later replacement of
+// an export (of this module or of the fairness bridge) is never reached; `CanonicalCheck`, its
+// prototype and this module's CommonJS exports are frozen as it loads. Same-process code that
+// runs BEFORE this module loads, or that rewrites shared built-ins (JSON, TextDecoder, typed
+// arrays, …), is not covered (server README §18, A-1).
 
-import { bytesToHex, sha256, type FairnessHashProvider } from "../fairness";
-import { RoundScriptError } from "./errors";
+import {
+  bytesToHex as bytesToHexExport,
+  sha256 as sha256Export,
+  type FairnessHashProvider,
+} from "../fairness";
+import { RoundScriptError as RoundScriptErrorExport } from "./errors";
 
+/** R-1b: bound once, as this module loads. */
+const bytesToHex = bytesToHexExport;
+const sha256 = sha256Export;
+const RoundScriptError = RoundScriptErrorExport;
+
+const DIGEST_DOMAIN = "AQUADIVE-ROUNDSCRIPT\u0000v1\u0000";
 /** Domain separation for the RoundScript digest (version 1 of the script format). */
-export const ROUND_SCRIPT_DIGEST_DOMAIN = "AQUADIVE-ROUNDSCRIPT\u0000v1\u0000";
+export const ROUND_SCRIPT_DIGEST_DOMAIN = DIGEST_DOMAIN;
 
 /** The deepest nesting level of a value inside the encoded root (the root is level 0). */
 export const CANONICAL_MAX_DEPTH = 8;
@@ -125,7 +143,7 @@ export function decodeCanonical(bytes: Uint8Array): unknown {
 
 /** SHA-256(domain ‖ canonical bytes) as lower-case hex. INTERNAL; secret before the reveal. */
 export function canonicalDigest(provider: FairnessHashProvider, bytes: Uint8Array): string {
-  const domain = new TextEncoder().encode(ROUND_SCRIPT_DIGEST_DOMAIN);
+  const domain = new TextEncoder().encode(DIGEST_DOMAIN);
   const message = new Uint8Array(domain.length + bytes.length);
   message.set(domain, 0);
   message.set(bytes, domain.length);
@@ -379,3 +397,9 @@ export class CanonicalCheck {
     this.#pos += s.length;
   }
 }
+
+// R-1b: nothing of this module can be replaced once it has loaded. The compiled build's CommonJS
+// exports object is frozen too (an ES module namespace, as under Vitest, is immutable already).
+Object.freeze(CanonicalCheck);
+Object.freeze(CanonicalCheck.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

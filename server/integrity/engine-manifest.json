@@ -65,8 +65,8 @@
     },
     {
       "path": "server/src/prep/controller.js",
-      "bytes": 22425,
-      "sha256": "821f8ad8064807750d56bf7d1e7844942dafba6baa9a494c05a3f71907462d4e"
+      "bytes": 26941,
+      "sha256": "8c8eb62472bc92fa562983b7eee119653d2da3d4bc8fc5304a6bc11491f8a9ff"
     },
     {
       "path": "server/src/prep/prep-worker.js",
@@ -75,13 +75,13 @@
     },
     {
       "path": "server/src/prep/protocol.js",
-      "bytes": 14242,
-      "sha256": "ec685ff013c15e8b3a5a044e46538316a8dc259e3897618de89220620a66418e"
+      "bytes": 14909,
+      "sha256": "e5e576193ac0b9bd5dd3cb70c094ec7d79dce568fd918a878af9fc532b8b8909"
     },
     {
       "path": "server/src/round/canonical.js",
-      "bytes": 15555,
-      "sha256": "de6c0b5ae3e31fa8bf7894444e70d022738ff6362dbe9b6272b866711ff74a70"
+      "bytes": 16694,
+      "sha256": "743844712890372bad7ab7fdf3ff828146642db1c676a364bb24f1d44873ee42"
     },
     {
       "path": "server/src/round/engine-runtime.js",
@@ -115,48 +115,48 @@
     },
     {
       "path": "server/src/round/round-script.js",
-      "bytes": 26489,
-      "sha256": "b985b21c42ab3b8c44154133c3556ef55574943eb6d6d53132f0e4c6813c5a1e"
+      "bytes": 28860,
+      "sha256": "33ba3891bb310a94a94d5c6c5e1a66c4ac3db2fc21110250e65b4c41827d1ff4"
     },
     {
       "path": "server/src/scheduler/clock.js",
-      "bytes": 4596,
-      "sha256": "815b5e9f21e7ef5a125e22411f1ca1028fc472d20be450f600ead78a031dfcb4"
+      "bytes": 4948,
+      "sha256": "e9a9c6148801f42121c269f05067f5bc635870697ee6ae0919abdf77bd257e21"
     },
     {
       "path": "server/src/scheduler/core.js",
-      "bytes": 20945,
-      "sha256": "1aafe2871235c01e974c166cf784cdbba52b3edec8e12d270287862f2b086a2b"
+      "bytes": 22769,
+      "sha256": "fb0e9eff817b48427b73f1694c89854f32632692ea97e3385a121099564d25f4"
     },
     {
       "path": "server/src/scheduler/disclosure.js",
-      "bytes": 9626,
-      "sha256": "2a9afa26ce71d9c91eeeb0357c5b7cb84e5e38f20e338d3ec727e36476534061"
+      "bytes": 10395,
+      "sha256": "a0896169d38c069907381cffd9a43ef8a0fd53aff7ad18c981a316ef5a01a08f"
     },
     {
       "path": "server/src/scheduler/events.js",
-      "bytes": 6346,
-      "sha256": "672f04ff1cfafad31536fb24667dcdb27e94a10af180d84450dc293d8745a621"
+      "bytes": 8220,
+      "sha256": "4a2335872f1f3883e07f8bbab86eca1386cb9180fd92cc1019a099dd7939839b"
     },
     {
       "path": "server/src/scheduler/scheduler.js",
-      "bytes": 16243,
-      "sha256": "6c202fa6d213a2d541d4266d2da400628112bdfd096df116aa65efbdcc2f6ff1"
+      "bytes": 19248,
+      "sha256": "da0f26060311db04bf62622d8321a6e83e467e8638d442af1c1b580b1a1247d0"
     },
     {
       "path": "server/src/scheduler/sealed.js",
-      "bytes": 5393,
-      "sha256": "21b06e553d6cd163a8b8032e41d928315a37adca646b49cedfc53bfa3a77cb0a"
+      "bytes": 8586,
+      "sha256": "361237413cb514f8ea9745551fb9fa56ae655ad5022d18734da6b8622fa1634f"
     },
     {
       "path": "server/src/scheduler/source.js",
-      "bytes": 15639,
-      "sha256": "67649e50d7397cc1d9d46878c80189b5a7681a902a09880f66fca447d4e86c09"
+      "bytes": 21043,
+      "sha256": "9570b4b7eb175ca4727ce892da332e5a7bd7eaabe7fe73283b529448592f4f02"
     },
     {
       "path": "server/src/scheduler/timeline.js",
-      "bytes": 4449,
-      "sha256": "089c84d2a78423b78045b945e98de1649c9021df6312e2d46dd7faf7fb6c9883"
+      "bytes": 4729,
+      "sha256": "144f5de8103df86d44078280b27f852d5fe16f56357b40a16145a4a5b43e92e4"
     },
     {
       "path": "src/fairness/chain.js",

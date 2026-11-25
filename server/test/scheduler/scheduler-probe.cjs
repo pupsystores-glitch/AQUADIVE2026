@@ -24,6 +24,16 @@
 //                              worker termination with a request pending, a throwing listener,
 //                              (patched build) an internal error during delivery or a poll
 //   sealed                     M-1: reflection over the compiled sealed module and its seals
+//   r1 <vector>                R-1 / R-1b: same-process code (after the scheduler loaded)
+//                              replaces a method, static, prototype or export on the path from
+//                              the worker to the disclosure cursor (R-1b: the controller's
+//                              verifier, the message parser, the worker entry, class and
+//                              environment) to play a chosen outcome (77.77x)
+//   r1-unfrozen <vector>       R-1b: the same with classes, prototypes and exports left unfrozen
+//                              (Object.freeze skips them): the load-time bindings alone
+//   r1-preload <what>          R-1: a one-time capability claimed BEFORE the scheduler loads
+//   r1-cache <variant>         R-1 / A-2: module cache deletion, a pre-set process record
+//   foreign                    (patched source.js) a seal not made for this source is delivered
 //   integrity                  (tampered builds) source start refused
 //   closure                    the scheduler's loaded module closure (all protected files)
 //   startup                    the compiled application loads no scheduler module
@@ -137,6 +147,16 @@ const forgeSeal = (chainId, n, spec) => {
   );
   return { script, sealed: sealRoundScript(script) };
 };
+/** A forged script of the build with a chosen crash point (R-1 probes). */
+const forgeScript = (chainId, n, spec) => {
+  const { buildRoundScript } = load("server/src/round/round-script.js");
+  const { createNodeFairnessCrypto } = load("server/src/fairness/crypto-node.js");
+  return buildRoundScript(
+    createNodeFairnessCrypto().hash,
+    { chainId, chainIndex: n, salt: "a1".repeat(32) },
+    crashOutput(n, spec),
+  );
+};
 /** Waits (real time) until `cond()` holds or `ms` pass; returns whether it held. */
 const until = async (cond, ms = 30_000) => {
   const t0 = Date.now();
@@ -148,6 +168,24 @@ const until = async (cond, ms = 30_000) => {
 };
 
 const main = async () => {
+  if (scenario === "r1-unfrozen") {
+    // TEST ONLY (R-1b): the load-time BINDING layer on its own. Before any module of the build
+    // loads, Object.freeze skips classes, prototypes and CommonJS exports objects (every other
+    // object is still frozen), so each replacement of the `r1` vectors takes effect and only the
+    // bindings can keep it from being reached.
+    const freeze = Object.freeze;
+    const isExports = (o) => Object.values(require.cache).some((m) => m && m.exports === o);
+    const isPrototype = (o) =>
+      Object.hasOwn(o, "constructor") &&
+      typeof o.constructor === "function" &&
+      o.constructor.prototype === o;
+    Object.freeze = (o) =>
+      typeof o === "function" ||
+      (o !== null && typeof o === "object" && (isExports(o) || isPrototype(o)))
+        ? o
+        : freeze(o);
+  }
+
   if (scenario === "startup") {
     load("server/src/app.js");
     const loaded = Object.keys(require.cache)
@@ -201,6 +239,54 @@ const main = async () => {
     }
     env.close();
     return emit({ chainId: chain.chainId, facts });
+  }
+
+  if (scenario === "async" && arg === "listener-throws") {
+    // The source's own backstop: a listener that throws (no scheduler involved). R-1: only a
+    // process that has NOT loaded scheduler.js can claim the binder, and then scheduler.js can
+    // no longer load (fail closed).
+    const { PrepWorkerRoundSource, claimSourceBinder } = load("server/src/scheduler/source.js");
+    const bind = claimSourceBinder();
+    const r = { variant: arg };
+    r.schedulerLoad = attempt(() => load("server/src/scheduler/scheduler.js"));
+    const source = await PrepWorkerRoundSource.start({
+      mode: "test",
+      chain: "public-test-vectors",
+    });
+    let seen = null;
+    const access = bind(source, (event) => {
+      seen = event;
+      throw new Error("listener exploded");
+    });
+    r.bindAgain = attempt(() => bind(source, () => {}));
+    access.request(1);
+    r.settled = await until(() => seen !== null && source.state === "closed");
+    r.kind = seen && seen.kind;
+    r.sealState = seen && seen.kind === "prepared" ? seen.sealed.state : null;
+    r.sourceState = source.state;
+    await sleep(300);
+    await source.close();
+    return emit(r);
+  }
+
+  if (scenario === "r1-preload") {
+    // R-1: code that runs BEFORE the scheduler loads and claims a one-time capability can only
+    // prevent the scheduler (each later module fails to load): it never obtains a scheduler.
+    const r = { variant: arg };
+    if (arg === "sealing") {
+      const sealed = load("server/src/scheduler/sealed.js");
+      r.claim = attempt(() => typeof sealed.claimSourceSealing());
+      r.sourceLoad = attempt(() => load("server/src/scheduler/source.js"));
+    } else if (arg === "opener") {
+      const sealed = load("server/src/scheduler/sealed.js");
+      r.claim = attempt(() => typeof sealed.claimSealedRoundOpener());
+      r.sourceLoad = attempt(() => load("server/src/scheduler/source.js"));
+    } else {
+      const src = load("server/src/scheduler/source.js");
+      r.claim = attempt(() => typeof src.claimSourceBinder());
+    }
+    r.schedulerLoad = attempt(() => load("server/src/scheduler/scheduler.js"));
+    return emit(r);
   }
 
   // A build whose scheduler modules cannot even be loaded (e.g. a missing file) fails closed
@@ -347,7 +433,9 @@ const main = async () => {
     r.duplicate = attempt(() => GlobalRoundScheduler.create({ clock, source }));
     const other = await PrepWorkerRoundSource.start({ mode: "test", chain: "public-test-vectors" });
     r.duplicateOtherSource = attempt(() => GlobalRoundScheduler.create({ clock, source: other }));
-    r.claimAgain = attempt(() => source.claim(() => {}));
+    // R-1: a source has no public claim; the binder was claimed by scheduler.js as it loaded.
+    r.publicClaim = typeof source.claim;
+    r.claimAgain = attempt(() => modules.claimSourceBinder());
     await other.close();
     s.start();
     r.startTwice = attempt(() => s.start());
@@ -454,7 +542,7 @@ const main = async () => {
       .events()
       .filter((e) => e.type === "round.admitted")
       .map((e) => ({ round: e.round, roundId: e.roundId }));
-    r.claimAgain = attempt(() => source.claim(() => {}));
+    r.claimAgain = attempt(() => modules.claimSourceBinder());
     await s.close();
     await source.close();
     return emit(r);
@@ -520,22 +608,6 @@ const main = async () => {
       mode: "test",
       chain: "public-test-vectors",
     });
-    if (arg === "listener-throws") {
-      // The source's own backstop: a listener that throws (no scheduler involved).
-      let seen = null;
-      const request = source.claim((event) => {
-        seen = event;
-        throw new Error("listener exploded");
-      });
-      request(1);
-      r.settled = await until(() => seen !== null && source.state === "closed");
-      r.kind = seen && seen.kind;
-      r.sealState = seen && seen.kind === "prepared" ? seen.sealed.state : null;
-      r.sourceState = source.state;
-      await sleep(300);
-      await source.close();
-      return emit(r);
-    }
     const EPOCH = 1_000_000_000n;
     let now = EPOCH;
     let throwing = false;
@@ -588,6 +660,461 @@ const main = async () => {
     r.state = s.state;
     await s.close();
     r.sourceState = source.state;
+    return emit(r);
+  }
+
+  /** Plays rounds 1 and 2 of the public vector chain (or halts); the outcomes and halts. */
+  const playTwo = async (s, clock) => {
+    s.start();
+    for (let k = 0; k < 4000 && s.state !== "halted"; k++) {
+      clock.advanceNs(NS_PER_TICK + 1n);
+      s.poll();
+      await awaitDelivery(s);
+      if (s.events().some((e) => e.type === "round.ended" && e.round === 2)) break;
+    }
+    const events = s.events();
+    return {
+      outcomes: events
+        .filter((e) => e.type === "round.crashed" || e.type === "round.impact")
+        .map((e) => ({ round: e.round, crashAt: e.crashAt ?? null, jackpot: e.jackpot ?? null })),
+      admitted: events.filter((e) => e.type === "round.admitted").map((e) => e.round),
+      failures: events.filter((e) => e.type === "source.failed").map((e) => e.failure),
+      halts: events.filter((e) => e.type === "scheduler.halted").map((e) => e.reason),
+    };
+  };
+
+  if (scenario === "r1" || scenario === "r1-unfrozen") {
+    // R-1 regression: the attacker runs AFTER the scheduler modules loaded and replaces an
+    // ordinary object reachable from the modules' exports (no built-in, except "weakset").
+    // Before the correction every vector below played the chosen 77.77x. "r1-unfrozen": the same
+    // vectors with classes, prototypes and exports left unfrozen (see the top of main).
+    const CHOSEN = { crashAt: 77.77, diveTicks: 60 };
+    const sealedModule = load("server/src/scheduler/sealed.js");
+    const coreModule = load("server/src/scheduler/core.js");
+    const disclosureModule = load("server/src/scheduler/disclosure.js");
+    const sourceModule = load("server/src/scheduler/source.js");
+    const eventsModule = load("server/src/scheduler/events.js");
+    const controllerModule = load("server/src/prep/controller.js");
+    const rs = load("server/src/round/round-script.js");
+    const testSeal = sealedModule.sealRoundScript;
+    const forged = (chainId, n) => forgeScript(chainId, n, CHOSEN);
+    const r = { vector: arg, armed: false, armError: null, forgedUsed: 0 };
+    const arm = (fn) => {
+      try {
+        fn();
+        r.armed = true;
+      } catch (e) {
+        r.armError = e instanceof TypeError ? "TypeError" : errorOf(e);
+      }
+    };
+    const set = (obj, key, value) => {
+      obj[key] = value;
+      if (obj[key] !== value) throw new TypeError("not replaced");
+    };
+    const substitute = (sealed) => {
+      r.forgedUsed += 1;
+      const a = sealed.admission;
+      sealed.discard();
+      return testSeal(forged(a.chainId, a.chainIndex));
+    };
+    const capture = function (listener) {
+      r.forgedUsed += 1;
+      const chainId = this.chain.chainId;
+      return (n) =>
+        setImmediate(() =>
+          listener({ kind: "prepared", roundNumber: n, sealed: testSeal(forged(chainId, n)) }),
+        );
+    };
+    const fakeController = (c) => ({
+      chain: c.chain,
+      get state() {
+        return c.state;
+      },
+      prepare: (id) => {
+        r.forgedUsed += 1;
+        const n = Number(id.slice("sched-round-".length));
+        return Promise.resolve({
+          requestId: id,
+          chainIndex: n,
+          script: forged(c.chain.chainId, n),
+        });
+      },
+      close: () => c.close(),
+      terminate: () => c.terminate(),
+    });
+    const PWC = controllerModule.PrepWorkerController;
+    const origStart = PWC.start;
+    let forgedSource = null;
+    const FORGED_CHAIN = "66".repeat(32);
+    const makeForgedSource = () => ({
+      chain: Object.freeze({ chainId: FORGED_CHAIN, chainLength: 2, fv: 1 }),
+      state: "ready",
+      claim: capture,
+      checkHealth: () => false,
+      close: async () => undefined,
+      terminate: async () => undefined,
+    });
+    const P = PrepWorkerRoundSource.prototype;
+    // R-1b helpers. A forged script for the real document's round (its chain id and index), as
+    // canonical text, bytes and digest; nothing here patches a shared built-in.
+    const canonicalModule = load("server/src/round/canonical.js");
+    const protocolModule = load("server/src/prep/protocol.js");
+    const integrityModule = load("server/src/round/integrity.js");
+    const threads = require("node:worker_threads");
+    const RSV = rs.RoundScriptVerification;
+    const textOf = (bytes) => Buffer.from(bytes).toString("latin1");
+    const isDocument = (text) => text.startsWith('{"public":');
+    const forgedLike = (script) => {
+      r.forgedUsed += 1;
+      return forged(script.public.chainId, script.public.chainIndex);
+    };
+    const forgedFor = (text) => {
+      const doc = JSON.parse(text);
+      const script = forgedLike({ public: doc.public });
+      const bytes = script.secretCanonicalBytes();
+      return { text: textOf(bytes), bytes, digest: script.secretDigest() };
+    };
+    // Worker-side substitution (R-1b "worker-entry", "worker-class", "node-options"): code that
+    // runs inside the preparation worker before its entry and replaces every `prepared` result
+    // with a forged one. Uses counted on a marker file (the worker cannot reach this report).
+    let evilFiles = null;
+    const evil = () => {
+      if (evilFiles !== null) return evilFiles;
+      const fs = require("node:fs");
+      const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "aquadive-r1b-"));
+      const marker = path.join(dir, "used");
+      fs.writeFileSync(marker, "");
+      const code = (realEntry) =>
+        [
+          '"use strict";',
+          'const { isMainThread, parentPort } = require("node:worker_threads");',
+          'const path = require("node:path");',
+          `const OUT = ${JSON.stringify(out)};`,
+          `const crashOutput = ${crashOutput.toString()};`,
+          "if (!isMainThread) {",
+          "  const post = parentPort.postMessage;",
+          "  parentPort.postMessage = function (message, transfer) {",
+          '    if (message === null || typeof message !== "object" || message.type !== "prepared") {',
+          "      return post.call(this, message, transfer);",
+          "    }",
+          '    const rs = require(path.join(OUT, "server/src/round/round-script.js"));',
+          '    const crypto = require(path.join(OUT, "server/src/fairness/crypto-node.js"));',
+          '    const doc = JSON.parse(Buffer.from(message.bytes).toString("latin1"));',
+          "    const script = rs.buildRoundScript(",
+          "      crypto.createNodeFairnessCrypto().hash,",
+          "      doc.public,",
+          `      crashOutput(doc.public.chainIndex, ${JSON.stringify(CHOSEN)}),`,
+          "    );",
+          "    const bytes = script.secretCanonicalBytes();",
+          `    require("node:fs").appendFileSync(${JSON.stringify(marker)}, "x");`,
+          "    return post.call(this, { ...message, bytes, digest: script.secretDigest() }, [",
+          "      bytes.buffer,",
+          "    ]);",
+          "  };",
+          "}",
+          realEntry === null ? "" : `require(${JSON.stringify(realEntry)});`,
+          "",
+        ].join("\n");
+      const preload = path.join(dir, "preload.cjs");
+      const entry = path.join(dir, "entry.cjs");
+      fs.writeFileSync(preload, code(null));
+      fs.writeFileSync(entry, code(path.join(out, "server", "src", "prep", "prep-worker.js")));
+      evilFiles = { dir, marker, preload, entry };
+      return evilFiles;
+    };
+    const vectors = {
+      // The original R-1 exploit and two ways to install it.
+      "claim-proto": () => set(P, "claim", capture),
+      "claim-define": () => Object.defineProperty(P, "claim", { value: capture }),
+      "claim-setproto": () => {
+        const evil = Object.create(Object.getPrototypeOf(P), { claim: { value: capture } });
+        if (!Reflect.setPrototypeOf(P, evil)) throw new TypeError("setPrototypeOf refused");
+      },
+      // Seal creation, delivery and opening.
+      "seal-export": () => set(sealedModule, "sealRoundScript", (s) => substitute(testSeal(s))),
+      "seal-static": () => set(sealedModule.SealedRound, "seal", (s) => substitute(testSeal(s))),
+      "seal-hasinstance": () =>
+        Object.defineProperty(sealedModule.SealedRound, Symbol.hasInstance, { value: () => true }),
+      "core-deliver": () => {
+        const orig = coreModule.SchedulerCore.prototype.deliver;
+        set(coreModule.SchedulerCore.prototype, "deliver", function (sealed) {
+          return orig.call(this, substitute(sealed));
+        });
+      },
+      "core-export": () => {
+        const C = coreModule.SchedulerCore;
+        set(
+          coreModule,
+          "SchedulerCore",
+          class extends C {
+            deliver(sealed) {
+              return super.deliver(substitute(sealed));
+            }
+          },
+        );
+      },
+      "disclosure-open": () => {
+        const RD = disclosureModule.RoundDisclosure;
+        const orig = RD.open;
+        set(RD, "open", (sealed, id, idx) => orig.call(RD, substitute(sealed), id, idx));
+      },
+      "disclosure-export": () => {
+        const RD = disclosureModule.RoundDisclosure;
+        set(disclosureModule, "RoundDisclosure", {
+          open: (sealed, id, idx) => RD.open(substitute(sealed), id, idx),
+        });
+      },
+      "event-log": () => {
+        const orig = eventsModule.EventLog.prototype.append;
+        set(eventsModule.EventLog.prototype, "append", function (t, type, round, fields) {
+          if (type === "round.crashed") fields = { ...fields, crashAt: CHOSEN.crashAt };
+          return orig.call(this, t, type, round, fields);
+        });
+      },
+      // Consumption points of the preparation and RoundScript modules (bound at load).
+      "secret-content": () => {
+        const orig = rs.RoundScript.prototype.secretContent;
+        let inside = false;
+        set(rs.RoundScript.prototype, "secretContent", function () {
+          if (inside) return orig.call(this);
+          inside = true;
+          try {
+            r.forgedUsed += 1;
+            return orig.call(forged(this.public.chainId, this.public.chainIndex));
+          } finally {
+            inside = false;
+          }
+        });
+      },
+      "controller-prepare": () =>
+        set(PWC.prototype, "prepare", function (id) {
+          return fakeController(this).prepare(id);
+        }),
+      "controller-start": () =>
+        set(PWC, "start", async (o) => fakeController(await origStart.call(PWC, o))),
+      "controller-export": () =>
+        set(controllerModule, "PrepWorkerController", {
+          start: async (o) => fakeController(await origStart.call(PWC, o)),
+        }),
+      // Source substitution (H-1 style forged source) through the approval check.
+      "approved-export": () => {
+        forgedSource = makeForgedSource();
+        set(sourceModule, "isApprovedSource", () => true);
+      },
+      weakset: () => {
+        // A shared built-in (out of the in-process boundary): the brand check consults none.
+        forgedSource = makeForgedSource();
+        const orig = WeakSet.prototype.has;
+        set(WeakSet.prototype, "has", function (v) {
+          return v === forgedSource ? true : orig.call(this, v);
+        });
+      },
+      "verify-export": () => set(sourceModule, "verifySchedulerBuild", () => undefined),
+      // ---- R-1b: the controller's verifier path (prep/controller.js → round-script.js →
+      // canonical.js, the worker message parser, the worker thread itself). Before the R-1b
+      // correction every vector below played the chosen 77.77x (except "integrity-export",
+      // which only shows whether a replaced export is reached).
+      "verification-step": () => {
+        const orig = RSV.prototype.step;
+        set(RSV.prototype, "step", function (budget) {
+          const script = orig.call(this, budget);
+          return script === null ? null : forgedLike(script);
+        });
+      },
+      "verification-export": () =>
+        set(rs, "RoundScriptVerification", {
+          begin: (hash, bytes, digest) => {
+            const v = RSV.begin(hash, bytes, digest);
+            return {
+              step: (budget) => {
+                const script = v.step(budget);
+                return script === null ? null : forgedLike(script);
+              },
+              cancel: () => v.cancel(),
+            };
+          },
+        }),
+      "verification-begin": () => {
+        const orig = RSV.begin;
+        set(RSV, "begin", (hash, bytes, _digest) => {
+          const f = forgedFor(textOf(bytes));
+          return orig.call(RSV, hash, f.bytes, f.digest);
+        });
+      },
+      "canonical-check": () => {
+        const CC = canonicalModule.CanonicalCheck;
+        set(canonicalModule, "CanonicalCheck", {
+          parse: (text) => CC.parse(isDocument(text) ? forgedFor(text).text : text),
+        });
+      },
+      "canonical-value": () => {
+        const getter = Object.getOwnPropertyDescriptor(
+          canonicalModule.CanonicalCheck.prototype,
+          "value",
+        ).get;
+        Object.defineProperty(canonicalModule.CanonicalCheck.prototype, "value", {
+          configurable: true,
+          get() {
+            const value = getter.call(this);
+            return value !== null && typeof value === "object" && "public" in value
+              ? JSON.parse(forgedFor(JSON.stringify(value)).text)
+              : value;
+          },
+        });
+      },
+      "decode-utf8": () => {
+        const orig = canonicalModule.decodeUtf8;
+        set(canonicalModule, "decodeUtf8", (bytes) => {
+          const text = orig(bytes);
+          return isDocument(text) ? forgedFor(text).text : text;
+        });
+      },
+      "parse-message": () => {
+        const orig = protocolModule.parseWorkerMessage;
+        set(protocolModule, "parseWorkerMessage", (raw) => {
+          const message = orig(raw);
+          if (message.type !== "prepared") return message;
+          const f = forgedFor(textOf(message.bytes));
+          return Object.freeze({ ...message, bytes: f.bytes, digest: f.digest });
+        });
+      },
+      "worker-entry": () =>
+        set(
+          controllerModule,
+          "PREP_WORKER_ENTRY",
+          path.relative(path.join(out, "server", "src", "prep"), evil().entry),
+        ),
+      "worker-class": () => {
+        const W = threads.Worker;
+        const entry = evil().entry;
+        set(
+          threads,
+          "Worker",
+          class extends W {
+            constructor(_file, options) {
+              super(entry, options);
+            }
+          },
+        );
+      },
+      "node-options": () => {
+        process.env.NODE_OPTIONS = `--require "${evil().preload.split(path.sep).join("/")}"`;
+        if (!process.env.NODE_OPTIONS.includes("preload")) throw new TypeError("not set");
+      },
+      "integrity-export": () => {
+        const orig = integrityModule.verifyBuildIntegrity;
+        set(integrityModule, "verifyBuildIntegrity", (...args) => {
+          r.forgedUsed += 1; // reached: counted (the check itself still runs)
+          return orig(...args);
+        });
+      },
+    };
+    if (!Object.hasOwn(vectors, arg)) throw new Error(`unknown vector ${arg}`);
+    arm(vectors[arg]);
+    const source = await PrepWorkerRoundSource.start({
+      mode: "test",
+      chain: "public-test-vectors",
+    });
+    const clock = new SimulatedClock(1_000_000_000n);
+    try {
+      const s = GlobalRoundScheduler.create({ clock, source: forgedSource ?? source });
+      Object.assign(r, await playTwo(s, clock));
+      await s.close();
+    } catch (e) {
+      r.createError = errorOf(e);
+    }
+    await source.close();
+    if (evilFiles !== null) {
+      const fs = require("node:fs");
+      r.forgedUsed += fs.readFileSync(evilFiles.marker, "utf8").length; // worker-side uses
+      fs.rmSync(evilFiles.dir, { recursive: true, force: true });
+    }
+    return emit(r);
+  }
+
+  if (scenario === "r1-cache") {
+    // R-1 / A-2: a fresh copy of the scheduler modules (module cache entries deleted) is still
+    // the same process: the process-wide record refuses a second scheduler.
+    const r = { variant: arg };
+    const clock = new SimulatedClock(1_000_000_000n);
+    const schedulerFiles = Object.keys(require.cache).filter((f) =>
+      f.startsWith(path.join(out, "server", "src", "scheduler") + path.sep),
+    );
+    const reload = () => {
+      for (const f of schedulerFiles) delete require.cache[f];
+      return {
+        ...load("server/src/scheduler/source.js"),
+        ...load("server/src/scheduler/scheduler.js"),
+      };
+    };
+    const MARK = Symbol.for("aquadive.offline-global-round-scheduler.v1");
+    if (arg === "after-create") {
+      const source = await PrepWorkerRoundSource.start({
+        mode: "test",
+        chain: "public-test-vectors",
+      });
+      const first = GlobalRoundScheduler.create({ clock, source });
+      const fresh = reload();
+      r.freshClass = fresh.GlobalRoundScheduler !== GlobalRoundScheduler;
+      const other = await fresh.PrepWorkerRoundSource.start({
+        mode: "test",
+        chain: "public-test-vectors",
+      });
+      r.second = attempt(() => fresh.GlobalRoundScheduler.create({ clock, source: other }));
+      r.crossSource = attempt(() => fresh.GlobalRoundScheduler.create({ clock, source }));
+      r.otherState = other.state;
+      await other.close();
+      Object.assign(r, await playTwo(first, clock));
+      await first.close();
+      await source.close();
+    } else if (arg === "fresh-first") {
+      // No scheduler yet: the fresh copy is the process's first (and only) scheduler.
+      const fresh = reload();
+      const source = await fresh.PrepWorkerRoundSource.start({
+        mode: "test",
+        chain: "public-test-vectors",
+      });
+      // A source of the other module instance is not approved (a different private brand).
+      r.staleSource = attempt(() => GlobalRoundScheduler.create({ clock, source }));
+      const s = fresh.GlobalRoundScheduler.create({ clock, source });
+      // The ORIGINAL module instance (its own `created` is still false) is refused as well.
+      const original = await PrepWorkerRoundSource.start({
+        mode: "test",
+        chain: "public-test-vectors",
+      });
+      r.originalAfter = attempt(() => GlobalRoundScheduler.create({ clock, source: original }));
+      await original.close();
+      Object.assign(r, await playTwo(s, clock));
+      await s.close();
+      await source.close();
+    } else {
+      // "preset": code that set the record first only prevents the scheduler (fail closed).
+      Object.defineProperty(process, MARK, { value: true });
+      const source = await PrepWorkerRoundSource.start({
+        mode: "test",
+        chain: "public-test-vectors",
+      });
+      r.second = attempt(() => GlobalRoundScheduler.create({ clock, source }));
+      r.sourceState = source.state;
+      await source.close();
+    }
+    return emit(r);
+  }
+
+  if (scenario === "foreign") {
+    // (patched source.js) the source delivers a seal NOT made for it: never admitted or opened.
+    const source = await PrepWorkerRoundSource.start({
+      mode: "test",
+      chain: "public-test-vectors",
+    });
+    const clock = new SimulatedClock(1_000_000_000n);
+    const s = GlobalRoundScheduler.create({ clock, source });
+    const r = await playTwo(s, clock);
+    r.state = s.state;
+    r.residency = s.residency();
+    await sleep(300);
+    r.sourceState = source.state;
+    await s.close();
     return emit(r);
   }
 

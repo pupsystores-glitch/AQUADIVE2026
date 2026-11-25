@@ -19,8 +19,24 @@
 //   a refusal does not use up the process's one scheduler;
 // - at most ONE scheduler per process, ever (one global authority; a halted scheduler is never
 //   replaced in the same process — that would be a restart): a second `create` is refused with
-//   `duplicate-instance`;
-// - verifies the build and this module's loaded closure against the trusted manifest.
+//   `duplicate-instance`. The record is a non-configurable property of `process` (R-1), shared
+//   by every module instance, so a fresh copy of this module (module cache entry deleted) is
+//   refused as well; code that pre-sets it only prevents the scheduler (fail closed);
+// - verifies the build and this module's loaded closure against the trusted manifest;
+// - binds the source through the module-private source binder (R-1; source.ts), claimed as this
+//   module loads: a source has no public method that binds a listener or requests a round.
+//
+// Source authenticity (R-1 correction). A prepared result is admitted only if its seal was made
+// by THIS scheduler's source for itself (the binding's `owns`, sealed.ts `sealedBy`); anything
+// else — a test seal, another source's seal — is discarded unopened and halts the scheduler as a
+// source contract violation (the source is terminated). The scheduler modules' classes,
+// prototypes and CommonJS exports are frozen as they load, so no method on the path from the
+// source to the disclosure cursor (bind, seal, deliver, open, the event log) can be
+// replaced or intercepted afterwards; the preparation and RoundScript modules do the same for
+// the controller's verifier path (R-1b correction). NOT covered (no in-process check can be):
+// code that rewrites shared built-ins (e.g. EventEmitter or Promise on the worker channel) or
+// runs before these modules load, module loader hooks, the inspector, a patched build (server
+// README §18, A-1).
 //
 // `start()` reads the clock once: that reading is the epoch, global tick 0. `poll()` reads the
 // clock and lets the core process every tick up to `ticksElapsed(epoch, now)` — a late or
@@ -52,8 +68,8 @@
 // once; otherwise it is left as it is (its chain holds the reveal records of played rounds until
 // `close()`; the reveal protocol is P8-4b-3). Nothing is restarted or retried.
 
-import { isProxy } from "node:util/types";
-import { createNodeFairnessCrypto } from "../fairness/crypto-node";
+import { isProxy as isProxyExport } from "node:util/types";
+import { createNodeFairnessCrypto as createNodeFairnessCryptoExport } from "../fairness/crypto-node";
 import {
   SchedulerCore,
   type CoreEffect,
@@ -65,11 +81,21 @@ import { ticksElapsed, type MonotonicClock } from "./clock";
 import { SchedulerError, type SchedulerEvent } from "./events";
 import {
   SCHEDULER_DRIVER_LOCATION,
+  claimSourceBinder,
   isApprovedSource,
   verifySchedulerBuild,
   type PrepWorkerRoundSource,
+  type SourceAccess,
   type SourceEvent,
 } from "./source";
+
+/** R-1: external references bound ONCE, as this module loads. */
+const isProxy = isProxyExport;
+const createNodeFairnessCrypto = createNodeFairnessCryptoExport;
+/** R-1: the source binder (source.ts), claimed as this module loads. */
+const bindSource = claimSourceBinder();
+/** R-1 / A-2: the process-wide record of THE scheduler (every module instance sees it). */
+const PROCESS_MARK = Symbol.for("aquadive.offline-global-round-scheduler.v1");
 
 export interface GlobalRoundSchedulerOptions {
   readonly clock: MonotonicClock;
@@ -154,8 +180,8 @@ export class GlobalRoundScheduler {
   #busy = false;
   /** Set only if even the fail-closed halt failed: the scheduler then does nothing at all. */
   #broken = false;
-  /** The source's request capability (from its one-time claim). */
-  #request: ((n: number) => void) | null = null;
+  /** The source's request capability and seal check (from its one-time binding; R-1). */
+  #access: SourceAccess | null = null;
 
   private constructor(capability: unknown, verified: VerifiedOptions) {
     if (capability !== CONSTRUCT) throw new SchedulerError("invalid-state", "construction-refused");
@@ -182,12 +208,25 @@ export class GlobalRoundScheduler {
     const verified = readOptions(options);
     const source = verified.source;
     if (source.state !== "ready") throw new SchedulerError("invalid-state", "source-not-ready");
-    if (created) throw new SchedulerError("duplicate-instance");
+    if (created || Object.hasOwn(process, PROCESS_MARK)) {
+      throw new SchedulerError("duplicate-instance");
+    }
     verifySchedulerBuild([SCHEDULER_DRIVER_LOCATION]);
-    // Constructed first: an invalid option must not use up the process's one scheduler.
+    // Constructed and bound first: an invalid option must not use up the process's one scheduler.
     const scheduler = new GlobalRoundScheduler(CONSTRUCT, verified);
+    const access = bindSource(source, (event) => scheduler.#receive(event));
     created = true;
-    scheduler.#request = source.claim((event) => scheduler.#receive(event));
+    const marked = Reflect.defineProperty(process, PROCESS_MARK, {
+      value: true,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    if (!marked) {
+      void source.terminate(); // bound to a scheduler that is never returned
+      throw new SchedulerError("duplicate-instance");
+    }
+    scheduler.#access = access;
     return scheduler;
   }
 
@@ -367,8 +406,15 @@ export class GlobalRoundScheduler {
       // A loss noticed now is applied first: a script delivered by a lost worker is never played.
       if (this.#source.checkHealth()) this.#apply(this.#core.sourceFailed("lost"));
       this.#apply(this.#core.advanceTo(tick));
-      if (event.kind === "prepared") this.#apply(this.#core.deliver(event.sealed));
-      else this.#apply(this.#core.sourceFailed(event.failure));
+      if (event.kind !== "prepared") {
+        this.#apply(this.#core.sourceFailed(event.failure));
+      } else if (!this.#access!.owns(event.sealed)) {
+        // R-1: not sealed by THIS scheduler's source: never admitted, never opened.
+        discardEvent(event);
+        this.#apply(this.#core.sourceFailed("contract-violation"));
+      } else {
+        this.#apply(this.#core.deliver(event.sealed));
+      }
     } catch (error) {
       discardEvent(event);
       throw error;
@@ -377,8 +423,14 @@ export class GlobalRoundScheduler {
 
   #apply(effects: readonly CoreEffect[]): void {
     for (const effect of effects) {
-      if (effect.type === "prepare") this.#request!(effect.roundNumber);
+      if (effect.type === "prepare") this.#access!.request(effect.roundNumber);
       else if (effect.reason === "source-contract-violation") void this.#source.terminate();
     }
   }
 }
+
+// R-1: nothing of this module can be replaced once it has loaded. The compiled build's CommonJS
+// exports object is frozen too (an ES module namespace, as under Vitest, is immutable already).
+Object.freeze(GlobalRoundScheduler);
+Object.freeze(GlobalRoundScheduler.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

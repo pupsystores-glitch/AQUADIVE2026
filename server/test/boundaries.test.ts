@@ -322,11 +322,15 @@ describe("offline preparation worker (P8-4b-0)", () => {
       );
     }
     // The one worker: the fixed entry next to the controller, no eval, no inherited execArgv.
+    // P8-4b-2 R-1b: the entry is a module-private constant (the export only reports it), and the
+    // worker gets an explicit environment (an inherited one would carry NODE_OPTIONS).
     const controller = readFileSync(CONTROLLER, "utf8");
-    expect(controller).toContain('PREP_WORKER_ENTRY = "prep-worker.js"');
-    expect(controller).toContain("new Worker(join(__dirname, PREP_WORKER_ENTRY), {");
+    expect(controller).toContain('const WORKER_ENTRY = "prep-worker.js";');
+    expect(controller).toContain("export const PREP_WORKER_ENTRY = WORKER_ENTRY;");
+    expect(controller).toContain("new Worker(join(__dirname, WORKER_ENTRY), {");
     expect(controller).toContain("eval: false,");
     expect(controller).toContain("execArgv: [],");
+    expect(controller).toContain("env: workerEnv,");
   });
 
   it("the startup, routes, gateway and the round / fairness modules never reach src/prep/", () => {

@@ -21,7 +21,11 @@
 //
 // so two logs are equal iff their digests are (a test recomputes it with node:crypto).
 
-import { bytesToHex, sha256, type FairnessHashProvider } from "../fairness";
+import * as fairness from "../fairness";
+import type { FairnessHashProvider } from "../fairness";
+
+/** R-1: bound ONCE, as this module loads (a later replacement of an export is never reached). */
+const { bytesToHex, sha256 } = fairness;
 
 // ---- Errors -----------------------------------------------------------------------------------
 
@@ -217,3 +221,11 @@ export class EventLog {
     return `EventLog(${this.total} events, ${this.dropped} dropped)`;
   }
 }
+
+// R-1: nothing of this module can be replaced once it has loaded. The compiled build's CommonJS
+// exports object is frozen too (an ES module namespace, as under Vitest, is immutable already).
+Object.freeze(SchedulerError);
+Object.freeze(SchedulerError.prototype);
+Object.freeze(EventLog);
+Object.freeze(EventLog.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

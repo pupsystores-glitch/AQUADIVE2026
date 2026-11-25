@@ -45,7 +45,8 @@
 // The core holds no RoundScript: only seals (public metadata) and, for the active round, the
 // disclosure cursor (disclosure.ts), which alone reads secret content, tick by tick.
 
-import { bytesToHex, hexToBytes, sha256, type FairnessHashProvider } from "../fairness";
+import * as fairness from "../fairness";
+import type { FairnessHashProvider } from "../fairness";
 import { RoundDisclosure, type DisclosureFact } from "./disclosure";
 import {
   DEFAULT_EVENT_CAPACITY,
@@ -59,6 +60,9 @@ import {
 import { SealedRound } from "./sealed";
 import { ADMISSION_DEADLINE_TICKS, BETTING_TICKS, type RoundPhase } from "./timeline";
 import { MAX_GLOBAL_TICK } from "./clock";
+
+/** R-1: bound ONCE, as this module loads (a later replacement of an export is never reached). */
+const { bytesToHex, hexToBytes, sha256 } = fairness;
 
 /** The public facts of the source's chain the core needs. */
 export interface SchedulerChain {
@@ -612,3 +616,9 @@ export class SchedulerCore {
     return out;
   }
 }
+
+// R-1: nothing of this module can be replaced once it has loaded. The compiled build's CommonJS
+// exports object is frozen too (an ES module namespace, as under Vitest, is immutable already).
+Object.freeze(SchedulerCore);
+Object.freeze(SchedulerCore.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

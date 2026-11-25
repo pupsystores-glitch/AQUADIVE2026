@@ -11,8 +11,25 @@
 // scheduler is protected since P8-4b-2) and the loaded closure of this module, then starts ONE
 // controller with `maxInFlight: 1`.
 //
-// The request capability (returned once, by `claim`, to the one scheduler; there is no public
-// request method) asks for round n = the previous request + 1,
+// SOURCE AUTHENTICITY (R-1 correction). A source has NO public method that binds a listener or
+// requests a round. It is bound to its one scheduler through the module-private binder that
+// `claimSourceBinder()` hands out ONCE per module instance; scheduler.ts claims it as it loads,
+// so every later claim is refused (`invalid-state: binder-claimed`) and a scheduler module that
+// finds it claimed fails to load (fail closed). Binding refuses anything but a source of this
+// module (a private-field brand: no prototype, Proxy or WeakSet method is consulted), a source
+// bound before, or one that is no longer ready. Every prepared script is sealed for THIS source
+// (sealed.ts, `claimSourceSealing`, claimed as this module loads) and the binding's `owns` lets
+// the scheduler admit only such seals. The class, its prototype and this module's CommonJS
+// exports are frozen as it loads; the controller's API (start, prepare, state, close, terminate),
+// the integrity checks, the protected-file lists, the public vector salts and the salt hash are
+// bound once, as this module loads, so a later replacement of an export or prototype method of
+// those modules is never reached. Their own internals — the controller's verifier, the worker
+// message parser, the worker entry, class and environment — bind and freeze their references in
+// turn (R-1b correction, prep/controller.ts, round/round-script.ts, round/canonical.ts); shared
+// built-ins on the worker channel are not covered (A-1, server README §18).
+//
+// The request capability (returned once, by the binder, to the one scheduler) asks for round
+// n = the previous request + 1,
 // starting at 1 — never a skipped, repeated or concurrent round — with the request id
 // `sched-round-<n>` (unique: one source per controller, n strictly increasing) and the salt
 //
@@ -42,17 +59,48 @@
 // of the admission deadline would likewise correlate (weakly) with it. Mitigation (constant-shape
 // verification padding, fixed-time delivery) is a separate, owner-approved milestone.
 
-import { join } from "node:path";
-import { FAIRNESS_DEV_VECTORS_V1, bytesToHex, hexToBytes, sha256 } from "../fairness";
-import { createNodeFairnessCrypto } from "../fairness/crypto-node";
-import { PrepWorkerController, type PreparedRound } from "../prep/controller";
-import { PREP_PROTECTED_FILES, PrepWorkerError } from "../prep/protocol";
-import { REQUIRED_PROTECTED_FILES } from "../round/engine-runtime";
-import { RoundScriptError } from "../round/errors";
-import { assertLoadedClosure, readTrustedManifest, verifyBuildIntegrity } from "../round/integrity";
+import { join as joinExport } from "node:path";
+import * as fairness from "../fairness";
+import { createNodeFairnessCrypto as createNodeFairnessCryptoExport } from "../fairness/crypto-node";
+import {
+  PrepWorkerController as PrepWorkerControllerExport,
+  type PreparedRound,
+} from "../prep/controller";
+import * as prepProtocol from "../prep/protocol";
+import { REQUIRED_PROTECTED_FILES as REQUIRED_PROTECTED_FILES_EXPORT } from "../round/engine-runtime";
+import { RoundScriptError as RoundScriptErrorExport } from "../round/errors";
+import * as integrity from "../round/integrity";
 import type { SchedulerChain } from "./core";
 import { SchedulerError, type SourceFailure } from "./events";
-import { sealRoundScript, type SealedRound } from "./sealed";
+import { claimSourceSealing, type SealedRound } from "./sealed";
+
+// ---- R-1: every external reference this module calls, bound ONCE as it loads -----------------
+
+type PrepWorkerController = PrepWorkerControllerExport;
+const join = joinExport;
+const { bytesToHex, hexToBytes, sha256 } = fairness;
+const VECTOR_SALT_A_HEX: string = fairness.FAIRNESS_DEV_VECTORS_V1.saltAHex;
+const VECTOR_SALT_B_HEX: string = fairness.FAIRNESS_DEV_VECTORS_V1.saltBHex;
+const createNodeFairnessCrypto = createNodeFairnessCryptoExport;
+const PrepWorkerError = prepProtocol.PrepWorkerError;
+const RoundScriptError = RoundScriptErrorExport;
+const { assertLoadedClosure, readTrustedManifest, verifyBuildIntegrity } = integrity;
+const PROTECTED_FILES: readonly string[] = Object.freeze([
+  ...REQUIRED_PROTECTED_FILES_EXPORT,
+  ...prepProtocol.PREP_PROTECTED_FILES,
+]);
+const Controller = PrepWorkerControllerExport;
+const controllerStart = Controller.start;
+const controllerPrepare = Controller.prototype.prepare;
+const controllerClose = Controller.prototype.close;
+const controllerTerminate = Controller.prototype.terminate;
+const controllerState = Object.getOwnPropertyDescriptor(Controller.prototype, "state")!.get!;
+type ControllerState = PrepWorkerController["state"];
+/** The controller's state through the bound getter (throws for anything but a controller). */
+const stateOf = (c: PrepWorkerController): ControllerState =>
+  Reflect.apply(controllerState, c, []) as ControllerState;
+/** The seals' source capability (sealed.ts), claimed as this module loads. */
+const sealing = claimSourceSealing();
 
 /**
  * The scheduler's compiled files in the build: part of the TRUSTED integrity manifest's
@@ -88,12 +136,24 @@ export type SourceListener = (event: SourceEvent) => void;
 
 export type RoundSourceState = "ready" | "ended" | "closed";
 
+/** What the binder hands the one scheduler (R-1): its request capability and the seal check. */
+export interface SourceAccess {
+  /** Requests round `n` (see the file comment). */
+  readonly request: (n: number) => void;
+  /** True only for an unopened seal this source made (R-1; sealed.ts `sealedBy`). */
+  readonly owns: (sealed: unknown) => boolean;
+}
+
+export type SourceBinder = (source: unknown, listener: SourceListener) => SourceAccess;
+
 const OPTION_KEYS = ["mode", "chain", "chainLength", "vectorSalt"];
 const SALT_DOMAIN = "AQUADIVE|scheduler|salt|v1";
 const CONSTRUCT: object = Object.freeze(Object.create(null));
 const INSPECT = Symbol.for("nodejs.util.inspect.custom");
-/** Sources created by `start` (the scheduler accepts no other). */
-const approved = new WeakSet<object>();
+/** Module-private (set by the class's static block; R-1): the binder and the brand check. */
+let binder: SourceBinder | null = null;
+let binderClaimed = false;
+let isSource: (value: unknown) => boolean = () => false;
 
 /** <build> of <build>/server/src/scheduler/source.js. */
 const buildRoot = (): string => join(__dirname, "..", "..", "..");
@@ -108,11 +168,7 @@ export function verifySchedulerBuild(entries: readonly string[]): void {
   try {
     const hash = createNodeFairnessCrypto().hash;
     const root = buildRoot();
-    const manifest = readTrustedManifest(root, [
-      ...REQUIRED_PROTECTED_FILES,
-      ...PREP_PROTECTED_FILES,
-      ...SCHEDULER_PROTECTED_FILES,
-    ]);
+    const manifest = readTrustedManifest(root, [...PROTECTED_FILES, ...SCHEDULER_PROTECTED_FILES]);
     verifyBuildIntegrity(root, manifest, hash);
     assertLoadedClosure(root, manifest, require.cache, entries);
   } catch (error) {
@@ -170,8 +226,28 @@ export class PrepWorkerRoundSource {
             bytes.set(u64be(round), domain.length + 1 + chainId.length);
             return bytesToHex(sha256(hash, bytes));
           };
-    approved.add(this);
     Object.freeze(this);
+  }
+
+  static {
+    // R-1: the brand check is a private field, which no prototype, Proxy or WeakSet method can
+    // fake, and the binder is the ONLY way to bind a listener or to request a round.
+    isSource = (value: unknown): boolean =>
+      typeof value === "object" && value !== null && #claimed in value;
+    binder = (value: unknown, listener: SourceListener): SourceAccess => {
+      if (!isSource(value)) throw new SchedulerError("source-not-approved");
+      const source = value as PrepWorkerRoundSource;
+      if (source.#claimed || typeof listener !== "function") {
+        throw new SchedulerError("invalid-state", "source-claimed");
+      }
+      if (source.#state !== "ready") throw new SchedulerError("invalid-state", source.#state);
+      source.#claimed = true;
+      source.#listener = listener;
+      return Object.freeze({
+        request: (n: number) => source.#request(n),
+        owns: (sealed: unknown) => sealing.sealedBy(sealed, source),
+      });
+    };
   }
 
   /** Starts the source (see the file comment). */
@@ -198,18 +274,20 @@ export class PrepWorkerRoundSource {
       const which = o.vectorSalt ?? "A";
       if (which !== "A" && which !== "B")
         throw new SchedulerError("invalid-argument", "invalid-options");
-      fixedSalt =
-        which === "A" ? FAIRNESS_DEV_VECTORS_V1.saltAHex : FAIRNESS_DEV_VECTORS_V1.saltBHex;
+      fixedSalt = which === "A" ? VECTOR_SALT_A_HEX : VECTOR_SALT_B_HEX;
     }
     verifySchedulerBuild([SCHEDULER_SOURCE_LOCATION]);
     let controller: PrepWorkerController;
     try {
-      controller = await PrepWorkerController.start({
-        mode: o.mode as "development" | "test",
-        chain: o.chain as "random" | "public-test-vectors",
-        ...(o.chainLength === undefined ? {} : { chainLength: o.chainLength as number }),
-        maxInFlight: 1,
-      });
+      controller = (await Reflect.apply(controllerStart, Controller, [
+        {
+          mode: o.mode as "development" | "test",
+          chain: o.chain as "random" | "public-test-vectors",
+          ...(o.chainLength === undefined ? {} : { chainLength: o.chainLength as number }),
+          maxInFlight: 1,
+        },
+      ])) as PrepWorkerController;
+      stateOf(controller); // R-1: a real controller (the bound getter's brand), nothing else
     } catch (error) {
       throw new SchedulerError(
         "source-failed",
@@ -223,21 +301,7 @@ export class PrepWorkerRoundSource {
     return this.#state;
   }
 
-  /**
-   * INTERNAL (scheduler only): binds the one listener and returns the ONLY way to request a
-   * round — a source serves one scheduler, once, and nobody else holding the source can request.
-   */
-  claim(listener: SourceListener): (n: number) => void {
-    if (this.#claimed || typeof listener !== "function") {
-      throw new SchedulerError("invalid-state", "source-claimed");
-    }
-    if (this.#state !== "ready") throw new SchedulerError("invalid-state", this.#state);
-    this.#claimed = true;
-    this.#listener = listener;
-    return (n: number) => this.#request(n);
-  }
-
-  /** Requests round `n` (see the file comment); reachable only through `claim`'s result. */
+  /** Requests round `n` (see the file comment); reachable only through the binder's result. */
   #request(n: number): void {
     if (this.#state !== "ready") {
       return this.#emit({ kind: "failed", roundNumber: n, failure: "lost" });
@@ -248,8 +312,12 @@ export class PrepWorkerRoundSource {
     this.#lastRequested = n;
     this.#pending = true;
     const salt = this.#fixedSalt ?? this.#salt!(n);
-    this.#controller
-      .prepare(`sched-round-${n}`, salt)
+    (
+      Reflect.apply(controllerPrepare, this.#controller, [
+        `sched-round-${n}`,
+        salt,
+      ]) as Promise<PreparedRound>
+    )
       .then(
         (round) => this.#prepared(n, round),
         (error: unknown) => this.#failed(n, error),
@@ -264,7 +332,7 @@ export class PrepWorkerRoundSource {
    */
   checkHealth(): boolean {
     if (this.#lossReported) return false;
-    const s = this.#controller.state;
+    const s = stateOf(this.#controller);
     if (s === "failed" || s === "terminated") {
       this.#lossReported = true;
       if (this.#state === "ready") this.#state = "ended";
@@ -277,22 +345,30 @@ export class PrepWorkerRoundSource {
   async close(): Promise<void> {
     if (this.#state === "closed") return;
     this.#state = "closed";
-    const s = this.#controller.state;
+    const s = stateOf(this.#controller);
     if (s === "ready" || s === "halted" || s === "closing") {
       try {
-        await this.#controller.close();
+        await Reflect.apply(controllerClose, this.#controller, []);
         return;
       } catch {
         // fall through: stop it
       }
     }
-    await this.#controller.terminate().catch(() => undefined);
+    await this.#terminateController();
   }
 
   /** Immediate stop (contract violations). */
   async terminate(): Promise<void> {
     this.#state = "closed";
-    await this.#controller.terminate().catch(() => undefined);
+    await this.#terminateController();
+  }
+
+  async #terminateController(): Promise<void> {
+    try {
+      await Reflect.apply(controllerTerminate, this.#controller, []);
+    } catch {
+      // already stopped
+    }
   }
 
   toJSON(): { source: string; state: RoundSourceState } {
@@ -317,7 +393,7 @@ export class PrepWorkerRoundSource {
     }
     let sealed: SealedRound;
     try {
-      sealed = sealRoundScript(round.script);
+      sealed = sealing.seal(round.script, this); // R-1: sealed for THIS source only
     } catch {
       return this.#emit({ kind: "failed", roundNumber: n, failure: "contract-violation" });
     }
@@ -337,7 +413,7 @@ export class PrepWorkerRoundSource {
           failure = "preparation-failed";
           break;
         case "not-ready": {
-          const s = this.#controller.state;
+          const s = stateOf(this.#controller);
           failure = s === "failed" || s === "terminated" ? "lost" : "preparation-failed";
           break;
         }
@@ -371,6 +447,22 @@ export class PrepWorkerRoundSource {
   }
 }
 
-/** True only for sources created by `PrepWorkerRoundSource.start`. */
-export const isApprovedSource = (value: unknown): value is PrepWorkerRoundSource =>
-  typeof value === "object" && value !== null && approved.has(value);
+/** True only for sources created by `PrepWorkerRoundSource.start` (a private-field brand). */
+export const isApprovedSource = (value: unknown): value is PrepWorkerRoundSource => isSource(value);
+
+/**
+ * INTERNAL to the scheduler (R-1): returns the source binder exactly ONCE per module instance
+ * (scheduler.ts claims it as it loads; see the file comment). Every later call is refused.
+ */
+export function claimSourceBinder(): SourceBinder {
+  if (binderClaimed || binder === null) throw new SchedulerError("invalid-state", "binder-claimed");
+  binderClaimed = true;
+  const bind = binder;
+  binder = null;
+  return bind;
+}
+
+// R-1: nothing of this module can be replaced once it has loaded (see the file comment).
+Object.freeze(PrepWorkerRoundSource);
+Object.freeze(PrepWorkerRoundSource.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

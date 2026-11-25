@@ -51,6 +51,11 @@ const REPO = join(__dirname, "..", "..", "..");
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
 
+// R-1: this file's module graph does not load source.ts, so the source sealing capability is
+// claimed HERE, before any test runs (the M-1 reflection test calls every export and must find
+// it already claimed, as in the build, where source.ts claims it as it loads).
+const sealing = sealedModule.claimSourceSealing();
+
 const CRASH: RoundSpec = { outcome: "crash", diveTicks: 37, crashAt: 2.37, goldfish: [320] };
 const FLOOR: RoundSpec = {
   outcome: "floor",
@@ -396,6 +401,7 @@ describe("secret disclosure boundary", () => {
     expect(Object.keys(sealedModule).sort()).toEqual([
       "SealedRound",
       "claimSealedRoundOpener",
+      "claimSourceSealing",
       "sealRoundScript",
     ]);
     // Every reachable function, called with the seal, hands out no script.
@@ -425,6 +431,86 @@ describe("secret disclosure boundary", () => {
     expect(fresh.state).toBe("sealed");
     expect(RoundDisclosure.open(fresh, CHAIN_ID, 1)).toBeInstanceOf(RoundDisclosure);
     expect(fresh.state).toBe("opened");
+  });
+
+  it("R-1: source seals are bound to one origin; test seals and other origins never match", () => {
+    // `sealing` was claimed as this file loaded (its module graph does not load source.ts); in
+    // the build, source.ts claims it as it loads (isolation / worker tests).
+    expect(() => sealedModule.claimSourceSealing()).toThrow("sealed-misuse: sealing-claimed");
+    expect(Object.isFrozen(sealing)).toBe(true);
+    const origin = Object.freeze({});
+    const other = Object.freeze({});
+    const own = sealing.seal(makeScript(1, CRASH), origin);
+    const test = sealRoundScript(makeScript(1, CRASH));
+    expect(sealing.sealedBy(own, origin)).toBe(true);
+    expect(sealing.sealedBy(own, other)).toBe(false);
+    expect(sealing.sealedBy(test, origin)).toBe(false);
+    // Neither the public view nor any key of the seal shows the origin.
+    expect(Reflect.ownKeys(own)).toEqual(["admission"]);
+    expect(JSON.stringify(own)).toBe(JSON.stringify(test));
+    // Look-alikes: a copy, a prototype child, a Proxy of the real seal.
+    for (const fake of [
+      { ...own },
+      Object.create(own),
+      new Proxy(own, {}),
+      Object.create(SealedRound.prototype),
+      null,
+      undefined,
+      "sealed",
+    ]) {
+      expect(sealing.sealedBy(fake, origin)).toBe(false);
+    }
+    for (const bad of [null, undefined, 1, "x"]) {
+      expect(() => sealing.seal(makeScript(1, CRASH), bad as never)).toThrow(
+        "sealed-misuse: invalid-origin",
+      );
+    }
+    expect(() => sealing.seal({} as never, origin)).toThrow("sealed-misuse: not-a-script");
+    // Only an UNOPENED seal matches: opened or discarded seals never do.
+    expect(RoundDisclosure.open(own, CHAIN_ID, 1)).toBeInstanceOf(RoundDisclosure);
+    expect(sealing.sealedBy(own, origin)).toBe(false);
+    const dropped = sealing.seal(makeScript(2, CRASH), origin);
+    dropped.discard();
+    expect(sealing.sealedBy(dropped, origin)).toBe(false);
+  });
+
+  it("R-1: the pure modules' classes, prototypes and statics cannot be replaced", () => {
+    for (const [i, target] of [
+      SealedRound,
+      SealedRound.prototype,
+      RoundDisclosure,
+      RoundDisclosure.prototype,
+      SchedulerCore,
+      SchedulerCore.prototype,
+      EventLog,
+      EventLog.prototype,
+      SchedulerError,
+      SchedulerError.prototype,
+      SimulatedClock,
+      SimulatedClock.prototype,
+    ].entries()) {
+      expect(Object.isFrozen(target), `target ${i}`).toBe(true);
+    }
+    const original = SchedulerCore.prototype.deliver;
+    expect(() => {
+      (SchedulerCore.prototype as Any).deliver = () => [];
+    }).toThrow(TypeError);
+    expect(() => {
+      (RoundDisclosure as Any).open = () => null;
+    }).toThrow(TypeError);
+    expect(() => Object.setPrototypeOf(SealedRound.prototype, {})).toThrow(TypeError);
+    expect(() => {
+      (SealedRound as Any)[Symbol.hasInstance] = () => true;
+    }).toThrow(TypeError);
+    expect(SchedulerCore.prototype.deliver).toBe(original);
+    // A SchedulerError is still an ordinary error (its own name, code and reason).
+    const e = new SchedulerError("invalid-state", "x");
+    expect([e.name, e.code, e.reason, e.message]).toEqual([
+      "SchedulerError",
+      "invalid-state",
+      "x",
+      "invalid-state: x",
+    ]);
   });
 
   it("RoundDisclosure: strictly the next tick; no other read; redacted; released at the end", () => {

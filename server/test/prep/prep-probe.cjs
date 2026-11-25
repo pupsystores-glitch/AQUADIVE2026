@@ -22,6 +22,9 @@
 //   start       (patched builds, P8-4b-1) start() of a worker that never reports ready
 //   ids         (P8-4b-1) the request-id bound: chainLength + 64 ids, none evicted
 //   slice       (patched controller, P8-4b-1) terminate() between two verification slices
+//   r1b <v>     (P8-4b-2 R-1b) the controller alone: a replacement made after it loaded on the
+//               path from the worker to a result (verifier, message parser, worker entry / class,
+//               NODE_OPTIONS) is refused or never reached; rounds equal the independent vectors
 //   integrity   (tampered builds) controller start and a raw worker refuse the build
 //   startup     the compiled application loads no prep, round, engine or fairness module
 //   respond     main-thread event-loop gaps while 1, 10 and 50 rounds are prepared (worker)
@@ -781,6 +784,108 @@ const CONFIG = (over = {}) => ({
   }
 
   // ==== integrity (run on a tampered build) =====================================================
+  // ==== r1b (P8-4b-2 R-1b): the controller ALONE, no scheduler ================================
+  if (scenario === "r1b") {
+    // Same-process code that runs AFTER the controller loaded replaces something on the path
+    // from the worker to a prepared result. The replacement only COUNTS whether it is ever
+    // reached; for "node-options" any code that runs inside the worker counts. Then rounds 1 and
+    // 2 of the public vector chain (salt A) are prepared.
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const vector = process.argv[4];
+    const r = { vector, armed: false, armError: null, reached: 0 };
+    const set = (obj, key, value) => {
+      obj[key] = value;
+      if (obj[key] !== value) throw new TypeError("not replaced");
+    };
+    const count = (fn) =>
+      function (...args) {
+        r.reached += 1;
+        return fn.apply(this, args);
+      };
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aquadive-r1b-prep-"));
+    const marker = path.join(dir, "ran");
+    fs.writeFileSync(marker, "");
+    const rs = load("server/src/round/round-script.js");
+    const canonical = load("server/src/round/canonical.js");
+    const protocol = load("server/src/prep/protocol.js");
+    const controllerModule = load("server/src/prep/controller.js");
+    const threads = require("node:worker_threads");
+    const RSV = rs.RoundScriptVerification;
+    const vectors = {
+      none: () => undefined,
+      "verification-step": () => set(RSV.prototype, "step", count(RSV.prototype.step)),
+      "verification-begin": () => set(RSV, "begin", count(RSV.begin)),
+      "verification-export": () =>
+        set(rs, "RoundScriptVerification", { begin: count((...a) => RSV.begin(...a)) }),
+      "canonical-value": () => {
+        const getter = Object.getOwnPropertyDescriptor(
+          canonical.CanonicalCheck.prototype,
+          "value",
+        ).get;
+        Object.defineProperty(canonical.CanonicalCheck.prototype, "value", { get: count(getter) });
+      },
+      "decode-utf8": () => set(canonical, "decodeUtf8", count(canonical.decodeUtf8)),
+      "parse-message": () =>
+        set(protocol, "parseWorkerMessage", count(protocol.parseWorkerMessage)),
+      "worker-entry": () => set(controllerModule, "PREP_WORKER_ENTRY", "../../../no-such-entry.js"),
+      "worker-class": () => {
+        const W = threads.Worker;
+        set(
+          threads,
+          "Worker",
+          class extends W {
+            constructor(...args) {
+              r.reached += 1;
+              super(...args);
+            }
+          },
+        );
+      },
+      "node-options": () => {
+        const preload = path.join(dir, "preload.cjs");
+        fs.writeFileSync(
+          preload,
+          `require("node:fs").appendFileSync(${JSON.stringify(marker)}, "x");\n`,
+        );
+        process.env.NODE_OPTIONS = `--require "${preload.split(path.sep).join("/")}"`;
+      },
+    };
+    if (!Object.hasOwn(vectors, vector)) throw new Error(`unknown vector ${vector}`);
+    try {
+      vectors[vector]();
+      r.armed = true;
+    } catch (e) {
+      r.armError = e instanceof TypeError ? "TypeError" : errorOf(e);
+    }
+    let c;
+    try {
+      c = await PrepWorkerController.start({ mode: "test", chain: "public-test-vectors" });
+    } catch (e) {
+      r.startError = errorOf(e);
+      fs.rmSync(dir, { recursive: true, force: true });
+      report.r1b = r;
+      return emit(report);
+    }
+    r.rounds = [];
+    for (let i = 1; i <= 2; i++) {
+      const round = await c.prepare(`r1b-${i}`, saltHex("A"));
+      const s = round.script.secretContent(); // the PUBLIC test vector chain (seeds are public)
+      r.rounds.push({
+        chainIndex: round.chainIndex,
+        outcome: s.outcome,
+        crashAt: s.crashAt,
+        jackpot: s.jackpot,
+        digest: round.script.secretDigest(),
+      });
+    }
+    await c.close();
+    r.workerCodeRan = fs.readFileSync(marker, "utf8").length;
+    fs.rmSync(dir, { recursive: true, force: true });
+    report.r1b = r;
+    return emit(report);
+  }
+
   if (scenario === "integrity") {
     if (controllerLoadError !== null) {
       report.controller = { ok: false, loadError: controllerLoadError };

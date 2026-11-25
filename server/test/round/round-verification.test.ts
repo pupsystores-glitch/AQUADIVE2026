@@ -12,7 +12,7 @@
 import { inspect } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { createNodeFairnessCrypto } from "../../src/fairness/crypto-node";
-import { CANONICAL_MAX_DEPTH, canonicalJson } from "../../src/round/canonical";
+import { CANONICAL_MAX_DEPTH, CanonicalCheck, canonicalJson } from "../../src/round/canonical";
 import { CREATURE_KINDS, EXPECTED_RUNNER_PROFILE as P } from "../../src/round/engine-types";
 import {
   ANALYTIC_MAX_DIVE_TICKS,
@@ -22,6 +22,7 @@ import {
   ROUND_SCRIPT_SHAPE_LIMITS,
   ROUND_SCRIPT_STATUS,
   ROUND_SCRIPT_VERSION,
+  RoundScript,
   RoundScriptVerification,
   buildRoundScript,
   parseRoundScript,
@@ -529,5 +530,53 @@ describe("private copies: snapshot first, zeroed when not handed to a script", (
         code: "script-invalid",
       });
     }
+  });
+});
+
+// ---- P8-4b-2 R-1b: nothing on the verifier path can be replaced after load ------------------
+
+describe("R-1b: the verifier's classes cannot be replaced after load", () => {
+  const script = scriptOf(shortFloorOutput(3), 3);
+  const bytes = script.secretCanonicalBytes();
+  const digest = script.secretDigest();
+  // The compiled CommonJS exports objects are frozen too (scheduler-worker.test.ts, prep-worker.
+  // test.ts run the attacks on the build); here, under Vitest, the classes and prototypes.
+  const targets: [string, object][] = [
+    ["RoundScript", RoundScript],
+    ["RoundScript.prototype", RoundScript.prototype],
+    ["RoundScriptVerification", RoundScriptVerification],
+    ["RoundScriptVerification.prototype", RoundScriptVerification.prototype],
+    ["CanonicalCheck", CanonicalCheck],
+    ["CanonicalCheck.prototype", CanonicalCheck.prototype],
+  ];
+
+  it.each(targets)("%s is frozen", (_, target) => {
+    expect(Object.isFrozen(target)).toBe(true);
+  });
+
+  it("replacing step, begin, value or secretContent throws; verification is unchanged", () => {
+    const forged = () => script;
+    expect(() => {
+      (RoundScriptVerification.prototype as any).step = forged;
+    }).toThrow(TypeError);
+    expect(() => {
+      (RoundScriptVerification as any).begin = forged;
+    }).toThrow(TypeError);
+    expect(() => Object.defineProperty(CanonicalCheck.prototype, "value", { get: forged })).toThrow(
+      TypeError,
+    );
+    expect(() => {
+      (RoundScript.prototype as any).secretContent = forged;
+    }).toThrow(TypeError);
+    expect(() => Object.setPrototypeOf(RoundScriptVerification.prototype, {})).toThrow(TypeError);
+    expect(() =>
+      Object.defineProperty(RoundScript, Symbol.hasInstance, { value: () => true }),
+    ).toThrow(TypeError);
+    const again = RoundScriptVerification.begin(hash, bytes, digest).step(
+      Number.POSITIVE_INFINITY,
+    )!;
+    expect(again).not.toBe(script);
+    expect(again.secretDigest()).toBe(digest);
+    expect(again.secretContent()).toEqual(script.secretContent());
   });
 });

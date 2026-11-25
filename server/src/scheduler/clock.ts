@@ -112,3 +112,9 @@ export function createMonotonicClock(): MonotonicClock {
     },
   });
 }
+
+// R-1: nothing of this module can be replaced once it has loaded. The compiled build's CommonJS
+// exports object is frozen too (an ES module namespace, as under Vitest, is immutable already).
+Object.freeze(SimulatedClock);
+Object.freeze(SimulatedClock.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

@@ -53,24 +53,60 @@
 //   PREP_START_TIMEOUT_MS (30 s, fixed);
 // - at most chainLength + REQUEST_ID_SLACK request ids are retained, none evicted; once they are
 //   used up every new request is refused (`request-ids-exhausted`) without being sent.
+//
+// P8-4b-2 R-1b correction (load-time binding; the scheduler's source delivers what this controller
+// resolves, so nothing on the path from the worker to that result may be replaceable after load):
+//
+// - every external reference — node:path `join`, node:worker_threads `Worker`, the fairness
+//   crypto factory, the integrity checks and protected-file lists, the worker protocol's parsers,
+//   constants and error class, and RoundScriptVerification's `begin` / `step` / `cancel` — is bound
+//   once, as this module loads; verification methods are called through those references
+//   (Reflect.apply), never looked up on the class or its prototype at run time;
+// - the worker's entry file is a module-private constant (the exported PREP_WORKER_ENTRY only
+//   reports it), so no export can choose the code the worker thread runs;
+// - the worker gets an explicit environment holding NODE_ENV only. Without it a worker inherits
+//   process.env as it is at start(), and Node applies NODE_OPTIONS from that environment: code
+//   that set NODE_OPTIONS (e.g. `--require`) at run time ran inside the worker before its entry;
+// - the class, its prototype and this module's CommonJS exports are frozen as it loads.
+//
+// Before R-1b, each of those replacements made the controller deliver an attacker-chosen outcome.
+// Still NOT covered (no in-process check can be): code that runs before these modules load or
+// rewrites shared built-ins (EventEmitter, MessagePort, Promise, typed arrays, JSON, …), module
+// loader hooks, the inspector, a patched build (A-1, server README §18).
 
-import { join } from "node:path";
-import { Worker } from "node:worker_threads";
-import { createNodeFairnessCrypto } from "../fairness/crypto-node";
+import { join as joinExport } from "node:path";
+import { Worker as WorkerExport } from "node:worker_threads";
+import { createNodeFairnessCrypto as createNodeFairnessCryptoExport } from "../fairness/crypto-node";
 import type { FairnessHashProvider } from "../fairness";
-import { REQUIRED_PROTECTED_FILES } from "../round/engine-runtime";
-import { RoundScriptError } from "../round/errors";
-import { assertLoadedClosure, readTrustedManifest, verifyBuildIntegrity } from "../round/integrity";
-import {
-  DEFAULT_VERIFICATION_BUDGET,
-  RoundScriptVerification,
-  type RoundScript,
-} from "../round/round-script";
-import {
+import { REQUIRED_PROTECTED_FILES as REQUIRED_PROTECTED_FILES_EXPORT } from "../round/engine-runtime";
+import { RoundScriptError as RoundScriptErrorExport } from "../round/errors";
+import * as integrity from "../round/integrity";
+import * as roundScript from "../round/round-script";
+import type { RoundScript, RoundScriptVerification } from "../round/round-script";
+import * as protocol from "./protocol";
+import type {
+  ClosedMessage,
+  PrepChainSource,
+  PrepMode,
+  PrepWorkerConfig,
+  PrepWorkerErrorCode,
+  PreparedMessage,
+  ReadyMessage,
+  WorkerMessage,
+} from "./protocol";
+
+// ---- R-1b: every external reference this module calls, bound ONCE as it loads ----------------
+
+const join = joinExport;
+const Worker = WorkerExport;
+type Worker = WorkerExport;
+const createNodeFairnessCrypto = createNodeFairnessCryptoExport;
+const RoundScriptError = RoundScriptErrorExport;
+const { assertLoadedClosure, readTrustedManifest, verifyBuildIntegrity } = integrity;
+const {
   DEFAULT_PREP_CHAIN_LENGTH,
   MAX_IN_FLIGHT_LIMIT,
   PREP_CONTROLLER_LOCATION,
-  PREP_PROTECTED_FILES,
   PREP_PROTOCOL_VERSION,
   PUBLIC_TEST_VECTOR_CHAIN_LENGTH,
   PrepWorkerError,
@@ -78,18 +114,32 @@ import {
   SALT_HEX_PATTERN,
   parseWorkerConfig,
   parseWorkerMessage,
-  type ClosedMessage,
-  type PrepChainSource,
-  type PrepMode,
-  type PrepWorkerConfig,
-  type PrepWorkerErrorCode,
-  type PreparedMessage,
-  type ReadyMessage,
-  type WorkerMessage,
-} from "./protocol";
+} = protocol;
+type PrepWorkerError = protocol.PrepWorkerError;
+const PROTECTED_FILES: readonly string[] = Object.freeze([
+  ...REQUIRED_PROTECTED_FILES_EXPORT,
+  ...protocol.PREP_PROTECTED_FILES,
+]);
+const DEFAULT_VERIFICATION_BUDGET = roundScript.DEFAULT_VERIFICATION_BUDGET;
+const Verification = roundScript.RoundScriptVerification;
+const verificationBegin = Verification.begin;
+const verificationStep = Verification.prototype.step;
+const verificationCancel = Verification.prototype.cancel;
+/** RoundScriptVerification.begin through the bound static (throws `script-invalid`). */
+const beginVerification = (
+  hash: FairnessHashProvider,
+  bytes: Uint8Array,
+  digest: string,
+): RoundScriptVerification =>
+  Reflect.apply(verificationBegin, Verification, [hash, bytes, digest]) as RoundScriptVerification;
+/** The bound `step`: a verified RoundScript from the step that completes, null before. */
+const stepVerification = (v: RoundScriptVerification, budget: number): RoundScript | null =>
+  Reflect.apply(verificationStep, v, [budget]) as RoundScript | null;
 
+/** R-1b: the entry the worker thread runs (module-private; see the file comment). */
+const WORKER_ENTRY = "prep-worker.js";
 /** The worker's compiled entry, next to this file (no caller can choose another). */
-export const PREP_WORKER_ENTRY = "prep-worker.js";
+export const PREP_WORKER_ENTRY = WORKER_ENTRY;
 /** How long `start()` waits for the worker's `ready` (fixed; not an option). */
 export const PREP_START_TIMEOUT_MS = 30_000;
 /** Request ids retained beyond the chain length (for requests that reserve no index). */
@@ -215,18 +265,19 @@ export class PrepWorkerController {
   static start(options: PrepWorkerOptions): Promise<PrepWorkerController> {
     let config: PrepWorkerConfig;
     let hash: FairnessHashProvider;
+    let workerEnv: Readonly<Record<string, string>>;
     try {
       config = configOf(options);
-      if (process.env.NODE_ENV === "production") {
+      const nodeEnv = process.env.NODE_ENV;
+      if (nodeEnv === "production") {
         throw new PrepWorkerError("development-only", "production-refused");
       }
+      // R-1b: the worker's whole environment (NODE_ENV only; see the file comment).
+      workerEnv = typeof nodeEnv === "string" ? { NODE_ENV: nodeEnv } : {};
       hash = createNodeFairnessCrypto().hash;
       try {
         const root = buildRoot();
-        const manifest = readTrustedManifest(root, [
-          ...REQUIRED_PROTECTED_FILES,
-          ...PREP_PROTECTED_FILES,
-        ]);
+        const manifest = readTrustedManifest(root, PROTECTED_FILES);
         verifyBuildIntegrity(root, manifest, hash);
         assertLoadedClosure(root, manifest, require.cache, [PREP_CONTROLLER_LOCATION]);
       } catch (error) {
@@ -239,11 +290,12 @@ export class PrepWorkerController {
       return Promise.reject(error);
     }
     return new Promise((resolve, reject) => {
-      const worker = new Worker(join(__dirname, PREP_WORKER_ENTRY), {
+      const worker = new Worker(join(__dirname, WORKER_ENTRY), {
         workerData: config,
         eval: false,
         execArgv: [],
         argv: [],
+        env: workerEnv,
         stdin: false,
         name: "aquadive-prep",
       });
@@ -494,7 +546,7 @@ export class PrepWorkerController {
   async #verify(message: PreparedMessage): Promise<RoundScript | null> {
     let verification: RoundScriptVerification;
     try {
-      verification = RoundScriptVerification.begin(this.#hash, message.bytes, message.digest);
+      verification = beginVerification(this.#hash, message.bytes, message.digest);
     } catch {
       this.#fail("protocol-violation", "result-invalid");
       return null;
@@ -503,12 +555,12 @@ export class PrepWorkerController {
     }
     try {
       for (;;) {
-        const script = verification.step(DEFAULT_VERIFICATION_BUDGET);
+        const script = stepVerification(verification, DEFAULT_VERIFICATION_BUDGET);
         // The caller resumes a microtask later and re-checks #ended() before it delivers.
         if (script !== null) return script;
         await nextTurn();
         if (this.#ended()) {
-          verification.cancel();
+          Reflect.apply(verificationCancel, verification, []);
           return null;
         }
       }
@@ -543,3 +595,9 @@ export class PrepWorkerController {
     void this.#worker.terminate();
   }
 }
+
+// R-1b: nothing of this module can be replaced once it has loaded. The compiled build's CommonJS
+// exports object is frozen too (an ES module namespace, as under Vitest, is immutable already).
+Object.freeze(PrepWorkerController);
+Object.freeze(PrepWorkerController.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

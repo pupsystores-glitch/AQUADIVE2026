@@ -12,7 +12,13 @@ import { describe, expect, it } from "vitest";
 import * as facade from "../../src/scheduler/scheduler";
 import { SchedulerError } from "../../src/scheduler/events";
 import { GlobalRoundScheduler } from "../../src/scheduler/scheduler";
-import { SCHEDULER_PROTECTED_FILES } from "../../src/scheduler/source";
+import { claimSealedRoundOpener, claimSourceSealing } from "../../src/scheduler/sealed";
+import {
+  PrepWorkerRoundSource,
+  SCHEDULER_PROTECTED_FILES,
+  claimSourceBinder,
+  isApprovedSource,
+} from "../../src/scheduler/source";
 
 const SERVER = fileURLToPath(new URL("../..", import.meta.url));
 const SRC = join(SERVER, "src");
@@ -78,7 +84,14 @@ describe("src/scheduler/ contents and imports", () => {
       timeline: [join(SRC, "round", "round-script.ts"), join(SRC, "round", "engine-types.ts")],
       events: [join(SRC, "fairness.ts")],
       sealed: [join(SRC, "fairness.ts"), join(SRC, "round", "round-script.ts"), own("events")],
-      disclosure: [join(SRC, "fairness.ts"), own("events"), own("sealed"), own("timeline")],
+      // R-1: the disclosure cursor binds RoundScript.prototype.secretContent once, at load.
+      disclosure: [
+        join(SRC, "fairness.ts"),
+        join(SRC, "round", "round-script.ts"),
+        own("events"),
+        own("sealed"),
+        own("timeline"),
+      ],
       core: [
         join(SRC, "fairness.ts"),
         own("disclosure"),
@@ -139,6 +152,35 @@ describe("src/scheduler/ contents and imports", () => {
       expect(/process\.hrtime/.test(source), m).toBe(m === "clock");
       expect(/require\.cache/.test(source), m).toBe(m === "source");
       expect(/Date\.now|new Date\b|performance\.now|Math\.random/.test(source), m).toBe(false);
+    }
+  });
+
+  it("R-1: every one-time capability is claimed as the facade loads; no public claim exists", () => {
+    // disclosure.ts claimed the opener, source.ts the sealing capability, scheduler.ts the binder.
+    expect(() => claimSealedRoundOpener()).toThrow("sealed-misuse: opener-claimed");
+    expect(() => claimSourceSealing()).toThrow("sealed-misuse: sealing-claimed");
+    expect(() => claimSourceBinder()).toThrow("invalid-state: binder-claimed");
+    expect(() => claimSourceBinder()).toThrow("invalid-state: binder-claimed");
+    // The source has no method that binds a listener or requests a round (R-1: the patched
+    // `claim` captured the scheduler's listener).
+    expect(Object.getOwnPropertyNames(PrepWorkerRoundSource.prototype).sort()).toEqual(
+      ["checkHealth", "close", "constructor", "state", "terminate", "toJSON"].sort(),
+    );
+    expect(Object.getOwnPropertyNames(PrepWorkerRoundSource).sort()).toEqual(
+      ["length", "name", "prototype", "start"].sort(),
+    );
+    for (const target of [
+      PrepWorkerRoundSource,
+      PrepWorkerRoundSource.prototype,
+      GlobalRoundScheduler,
+      GlobalRoundScheduler.prototype,
+    ]) {
+      expect(Object.isFrozen(target)).toBe(true);
+    }
+    // The approval check is a private-field brand: look-alikes and Proxies are not sources.
+    const fake = Object.create(PrepWorkerRoundSource.prototype);
+    for (const v of [fake, new Proxy(fake, {}), {}, null, undefined]) {
+      expect(isApprovedSource(v)).toBe(false);
     }
   });
 

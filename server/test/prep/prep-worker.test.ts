@@ -31,7 +31,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as tool from "../../scripts/engine-integrity.mjs";
-import { PREP_START_TIMEOUT_MS, REQUEST_ID_SLACK } from "../../src/prep/controller";
+import {
+  PREP_START_TIMEOUT_MS,
+  PrepWorkerController,
+  REQUEST_ID_SLACK,
+} from "../../src/prep/controller";
 import {
   SERVER,
   TRUSTED_MANIFEST,
@@ -49,8 +53,8 @@ type Report = any;
 let tmp = "";
 let dist = "";
 
-const probe = (buildDir: string, scenario: string): Report => {
-  const run = spawnSync(process.execPath, [PROBE, buildDir, scenario], {
+const probe = (buildDir: string, scenario: string, ...args: string[]): Report => {
+  const run = spawnSync(process.execPath, [PROBE, buildDir, scenario, ...args], {
     encoding: "utf8",
     timeout: 240_000,
   });
@@ -543,9 +547,10 @@ describe("P8-4b-1 lifecycle: ordering, halt, timeout, cancellation, request ids"
     const copy = patched(
       "slice-hook",
       "server/src/prep/controller.js",
-      "const script = verification.step(round_script_1.DEFAULT_VERIFICATION_BUDGET);",
+      // P8-4b-2 R-1b: the step is the bound RoundScriptVerification.prototype.step.
+      "const script = stepVerification(verification, DEFAULT_VERIFICATION_BUDGET);",
       "globalThis.__p84b1Slice?.(message.bytes, verification); " +
-        "const script = verification.step(round_script_1.DEFAULT_VERIFICATION_BUDGET);",
+        "const script = stepVerification(verification, DEFAULT_VERIFICATION_BUDGET);",
       "rehashed",
     );
     const { slice: r } = probe(copy, "slice");
@@ -773,6 +778,81 @@ describe("responsiveness (smoke bound only; NOT the D7 gate)", () => {
       expect(run.gaps.max, n).toBeLessThan(50);
     }
   });
+});
+
+describe("P8-4b-2 R-1b: load-time binding (compiled CommonJS, the controller alone)", () => {
+  /** The independent vectors of the public chain's rounds 1 and 2 (salt A). */
+  const VECTORS = JSON.parse(
+    readFileSync(join(SERVER, "test", "independent", "vectors-v1.json"), "utf8"),
+  ).vectors;
+  const expected = [1, 2].map((index) => {
+    const v = VECTORS.find(
+      (x: Report) => x.set === "dev-v1" && x.salt === "A" && x.index === index,
+    );
+    return { chainIndex: index, outcome: v.outcome, crashAt: v.crashAt, jackpot: v.jackpot };
+  });
+  const roundsOf = (r: Report) => {
+    // A refused start (e.g. an integrity refusal) is reported with its reason, not as a crash.
+    expect(r.startError, JSON.stringify(r.startError)).toBeUndefined();
+    return r.rounds.map((x: Report) => ({
+      chainIndex: x.chainIndex,
+      outcome: x.outcome,
+      crashAt: x.crashAt,
+      jackpot: x.jackpot,
+    }));
+  };
+  let control: string[] | null = null;
+  /** The RoundScript digests of the unattacked control run (run once, on first use). */
+  const controlDigests = (): string[] => {
+    if (control !== null) return control;
+    const { r1b: r } = probe(dist, "r1b", "none");
+    expect(roundsOf(r)).toEqual(expected);
+    const digests: string[] = r.rounds.map((x: Report) => x.digest as string);
+    control = digests;
+    return digests;
+  };
+
+  it("control: no replacement; the rounds equal the independent vectors", () => {
+    expect(controlDigests()).toHaveLength(2);
+  });
+
+  it("source level: the controller class and its prototype are frozen", () => {
+    expect(Object.isFrozen(PrepWorkerController)).toBe(true);
+    expect(Object.isFrozen(PrepWorkerController.prototype)).toBe(true);
+    expect(() => {
+      (PrepWorkerController.prototype as any).prepare = () => undefined;
+    }).toThrow(TypeError);
+  });
+
+  // Before R-1b each of these was reached, and each could replace the controller's result.
+  it.each([
+    "verification-step",
+    "verification-begin",
+    "verification-export",
+    "canonical-value",
+    "decode-utf8",
+    "parse-message",
+    "worker-entry",
+  ])("%s: the replacement is refused (frozen); the rounds are unchanged", (v) => {
+    const { r1b: r } = probe(dist, "r1b", v);
+    expect(r.armed).toBe(false);
+    expect(r.armError).toBe("TypeError");
+    expect(r.reached).toBe(0);
+    expect(roundsOf(r)).toEqual(expected);
+    expect(r.rounds.map((x: Report) => x.digest)).toEqual(controlDigests());
+  });
+
+  it.each(["worker-class", "node-options"])(
+    "%s: installed, but never reached (bound Worker; explicit worker environment)",
+    (v) => {
+      const { r1b: r } = probe(dist, "r1b", v);
+      expect(r.armed).toBe(true); // node:worker_threads and process.env stay writable
+      expect(r.reached).toBe(0);
+      expect(r.workerCodeRan).toBe(0); // no code ran inside the worker before its entry
+      expect(roundsOf(r)).toEqual(expected);
+      expect(r.rounds.map((x: Report) => x.digest)).toEqual(controlDigests());
+    },
+  );
 });
 
 describe("reachability", () => {

@@ -71,3 +71,7 @@ export function roundEndTick(outcome: "crash" | "floor", exitDiveTick: number): 
 if (!(ADMISSION_DEADLINE_TICKS > 0 && ADMISSION_DEADLINE_TICKS <= BETTING_TICKS)) {
   throw new Error("scheduler timeline: invalid admission deadline");
 }
+
+// R-1: no constant of the timeline can be replaced once this module has loaded (the compiled
+// build's CommonJS exports object; an ES module namespace, as under Vitest, is immutable already).
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

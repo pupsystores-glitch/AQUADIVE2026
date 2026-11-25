@@ -32,6 +32,12 @@
 // and at most MAX_SCRIPT_BYTES long — checked with the intrinsic accessors before anything reads
 // the bytes. A SharedArrayBuffer view (another thread could change it while it is validated), a
 // resizable buffer, an offset or partial view, or a longer message is a contract violation.
+//
+// P8-4b-2 R-1b: the controller binds this module's parsers and constants as it loads, and this
+// module's CommonJS exports are frozen as it loads (its own constants are read through them in
+// the compiled build), so a later replacement — e.g. of `parseWorkerMessage`, which made the
+// controller verify forged bytes — is refused. Not covered: code that runs before it loads or
+// rewrites shared built-ins (server README §18, A-1).
 
 import { ROUND_SCRIPT_ERROR_CODES } from "../round/errors";
 
@@ -417,3 +423,7 @@ export const parseWorkerMessage = guarded((value: unknown): WorkerMessage => {
       return refuse();
   }
 });
+
+// R-1b: this module's exports cannot be replaced once it has loaded (an ES module namespace, as
+// under Vitest, is immutable already).
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

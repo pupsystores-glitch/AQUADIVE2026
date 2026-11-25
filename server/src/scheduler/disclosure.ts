@@ -25,7 +25,8 @@
 // diving). Once the round has ended the private schedule is released. JSON / String / inspect
 // show the round's public position only.
 
-import { REDACTED } from "../fairness";
+import { REDACTED as REDACTED_EXPORT } from "../fairness";
+import { RoundScript, type RoundScriptSecret } from "../round/round-script";
 import { SchedulerError } from "./events";
 import { claimSealedRoundOpener, type SealedRound } from "./sealed";
 import {
@@ -39,6 +40,13 @@ import {
 
 /** The seals' one-time opening capability, claimed as this module loads (sealed.ts). */
 const openSealedRound = claimSealedRoundOpener();
+/**
+ * R-1: the script's content accessor, bound ONCE as this module loads (a later replacement of
+ * RoundScript.prototype.secretContent is never reached; it also refuses anything but a real
+ * RoundScript, by its private field).
+ */
+const secretContentOf = RoundScript.prototype.secretContent;
+const REDACTED: string = REDACTED_EXPORT;
 
 export type DisclosureFact =
   | { readonly kind: "betting"; readonly closesAt: number }
@@ -122,7 +130,7 @@ export class RoundDisclosure {
       throw new SchedulerError("contract-violation", "index-sequence");
     }
     const script = openSealedRound(sealed);
-    const s = script.secretContent();
+    const s = Reflect.apply(secretContentOf, script, []) as RoundScriptSecret;
     const floor = s.outcome === "floor";
     const exit = s.exitDiveTick;
     if (s.outcome !== "crash" && !floor) violation();
@@ -272,3 +280,9 @@ export class RoundDisclosure {
     this.#phaseEnds = ends;
   }
 }
+
+// R-1: nothing of this module can be replaced once it has loaded. The compiled build's CommonJS
+// exports object is frozen too (an ES module namespace, as under Vitest, is immutable already).
+Object.freeze(RoundDisclosure);
+Object.freeze(RoundDisclosure.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);

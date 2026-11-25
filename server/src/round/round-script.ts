@@ -25,26 +25,66 @@
 // it (rejection only) and JSON-parses it; every later slice reads only that copy. Nothing is
 // returned before every check and the digest succeeded; a failed or cancelled verification
 // zeroes its copy.
+//
+// Load-time binding (P8-4b-2 R-1b correction). The main thread trusts what a verification returns
+// (prep/controller.ts delivers it to the scheduler's source), so nothing on that path may be
+// replaceable after load: every function of canonical.ts, engine-types.ts, errors.ts and the
+// fairness bridge this module calls is bound once, as it loads, and CanonicalCheck's static and
+// methods are called through bound references (Reflect.apply), never looked up on the class or
+// its prototype at run time. RoundScript, RoundScriptVerification, their prototypes and this
+// module's CommonJS exports are frozen as it loads. Before R-1b, replacing the exported
+// RoundScriptVerification, its prototype's `step`, its static `begin`, CanonicalCheck or its
+// `value` getter, or canonical.ts's `decodeUtf8` made the controller deliver an attacker-chosen
+// outcome. Not covered: code that runs before this module loads or rewrites shared built-ins
+// (server README §18, A-1).
 
-import { REDACTED, type FairnessHashProvider } from "../fairness";
+import { REDACTED as REDACTED_EXPORT, type FairnessHashProvider } from "../fairness";
 import {
   CANONICAL_MAX_DEPTH,
-  CanonicalCheck,
-  canonicalBytes,
-  canonicalDigest,
-  canonicalJson,
-  decodeUtf8,
-  prescanCanonical,
-  snapshotBytes,
+  CanonicalCheck as CanonicalCheckExport,
+  canonicalBytes as canonicalBytesExport,
+  canonicalDigest as canonicalDigestExport,
+  canonicalJson as canonicalJsonExport,
+  decodeUtf8 as decodeUtf8Export,
+  prescanCanonical as prescanCanonicalExport,
+  snapshotBytes as snapshotBytesExport,
   type CanonicalShapeLimits,
 } from "./canonical";
 import {
-  CREATURE_KINDS,
+  CREATURE_KINDS as CREATURE_KINDS_EXPORT,
   EXPECTED_RUNNER_PROFILE,
   type RunnerCreature,
   type RunnerOutput,
 } from "./engine-types";
-import { RoundScriptError } from "./errors";
+import { RoundScriptError as RoundScriptErrorExport } from "./errors";
+
+// ---- R-1b: every external reference this module calls, bound ONCE as it loads ----------------
+
+const REDACTED = REDACTED_EXPORT;
+type CanonicalCheck = CanonicalCheckExport;
+const canonicalBytes = canonicalBytesExport;
+const canonicalDigest = canonicalDigestExport;
+const canonicalJson = canonicalJsonExport;
+const decodeUtf8 = decodeUtf8Export;
+const prescanCanonical = prescanCanonicalExport;
+const snapshotBytes = snapshotBytesExport;
+const CREATURE_KINDS: readonly string[] = CREATURE_KINDS_EXPORT;
+const RoundScriptError = RoundScriptErrorExport;
+const canonicalParse = CanonicalCheckExport.parse;
+const canonicalStep = CanonicalCheckExport.prototype.step;
+const canonicalOperations = Object.getOwnPropertyDescriptor(
+  CanonicalCheckExport.prototype,
+  "operations",
+)!.get!;
+const canonicalValue = Object.getOwnPropertyDescriptor(
+  CanonicalCheckExport.prototype,
+  "value",
+)!.get!;
+/** CanonicalCheck.parse through the bound static (throws `script-invalid`). */
+const parseCanonical = (text: string): CanonicalCheck =>
+  Reflect.apply(canonicalParse, undefined, [text]) as CanonicalCheck;
+const operationsOf = (check: CanonicalCheck): number =>
+  Reflect.apply(canonicalOperations, check, []) as number;
 
 /** Version of the RoundScript format (canonical document layout). */
 export const ROUND_SCRIPT_VERSION = 1;
@@ -500,7 +540,7 @@ export class RoundScriptVerification {
     const copy = snapshotBytes(bytes, MAX_ROUND_SCRIPT_BYTES);
     try {
       if (!prescanCanonical(copy, ROUND_SCRIPT_SHAPE_LIMITS)) invalid();
-      const check = CanonicalCheck.parse(decodeUtf8(copy));
+      const check = parseCanonical(decodeUtf8(copy));
       return new RoundScriptVerification(CONSTRUCT, provider, copy, check, expectedDigest);
     } catch (error) {
       copy.fill(0);
@@ -556,16 +596,16 @@ export class RoundScriptVerification {
       switch (this.#phase) {
         case PHASE_CANONICAL: {
           const canonical = this.#check!;
-          const before = canonical.operations;
-          const done = canonical.step(budget - used);
-          used += canonical.operations - before;
+          const before = operationsOf(canonical);
+          const done = Reflect.apply(canonicalStep, canonical, [budget - used]) as boolean;
+          used += operationsOf(canonical) - before;
           if (!done) return null;
           this.#phase = PHASE_DOCUMENT;
           break;
         }
         case PHASE_DOCUMENT: {
           used += 1;
-          const doc = this.#check!.value;
+          const doc: unknown = Reflect.apply(canonicalValue, this.#check!, []);
           this.#check = null;
           check(keysAre(doc, ["public", "secret"]));
           const { public: pub, secret } = doc as { public: unknown; secret: unknown };
@@ -680,3 +720,11 @@ export function diffRoundScripts(expected: RoundScript, candidate: RoundScript):
   walk(expected.secretContent(), candidate.secretContent(), "secret");
   return paths;
 }
+
+// R-1b: nothing of this module can be replaced once it has loaded. The compiled build's CommonJS
+// exports object is frozen too (an ES module namespace, as under Vitest, is immutable already).
+Object.freeze(RoundScript);
+Object.freeze(RoundScript.prototype);
+Object.freeze(RoundScriptVerification);
+Object.freeze(RoundScriptVerification.prototype);
+if (typeof module === "object" && module !== null) Object.freeze(module.exports);
