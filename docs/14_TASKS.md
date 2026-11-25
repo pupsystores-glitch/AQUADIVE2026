@@ -461,6 +461,21 @@ Status:
 | Open | **D7 NOT VERIFIED**; delivered ≠ durable (a fulfilled `prepare()` is no durable disposition; P8-7, D10 / OD-11); `state` reads `ready` while a queued worker loss already refuses `prepare()`; A-1, A-2, C4 / OD-8, Zod S-1, E-RISK-1, A1 / B1 approval, Node 22, Linux |
 | Next | **Stop.** No push. The Global Scheduler and live scheduling are not authorized |
 
+## P8-4b-2 — Offline deterministic Global Round Scheduler (Phase 8 implementation exception, offline development only, 2026-11-25)
+
+*Separate from the entries above, which are preserved unchanged. P8-4b-1 is committed locally as `db8ce66` (not pushed).*
+
+| Item | Status |
+| --- | --- |
+| Authorization | **Owner, 2026-11-25:** P8-4b-2 only — the offline Global Round Scheduler under decisions SD-1 … SD-10 with the owner-approved protected-set expansion (`server/src/scheduler`, manifest 32 → 40 files); then, after the independent acceptance audit, the security corrections H-1, M-1, L-1, L-2. No push, reveal protocol (P8-4b-3), HTTP / WebSocket / live gameplay, betting, settlement, deployment or Endless Ocean V2 |
+| Deliverable | A `server/src/scheduler/` (8 modules), `server/test/scheduler/` (6 files); M `server/src/round/integrity.ts`, `server/scripts/engine-integrity.mjs`, `server/integrity/engine-manifest.json`, `server/test/{prep/prep-worker,round/integrity,round/round-runtime}.test.ts`; `server/README.md` §18, docs 04 / 09 §46 / 14 / 15 / 16 |
+| Acceptance audit (2026-11-25) | **ACCEPT ONLY AFTER SPECIFIC CORRECTIONS**: H-1 `create()` options TOCTOU (forged source played, critical), M-1 discoverable seal-opening symbol, L-1 invalid clock readings silently ignored, L-2 unhandled rejection in asynchronous delivery |
+| Security corrections (2026-11-25) | H-1: options read once (Proxies / accessors refused, `nowNs` captured once, verified references only); M-1: module-private one-time opener claimed by `disclosure.ts`; L-1: every reading checked → `clock-failed` immediate halt; L-2: one fail-closed guard per step and result (`internal-error` terminates the source), source backstop for a throwing listener. 5 manifest entries changed (`3c4fc346…` → `421ca5ed…`), still 40 files; engine bundle, fairness, prep and round unchanged |
+| Verification (2026-11-25, Node 24.21.0) | Server Vitest 29 / 871 + 5 todo (30 new); root Vitest 102 / 2,586 (`--maxWorkers=6`, default timeouts); server + engine + root `tsc` clean; ESLint 0 on `server/` sources; Prettier clean on changed files; builds A = B = `npm run build` (71 files); 16 replay pins, 45 independent vectors and the pinned vector-chain digests (A `0218d4a2…`, B `816b3408…`) unchanged; client build 27 files, no frontend input changed |
+| Status | **IMPLEMENTED, SECURITY CORRECTIONS APPLIED, BUT NOT YET FINALLY ACCEPTED OR COMMITTED** — uncommitted, unstaged, not pushed; not production-ready |
+| Open | **D7 NOT VERIFIED**; D10 / OD-11; P8-7; A-1 / A-2; F-1 / F-2 / F-4; SD-9 / F-6 (outcome-latency correlation, not mitigated); C4 / OD-8; Zod S-1, E-RISK-1, Node 22, Linux |
+| Next | **Stop.** Await owner acceptance. No commit, push, P8-4b-3 or live integration |
+
 ---
 
 Only one task may be active at a time.

@@ -12,7 +12,9 @@
 // the build: the engine bundle (engine/), the loader and pipeline (server/src/round/), the server
 // fairness modules (server/src/fairness/ and the bridge server/src/fairness.js) and the compiled
 // shared fairness library (src/fairness/); since P8-4b-0 (owner-approved expansion) also the
-// offline preparation worker (server/src/prep/: controller, worker entry, message contract). The
+// offline preparation worker (server/src/prep/: controller, worker entry, message contract); since
+// P8-4b-2 (owner-approved expansion) also the offline Global Round Scheduler
+// (server/src/scheduler/), which processes private outcome data. The
 // protected directories must contain exactly the manifest's files — a missing, extra, renamed,
 // linked or non-regular file is refused.
 //
@@ -57,13 +59,14 @@ export const PROTECTED_DIRECTORIES = Object.freeze([
   "server/src/fairness",
   "server/src/prep",
   "server/src/round",
+  "server/src/scheduler",
   "src/fairness",
 ] as const);
 /** Protected single files outside those directories. */
 export const PROTECTED_SINGLE_FILES = Object.freeze(["server/src/fairness.js"] as const);
 /** The only path shapes a manifest may name (no traversal, no absolute path, no backslash). */
 export const PROTECTED_PATH =
-  /^(?:engine\/[a-z0-9-]+\.cjs|server\/src\/fairness\.js|(?:server\/src\/fairness|server\/src\/prep|server\/src\/round|src\/fairness)\/[a-z0-9-]+\.js)$/;
+  /^(?:engine\/[a-z0-9-]+\.cjs|server\/src\/fairness\.js|(?:server\/src\/fairness|server\/src\/prep|server\/src\/round|server\/src\/scheduler|src\/fairness)\/[a-z0-9-]+\.js)$/;
 /** Upper bounds: a manifest is small; a protected file is far below this. */
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;

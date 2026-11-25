@@ -37,6 +37,7 @@ const FILES: Record<string, string> = {
   "server/src/round/engine-runtime.js": "'use strict';\n// loader\n",
   "server/src/round/integrity.js": "'use strict';\n// integrity\n",
   "server/src/round/prepare.js": "'use strict';\n// prepare\n",
+  "server/src/scheduler/core.js": "'use strict';\n// scheduler core\n",
   "src/fairness/index.js": "'use strict';\n// fairness\n",
 };
 
@@ -228,6 +229,7 @@ describe("protected set on a build", () => {
       "server/src/fairness",
       "server/src/prep",
       "server/src/round",
+      "server/src/scheduler",
       "src/fairness",
     ]);
     for (const p of ["controller", "prep-worker", "protocol"]) {
@@ -238,6 +240,35 @@ describe("protected set on a build", () => {
     writeFileSync(join(dist, "server", "src", "prep", "extra.js"), "x");
     expect(reasonOf(() => verifyBuildIntegrity(dist, m, hash))).toBe("unexpected-file");
     rmSync(join(dist, "server", "src", "prep"), { recursive: true });
+    expect(reasonOf(() => listProtectedFiles(dist))).toBe("protected-directory-invalid");
+  });
+
+  it("protects the offline Global Round Scheduler directory (owner-approved P8-4b-2 expansion)", () => {
+    for (const p of [
+      "clock",
+      "core",
+      "disclosure",
+      "events",
+      "scheduler",
+      "sealed",
+      "source",
+      "timeline",
+    ]) {
+      expect(PROTECTED_PATH.test(`server/src/scheduler/${p}.js`), p).toBe(true);
+    }
+    expect(PROTECTED_PATH.test("server/src/scheduler/sub/x.js")).toBe(false);
+    expect(PROTECTED_PATH.test("server/src/scheduler/core.ts")).toBe(false);
+    const m = computeIntegrityManifest(dist, hash);
+    expect(verifyBuildIntegrity(dist, m, hash)).toBeUndefined();
+    writeFileSync(join(dist, "server", "src", "scheduler", "extra.js"), "x");
+    expect(reasonOf(() => verifyBuildIntegrity(dist, m, hash))).toBe("unexpected-file");
+    rmSync(join(dist, "server", "src", "scheduler", "extra.js"));
+    writeFileSync(
+      join(dist, "server", "src", "scheduler", "core.js"),
+      "'use strict';\n// scheduler CORE\n",
+    );
+    expect(reasonOf(() => verifyBuildIntegrity(dist, m, hash))).toBe("digest-mismatch");
+    rmSync(join(dist, "server", "src", "scheduler"), { recursive: true });
     expect(reasonOf(() => listProtectedFiles(dist))).toBe("protected-directory-invalid");
   });
 

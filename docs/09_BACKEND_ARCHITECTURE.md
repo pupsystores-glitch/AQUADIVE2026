@@ -2149,6 +2149,40 @@ Two findings of the P8-3c acceptance review, fixed inside `server/src/fairness/`
 
 **Open:** D7 (**NOT VERIFIED**), A-1, A-2, D10 / OD-11, P8-7, C4 / OD-8, Zod S-1, E-RISK-1, A1 / B1 digest-candidate approval, Node 22, Linux reproducibility. The Global Scheduler is not authorized.
 
+## 46. P8-4b-2 — offline deterministic Global Round Scheduler (owner, 2026-11-25; P8-4b-2 only; offline development only)
+
+**Scope and status.** After the P8-4b-1 commit `db8ce66` and the read-only scheduler readiness review, the owner authorized **P8-4b-2 only** under decisions SD-1 … SD-10. Implemented 2026-11-25; the independent acceptance audit (2026-11-25) concluded **ACCEPT ONLY AFTER SPECIFIC CORRECTIONS**; the owner authorized the corrections. Status: **IMPLEMENTED, SECURITY CORRECTIONS APPLIED, BUT NOT YET FINALLY ACCEPTED OR COMMITTED** (uncommitted, awaiting owner approval; not production-ready). Offline, development-only, play money; no reveal protocol (P8-4b-3), network, betting, cashout, settlement, durable storage, gameplay, RTP, RNG, fairness-algorithm, frontend, route, WebSocket, worker-protocol or dependency change. Record: `server/README.md` §18.
+
+| Decision | Implementation |
+| --- | --- |
+| SD-1 offline only | `server/src/scheduler/` (8 modules); unreachable from startup, routes, gateway, operations and the frontend (source and compiled-runtime tests); no timer or loop; production `NODE_ENV` refused |
+| SD-2 protected | `server/src/scheduler` added to `PROTECTED_DIRECTORIES` / `PROTECTED_PATH`; manifest 32 → 40 files (+ 8 scheduler files, changed `server/src/round/integrity.js`; the other 31 entries and bundle `2d1e5bf8…` unchanged; `3c4fc346…`) |
+| SD-3 timeline | 300 / 84 / 144 / 360 / 132 ticks, zero gap, recomputed by a test from `domain/tuning.ts` and `ticksFor`; bigint instants `epoch + floor(k · 10⁹ / 60)` |
+| SD-4 look-ahead | active + held / admitted + requested ≤ 2 (checked every tick); controller `maxInFlight: 1` |
+| SD-5 admission | round n + 1 requested at round n's opening tick S, held before S + 240 (inside the fixed betting window, never at round n's secret end), else halt after round n |
+| SD-6 worker loss | the admitted active round finishes with reveal `unavailable`, then halt; held / admitted next scripts are discarded unopened; never restarted or retried |
+| SD-7 reveal | deferred to P8-4b-3 (`round.ended` reports `deferred` / `unavailable` only) |
+| SD-8 round ids | SHA-256(`"AQUADIVE\|scheduler\|round-id\|v1"` ‖ 0x00 ‖ chainId ‖ u64be(index) ‖ u64be(round)); fixed-length, injective encoding |
+| SD-9 side channel | recorded, not mitigated: preparation and main-thread verification of round n + 1 during round n's betting window take longer for a longer secret dive (delivery timing, main-loop jitter, near-miss correlation). No public or network activation before mitigation |
+| SD-10 exhaustion | no request past the chain's length; halt after its last round; no rotation |
+
+**Secret boundary.** A prepared script is sealed on receipt (public metadata only) and opened once, at its round's opening tick, by a tick-gated disclosure cursor that keeps only outcome, exit tick, crash point, jackpot, chests, the multiplier series and goldfish ticks, accepts only the next tick and releases everything at the end. Events and snapshots carry only facts public at their tick (crash point at the crash tick, never for a floor round; jackpot at impact; chests when the pick window closes; no world stream, OD-5). Defense in depth, not protection against in-process code (A-1).
+
+**Evidence.** The public vector chain (salts A and B) through the real worker equals an independent reference model fed by the in-process environment's facts and the independent spec implementation's vectors (`vectors-v1.json`); 10,000 synthetic rounds equal the reference model with exact integer boundaries; every-tick and jittered polling give identical logs. Provisional performance (AC power, NOT D7): 200 rounds — poll p99 0.06 ms, delivery p50 5 ms / max 25 ms against a 4 s admission margin, main-thread heap flat at ≈ 9 – 15 MB.
+
+**Security corrections (2026-11-25, owner-authorized after the acceptance audit).**
+
+| Finding | Correction | Evidence (compiled CommonJS) |
+| --- | --- | --- |
+| H-1 source substitution (critical): `create()` re-read `options.source` after verifying it; a getter / Proxy substituted a forged source (forged chain, crash points 99.99× and 1.00× played) | options read exactly once (one `ownKeys`, one descriptor per key; Proxies and accessors refused); `nowNs` captured once; only the verified references are used afterwards; no new source or outcome interface | before: getter, Proxy-`get` and Proxy-descriptor variants played the forged rounds; after: 8 hostile variants refused with fixed codes, no substitute ever read, the legitimate path plays the approved chain (round 1 = independent vector) and the one-time claim holds |
+| M-1 discoverable `Symbol("SealedRound.open")` and exported `openSealedRound` | opener closure from the class's static block in a module-private binding, handed out once (`claimSealedRoundOpener`) and claimed by `disclosure.ts` as it loads; private-brand check | no symbol on the class or seals, no opener export, every later claim refused, no reachable function returns the script; a fresh module instance (cache deleted) cannot open the original seals. Not isolation from privileged same-process code (A-1) |
+| L-1 backwards / negative readings silently ignored; a throwing clock's message leaked | every reading checked before use (throw, non-bigint, negative, backwards, tick overflow) → immediate halt `clock-failed` at the last processed tick; fixed-code error; nothing of that reading processed | 10 cases at start and with round 1 active and round 2 held: halt at 0 / 300, held seal discarded, nothing revives with a restored clock |
+| L-2 an error inside an asynchronous delivery → unhandled rejection, seal dropped undiscarded | one fail-closed guard per step and source result (`clock-failed` / `internal-error`; the latter terminates the source); queued seals discarded; pending effects of the interrupted step dropped; late results discarded; source-side backstop for a throwing listener | clock failure during a delivery, stop / close / termination with a request pending, a throwing listener, internal errors in a delivery and a poll (patched core): 0 unhandled rejections, residency 0, no event after the halt, sanitized errors |
+
+New halt reasons `clock-failed` and `internal-error` (event schema unchanged otherwise; existing logs and the pinned vector-chain digests are unchanged). Trusted manifest: still exactly 40 files; 5 entries changed (`core.js`, `disclosure.js`, `scheduler.js`, `sealed.js`, `source.js`); `events.js`, the bundle (`2d1e5bf8…`), fairness, prep and round entries unchanged; `3c4fc346…` → `421ca5ed…` (two independent builds and `npm run build` identical, 71 files).
+
+**Open:** **R-1** (post-correction review, high, pre-existing, not fixed: a patched `PrepWorkerRoundSource.prototype.claim` captures the scheduler's listener and delivers caller-built seals on the real chain id — a chosen 77.77× was played; owner decision pending), SD-9 / F-6 mitigation, F-1 / F-2 / F-4 (as defined in the 2026-11-25 acceptance audit), D7 (**NOT VERIFIED**), A-1, A-2, D10 / OD-11, P8-7, C4 / OD-8, Zod S-1, E-RISK-1, A1 / B1 digest-candidate approval, OD-5, OD-9, Node 22, Linux reproducibility; audit residuals not addressed by the corrections: outcome-latency correlation (SD-9), a second scheduler via module-cache deletion (A-2), `residency()` arrival timing (offline diagnostics), `checkHealth` losses applied at the last processed tick, `node:` built-ins under a rehashed manifest. P8-4b-3 is not authorized.
+
 ---
 
 *This document is a proposal. It becomes the backend's architectural source of truth only when the owner approves it. Until then Phase 8 is not started, and no milestone in §29 may begin without its own authorization.*

@@ -265,16 +265,30 @@ describe("build integrity (P8-4a-1, the trusted manifest)", () => {
     expect(text).not.toContain("\r");
     expect(m.schema).toBe("aquadive.engine-integrity");
     // The round runtime's loaded closure (29 files) plus the offline preparation worker's three
-    // compiled components (owner-approved P8-4b-0 expansion; they are not part of this closure).
+    // compiled components (owner-approved P8-4b-0 expansion; they are not part of this closure)
+    // and the offline Global Round Scheduler's eight (owner-approved P8-4b-2 expansion).
     const prep = [
       "server/src/prep/controller.js",
       "server/src/prep/prep-worker.js",
       "server/src/prep/protocol.js",
     ];
+    const scheduler = [
+      "clock",
+      "core",
+      "disclosure",
+      "events",
+      "scheduler",
+      "sealed",
+      "source",
+      "timeline",
+    ].map((f) => `server/src/scheduler/${f}.js`);
     expect(main.closure).toHaveLength(29);
     expect(main.closure.some((p: string) => p.startsWith("server/src/prep/"))).toBe(false);
-    expect(m.files.map((f: Report) => f.path)).toEqual([...main.closure, ...prep].sort());
-    expect(m.files).toHaveLength(32);
+    expect(main.closure.some((p: string) => p.startsWith("server/src/scheduler/"))).toBe(false);
+    expect(m.files.map((f: Report) => f.path)).toEqual(
+      [...main.closure, ...prep, ...scheduler].sort(),
+    );
+    expect(m.files).toHaveLength(40);
     expect(m.files.find((f: Report) => f.path === "engine/engine.cjs").sha256).toBe(
       main.bundleSha256,
     );

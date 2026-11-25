@@ -614,7 +614,8 @@ describe("integrity (src/prep is protected: owner-approved P8-4b-0 expansion)", 
 
   it("the trusted manifest names the 3 worker files; a clean build is accepted everywhere", () => {
     const m = JSON.parse(readFileSync(TRUSTED_MANIFEST, "utf8"));
-    expect(m.files).toHaveLength(32);
+    // 32 until P8-4b-2; + the scheduler's eight files (owner-approved P8-4b-2 expansion).
+    expect(m.files).toHaveLength(40);
     expect(
       m.files.map((f: Report) => f.path).filter((p: string) => p.startsWith("server/src/prep/")),
     ).toEqual(PREP_FILES);
@@ -701,7 +702,8 @@ describe("integrity (src/prep is protected: owner-approved P8-4b-0 expansion)", 
       ...trusted,
       files: trusted.files.filter((f: Report) => !f.path.startsWith("server/src/prep/")),
     };
-    expect(stale.files).toHaveLength(29);
+    // 29 before P8-4b-2; the scheduler's eight files (P8-4b-2) stay current in this copy.
+    expect(stale.files).toHaveLength(37);
     const stalePath = join(copy, "..", "integrity", "engine-manifest.json");
     writeFileSync(stalePath, `${JSON.stringify(stale, null, 2)}\n`);
     const r = probe(copy, "integrity");

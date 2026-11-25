@@ -100,8 +100,8 @@
     },
     {
       "path": "server/src/round/integrity.js",
-      "bytes": 15344,
-      "sha256": "afc463c79d7fa17e174b76c3dcc8cd6967bd119d28aae879e05eb08c22ab4fbd"
+      "bytes": 15545,
+      "sha256": "1cf53a4b5b99bfe530f5a96a3e56c41113292085edd8ecdc9b0fe1446bbd4fca"
     },
     {
       "path": "server/src/round/known-answers.js",
@@ -117,6 +117,46 @@
       "path": "server/src/round/round-script.js",
       "bytes": 26489,
       "sha256": "b985b21c42ab3b8c44154133c3556ef55574943eb6d6d53132f0e4c6813c5a1e"
+    },
+    {
+      "path": "server/src/scheduler/clock.js",
+      "bytes": 4596,
+      "sha256": "815b5e9f21e7ef5a125e22411f1ca1028fc472d20be450f600ead78a031dfcb4"
+    },
+    {
+      "path": "server/src/scheduler/core.js",
+      "bytes": 20945,
+      "sha256": "1aafe2871235c01e974c166cf784cdbba52b3edec8e12d270287862f2b086a2b"
+    },
+    {
+      "path": "server/src/scheduler/disclosure.js",
+      "bytes": 9626,
+      "sha256": "2a9afa26ce71d9c91eeeb0357c5b7cb84e5e38f20e338d3ec727e36476534061"
+    },
+    {
+      "path": "server/src/scheduler/events.js",
+      "bytes": 6346,
+      "sha256": "672f04ff1cfafad31536fb24667dcdb27e94a10af180d84450dc293d8745a621"
+    },
+    {
+      "path": "server/src/scheduler/scheduler.js",
+      "bytes": 16243,
+      "sha256": "6c202fa6d213a2d541d4266d2da400628112bdfd096df116aa65efbdcc2f6ff1"
+    },
+    {
+      "path": "server/src/scheduler/sealed.js",
+      "bytes": 5393,
+      "sha256": "21b06e553d6cd163a8b8032e41d928315a37adca646b49cedfc53bfa3a77cb0a"
+    },
+    {
+      "path": "server/src/scheduler/source.js",
+      "bytes": 15639,
+      "sha256": "67649e50d7397cc1d9d46878c80189b5a7681a902a09880f66fca447d4e86c09"
+    },
+    {
+      "path": "server/src/scheduler/timeline.js",
+      "bytes": 4449,
+      "sha256": "089c84d2a78423b78045b945e98de1649c9021df6312e2d46dd7faf7fb6c9883"
     },
     {
       "path": "src/fairness/chain.js",
