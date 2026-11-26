@@ -31,6 +31,7 @@ let dist = "";
 
 const FILES: Record<string, string> = {
   "engine/engine.cjs": "'use strict';\nexports.x = 1;\n",
+  "server/src/authority/host.js": "'use strict';\n// authority host\n",
   "server/src/fairness.js": "'use strict';\n",
   "server/src/fairness/audit.js": "'use strict';\n// audit\n",
   "server/src/prep/protocol.js": "'use strict';\n// prep protocol\n",
@@ -226,6 +227,7 @@ describe("protected set on a build", () => {
   it("protects the offline preparation worker directory (owner-approved P8-4b-0 expansion)", () => {
     expect(PROTECTED_DIRECTORIES).toEqual([
       "engine",
+      "server/src/authority",
       "server/src/fairness",
       "server/src/prep",
       "server/src/round",
@@ -269,6 +271,26 @@ describe("protected set on a build", () => {
     );
     expect(reasonOf(() => verifyBuildIntegrity(dist, m, hash))).toBe("digest-mismatch");
     rmSync(join(dist, "server", "src", "scheduler"), { recursive: true });
+    expect(reasonOf(() => listProtectedFiles(dist))).toBe("protected-directory-invalid");
+  });
+
+  it("protects the offline Isolated Authority Host directory (owner-approved Stage 1 expansion)", () => {
+    for (const p of ["authority-main", "host", "launcher", "protocol"]) {
+      expect(PROTECTED_PATH.test(`server/src/authority/${p}.js`), p).toBe(true);
+    }
+    expect(PROTECTED_PATH.test("server/src/authority/sub/x.js")).toBe(false);
+    expect(PROTECTED_PATH.test("server/src/authority/host.ts")).toBe(false);
+    const m = computeIntegrityManifest(dist, hash);
+    expect(verifyBuildIntegrity(dist, m, hash)).toBeUndefined();
+    writeFileSync(join(dist, "server", "src", "authority", "extra.js"), "x");
+    expect(reasonOf(() => verifyBuildIntegrity(dist, m, hash))).toBe("unexpected-file");
+    rmSync(join(dist, "server", "src", "authority", "extra.js"));
+    writeFileSync(
+      join(dist, "server", "src", "authority", "host.js"),
+      "'use strict';\n// authority HOST\n",
+    );
+    expect(reasonOf(() => verifyBuildIntegrity(dist, m, hash))).toBe("digest-mismatch");
+    rmSync(join(dist, "server", "src", "authority"), { recursive: true });
     expect(reasonOf(() => listProtectedFiles(dist))).toBe("protected-directory-invalid");
   });
 

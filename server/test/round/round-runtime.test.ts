@@ -285,10 +285,15 @@ describe("build integrity (P8-4a-1, the trusted manifest)", () => {
     expect(main.closure).toHaveLength(29);
     expect(main.closure.some((p: string) => p.startsWith("server/src/prep/"))).toBe(false);
     expect(main.closure.some((p: string) => p.startsWith("server/src/scheduler/"))).toBe(false);
-    expect(m.files.map((f: Report) => f.path)).toEqual(
-      [...main.closure, ...prep, ...scheduler].sort(),
+    // + the Isolated Authority Host's four (owner-approved Stage 1 expansion).
+    const authority = ["authority-main", "host", "launcher", "protocol"].map(
+      (f) => `server/src/authority/${f}.js`,
     );
-    expect(m.files).toHaveLength(40);
+    expect(main.closure.some((p: string) => p.startsWith("server/src/authority/"))).toBe(false);
+    expect(m.files.map((f: Report) => f.path)).toEqual(
+      [...main.closure, ...prep, ...scheduler, ...authority].sort(),
+    );
+    expect(m.files).toHaveLength(44);
     expect(m.files.find((f: Report) => f.path === "engine/engine.cjs").sha256).toBe(
       main.bundleSha256,
     );

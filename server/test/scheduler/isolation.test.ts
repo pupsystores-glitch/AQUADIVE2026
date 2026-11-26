@@ -269,8 +269,15 @@ describe("nothing reaches the scheduler", () => {
     const reached = new Set(entries.flatMap((e) => [...closure(e)]));
     expect(reached.size).toBeGreaterThan(10);
     for (const file of reached) expect(file.startsWith(DIR + sep), rel(file)).toBe(false);
+    // Stage 1 (owner-approved): exactly the Isolated Authority Host's host and entry, which run
+    // only inside the Authority child process, import the scheduler. Its launcher (the
+    // application side) never does (test/authority/boundaries.test.ts).
+    const AUTHORITY_HOST = [
+      join(SRC, "authority", "host.ts"),
+      join(SRC, "authority", "authority-main.ts"),
+    ];
     for (const file of walk(SRC)) {
-      if (file.startsWith(DIR + sep)) continue;
+      if (file.startsWith(DIR + sep) || AUTHORITY_HOST.includes(file)) continue;
       for (const spec of specifiers(file)) {
         expect(spec, rel(file)).not.toMatch(/(^|\/)scheduler(\/|$)/);
       }

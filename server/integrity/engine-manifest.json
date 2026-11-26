@@ -9,6 +9,26 @@
       "sha256": "2d1e5bf8bc808ac10743feb8ad9b5ed438ee71da18f257bb29b7409a62f5741d"
     },
     {
+      "path": "server/src/authority/authority-main.js",
+      "bytes": 7281,
+      "sha256": "b7da5ba94c4eb2d6a9c429e8ba83b4b9d46cccd57418225fba665c4fe32aeeba"
+    },
+    {
+      "path": "server/src/authority/host.js",
+      "bytes": 16368,
+      "sha256": "7401b529b898702ed1e56be283137ee7c4d3916651db8bdb2aa0dcfafaeb538c"
+    },
+    {
+      "path": "server/src/authority/launcher.js",
+      "bytes": 16931,
+      "sha256": "722ca090c1992d0a5355f3a7dce1ca224ea5ba79afd64ad8023991f1405a10fc"
+    },
+    {
+      "path": "server/src/authority/protocol.js",
+      "bytes": 25161,
+      "sha256": "eb23452478692cfb3cbda49fc6c1345588bb86ef17572b795aa7ed79e237eff8"
+    },
+    {
       "path": "server/src/fairness.js",
       "bytes": 5086,
       "sha256": "88864a98d06ae109f778a313d2768861e26d3c473f6b19bb11211109206b9c33"
@@ -100,8 +120,8 @@
     },
     {
       "path": "server/src/round/integrity.js",
-      "bytes": 15545,
-      "sha256": "1cf53a4b5b99bfe530f5a96a3e56c41113292085edd8ecdc9b0fe1446bbd4fca"
+      "bytes": 15706,
+      "sha256": "63d373d76f34ef6313a283ede887310c369f9dada2f34282284929cd44217f05"
     },
     {
       "path": "server/src/round/known-answers.js",

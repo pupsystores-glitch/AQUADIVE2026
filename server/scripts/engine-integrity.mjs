@@ -28,6 +28,7 @@ export const SCHEMA = "aquadive.engine-integrity";
 export const SCHEMA_VERSION = 1;
 export const PROTECTED_DIRECTORIES = [
   "engine",
+  "server/src/authority",
   "server/src/fairness",
   "server/src/prep",
   "server/src/round",
@@ -36,7 +37,7 @@ export const PROTECTED_DIRECTORIES = [
 ];
 export const PROTECTED_SINGLE_FILES = ["server/src/fairness.js"];
 export const PROTECTED_PATH =
-  /^(?:engine\/[a-z0-9-]+\.cjs|server\/src\/fairness\.js|(?:server\/src\/fairness|server\/src\/prep|server\/src\/round|server\/src\/scheduler|src\/fairness)\/[a-z0-9-]+\.js)$/;
+  /^(?:engine\/[a-z0-9-]+\.cjs|server\/src\/fairness\.js|(?:server\/src\/authority|server\/src\/fairness|server\/src\/prep|server\/src\/round|server\/src\/scheduler|src\/fairness)\/[a-z0-9-]+\.js)$/;
 const BUNDLE = ["engine", "engine.cjs"];
 
 const posix = (p) => p.split(sep).join("/");

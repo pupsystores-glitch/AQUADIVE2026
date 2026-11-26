@@ -674,7 +674,7 @@ describe("R-1 source authenticity (compiled CommonJS)", () => {
 describe("integrity (src/scheduler is protected: owner-approved P8-4b-2 expansion)", () => {
   it("the trusted manifest names the eight scheduler files; a clean build is accepted", () => {
     const m = JSON.parse(readFileSync(TRUSTED_MANIFEST, "utf8"));
-    expect(m.files).toHaveLength(40);
+    expect(m.files).toHaveLength(44); // + the Isolated Authority Host's four (Stage 1)
     expect(
       m.files
         .map((f: Report) => f.path)
