@@ -210,12 +210,22 @@ The engine (`src/engine`), renderer (`src/rendering`) and shared floor (`src/sha
 - **Open:** Zod S-1, E-RISK-1, D7 (**NOT VERIFIED**), durable secret persistence (P8-7), payout policy, Node 22 verification; the reflection residual of D-1.
 - **Stop condition:** no push; P8-4a is not authorized.
 
+## Current: Phase 7 owner decisions Q12 = W and A5 = W — RECORDED (2026-11-27, documentation only, uncommitted)
+
+- **Authorization (owner, 2026-11-27):** after the Phase 7 closeout decision-preparation report (read-only), a documentation-only decision-record update. No source, test, asset, manifest, configuration or dependency change; no staging, commit or push.
+- **Q12 = W:** keep the approved V7 OS-based reduced-motion behaviour (`prefers-reduced-motion` detection, the existing canvas and DOM behaviour, V7's tests and settings). No in-app "Reduce effects" toggle in the current Phase 7 scope. The toggle is **explicitly deferred**: not implemented, and not accepted as completed.
+- **A5 = W:** the LA1 SOUND and MUSIC switches fulfil the current owner-requested A5 sound-control interface. No volume sliders in the current Phase 7 scope. The sound settings store, mute behaviour, persistence, audio routing and mix are preserved. The optional volume sliders (and D7 with them) are **explicitly deferred**, not implemented.
+- **Not cancelled:** the original requirements stay on record for a future owner review (docs/08 §1.3 Q4 and Q12, §12 A5 row).
+- **Baseline:** `develop` = `origin/develop` = `b5af0bf`, clean before the change. Phase 7 source is unchanged since V7 (`01b061e`).
+- **Still open (P7-C gates, docs/08 §15; docs/19 §11):** audio commercial rights (BLOCKED); physical-device QA and Q14 (BLOCKED); device and GPU performance (NOT VERIFIED), with the audio budget overrun awaiting a decision; the remaining listening pass; the Phase 7 seven-size screenshot matrix and full gameplay loop; Q6; the scope ratifications in docs/19 §10; re-validation on the current `HEAD`. **P7-C is not authorized, and Phase 7 is not ready to close.** TASK 008 stays active.
+- **Next (existing roadmap):** the owner names the Q14 devices and supplies the audio rights evidence (docs/19 §6.3), so that the device QA and rights gates can proceed toward P7-C. **Stop condition:** no Git action without separate owner authorization.
+
 ## Current: P7-C READINESS AUDIT — NOT FINAL CLOSEOUT (2026-11-18, documentation only, uncommitted)
 
 - **Authorization (owner, 2026-11-18):** after the V7 commit, a comprehensive Phase 7 closeout audit, documentation only. No commit, staging, push, merge or implementation; P7-C itself is not authorized.
 - **Report:** `docs/19_PHASE7_CLOSEOUT_READINESS.md` (milestone matrix, audio rights matrix, device checklist, performance tiers, A5 / Q12, boundaries, gate matrix, remaining-work plan, owner decisions).
 - **Git:** V7 committed locally as `01b061e`; five local commits (R1 `cede9be`, V4 `9bc714d`, V5 `dfe3342`, V6 `232c554`, V7 `01b061e`) ahead of `origin/develop` `d1ccb9b`; not pushed.
-- **Result:** Phase 7 is **not** ready for P7-C. Blocked: audio commercial rights (no documentation for any shipped file) and physical-device QA (Q14 open). Not verified: performance (no GPU or device data). Undecided: the Q12 in-app toggle and the A5 volume sliders (neither waived). TASK 008 stays active.
+- **Result:** Phase 7 is **not** ready for P7-C. Blocked: audio commercial rights (no documentation for any shipped file) and physical-device QA (Q14 open). Not verified: performance (no GPU or device data). Undecided: the Q12 in-app toggle and the A5 volume sliders (neither waived). TASK 008 stays active. *(2026-11-27: both are now decided, Q12 = W and A5 = W, and deferred; see the section above. The other findings stand.)*
 - **Next:** the owner's review of the report and the decisions in its §14. **Stop condition:** no Git or implementation action without the owner's approval.
 
 ## V7 — reduced motion — VISUALLY APPROVED BY THE OWNER (2026-11-18); COMMITTED LOCALLY (`01b061e`), NOT PUSHED

@@ -405,6 +405,14 @@ M2 (the rest of integer minor units) is still deferred.
 - **Frontend:** client `.output/public` 27 / 27 files byte-identical to a `git archive` build of `HEAD`.
 - **Limitations:** the authority classes stay reachable by reflection and `GameEngine` accepts any duck-typed authority (residual, documented); a computed property access with a non-literal key is not resolved statically; on Windows a second, differently-cased absolute path to the fairness module (`c:\` vs `C:\`) loads a second fairness instance (found in a scratch harness; the bundle's own relative `require` is unaffected; P8-4a must load the bundle by a relative require).
 
+## Phase 7 owner decisions Q12 = W and A5 = W (documentation only; recorded 2026-11-27, uncommitted)
+
+- **Date:** 2026-11-27
+- **Task:** TASK 008 / Sprint 5 / Phase 7. The decision record only; P7-C is not authorized.
+- **Summary:** after the read-only Phase 7 closeout decision-preparation report, the owner selected **Q12 = W** and **A5 = W**. Q12: the V7 OS-follow reduced-motion behaviour (`01b061e`) is accepted and preserved; the in-app "Reduce effects" toggle is explicitly deferred. A5: the LA1 SOUND and MUSIC switches fulfil the current A5 sound-control interface; the optional volume sliders (with D7) are explicitly deferred. Neither deferred item is implemented or accepted as completed, and neither original requirement is cancelled.
+- **Files:** M `docs/04`, `docs/08` (§1.1, D7, §1.3 Q4 and Q12, §3.4, §3.5, §12 V7 and A5 rows, §18), `docs/14`, `docs/15`, `docs/16`, `docs/19`. No source, test, asset, manifest, configuration or dependency change.
+- **Not changed:** every other Phase 7 gate. Audio rights and physical-device QA stay BLOCKED; performance is NOT VERIFIED; the listening pass, the screenshot matrix, the full gameplay loop, Q6, Q14 and the docs/19 §10 scope items stay open. Phase 7 is **not** complete.
+
 ## V7 — Reduced motion (Phase 7)
 
 ### V7 — REDUCED MOTION: VISUALLY APPROVED BY THE OWNER 2026-11-18; COMMITTED LOCALLY, NOT PUSHED

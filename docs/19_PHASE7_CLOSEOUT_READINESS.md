@@ -27,7 +27,7 @@ Three gates in `docs/08` §15 still block the close-out:
 2. **Physical-device QA (BLOCKED).** The test devices (Q14) have not been named, and no physical iPhone or Android test has been recorded. Every device result so far comes from headless Chrome emulation.
 3. **Performance (NOT VERIFIED).** No GPU or phone measurement exists. In software rasterization, some effects exceed the desktop "< 1 ms p95" FX target. The audio decode budget (about 20 MB) is exceeded about 3.4 times.
 
-Two owner decisions are also needed: whether the in-app "Reduce effects" toggle (Q12) and the volume sliders (A5) are required or waived, and which crash sound and jackpot stinger to accept.
+Two owner decisions are also needed: whether the in-app "Reduce effects" toggle (Q12) and the volume sliders (A5) are required or waived, and which crash sound and jackpot stinger to accept. *(2026-11-27: Q12 = W and A5 = W decided; the toggle and the sliders are deferred, see §9. The crash-sound and stinger decisions and all three gates above remain open.)*
 
 ---
 
@@ -306,6 +306,8 @@ The DPR cap stays at 2 (`MAX_DPR`). The V5 vignette's cost scales with the numbe
 
 **Owner decision required:** for each of the two open items, either **waive** it for Phase 7 (record the waiver, and P7-C proceeds without it) or **authorize** it as a step.
 
+**Decided (owner, 2026-11-27): Q12 = W and A5 = W.** The in-app "Reduce effects" toggle and the volume sliders (with D7) are explicitly deferred for the current Phase 7 scope. They are not implemented and not cancelled. V7's OS-follow behaviour and the LA1 switches are preserved unchanged. §9.1 below is therefore not authorized and stays as a reference only. This decision changes no other finding in this report. *(The "Open" and "No" entries in the table above are the status as audited on 2026-11-18.)*
+
 ### 9.1 Narrow proposal if the in-app toggle is required (not implemented)
 
 - **Behaviour:** a persisted preference, "Reduce effects: follow system / on". The effective flag is `OS reduce OR in-app on`. It is passed to the existing `SceneRenderer.setMotion` through the existing V7 path. No new motion system.
@@ -362,13 +364,13 @@ Verified from Git, not from the records:
 
 | Gate | Status | Basis |
 |---|---|---|
-| Architecture and implementation | **PARTIAL** | All planned V- and A-track steps are built, and engine and money are untouched. Open: A5 sliders and the Q12 toggle are undecided; three scope deviations to ratify (§10); records to reconcile |
+| Architecture and implementation | **PARTIAL** | All planned V- and A-track steps are built, and engine and money are untouched. Open: A5 sliders and the Q12 toggle are undecided *(2026-11-27: decided, W and W, both deferred)*; three scope deviations to ratify (§10); records to reconcile |
 | Automated testing | **PASS** | 1,629 / 1,629 tests; `tsc`, build and SSR smoke pass; changed-file lint is clean; deterministic renderer comparisons per V-step |
 | Owner visual acceptance | **PARTIAL** | V2–V7, E-X7 and CH1 approved; E-X6 approved by owner statement, records stale. Owner approval of the seven-size screenshot matrix and the full gameplay loop for Phase 7 as a whole (`docs/08` §11.2, §15.1) is not recorded |
 | Audio quality acceptance | **PARTIAL** | Owner-stated approvals for BET 1, ambience, soundtrack, goldfish, thud, splash and chest opening. No acceptance for `crash-boom`, `jackpot-stinger`, `chain-snap`, `chain-unspool`, `cashout-coins`, `treasure-shimmer`; the music loop gap is open |
 | Audio commercial rights | **BLOCKED** | No rights documentation for any shipped file (§6) |
 | Physical-device QA | **BLOCKED** | Q14 devices not named; no physical test recorded (§7) |
-| Accessibility and Q12 | **PARTIAL** | OS reduced motion done and approved; the in-app toggle and volume control are undecided; keyboard and focus not tested on a device |
+| Accessibility and Q12 | **PARTIAL** | OS reduced motion done and approved; the in-app toggle and volume control are undecided; keyboard and focus not tested on a device. *(2026-11-27: Q12 = W and A5 = W decided, with the toggle and the sliders deferred. Still PARTIAL until keyboard, focus and reduced motion pass on a device.)* |
 | Performance | **NOT VERIFIED** | No GPU or device data; FX target exceeded in software rasterization; audio budgets exceeded (§8) |
 | Git and release readiness | **PARTIAL** | Clean history and no staged changes; 5 commits local only; no `main`; push not authorized |
 
@@ -408,8 +410,8 @@ Owner-side items do not need agent work. Agent items each need their own authori
 
 1. **Q14:** which iPhone and Android devices define the device gate.
 2. **Rights:** supply the §6.3 documentation, or decide which assets to replace.
-3. **Q12:** in-app "Reduce effects" toggle: required (authorize the §9.1 step and its placement) or waived for Phase 7.
-4. **A5:** volume sliders: required or waived.
+3. **Q12:** in-app "Reduce effects" toggle: required (authorize the §9.1 step and its placement) or waived for Phase 7. **Decided 2026-11-27: Q12 = W (toggle deferred).**
+4. **A5:** volume sliders: required or waived. **Decided 2026-11-27: A5 = W (sliders deferred).**
 5. **Crash sound:** keep `crash-boom.m4a` (A6), audition the unreferenced candidate, or supply a file.
 6. **Jackpot stinger:** accept the current owner file, or supply another.
 7. **Chest-opening sound:** confirm which cue(s) the approval covers (`chest-lid-creak`, `chest-coin-burst`, or both).
@@ -421,4 +423,4 @@ Owner-side items do not need agent work. Agent items each need their own authori
 13. **Screenshot matrix and full gameplay loop:** schedule the owner's whole-Phase-7 approval (`docs/08` §15.1).
 14. **Push:** whether and when to push the five local commits.
 
-**Recommended next authorized task:** the owner's decision on items 3 and 4 (Q12 toggle and volume sliders). They are the only remaining items that could need implementation, and they determine whether one more code step precedes P7-C. In parallel, items 1 and 2 (devices and rights documentation) are owner-side and gate everything else.
+**Recommended next authorized task:** the owner's decision on items 3 and 4 (Q12 toggle and volume sliders). They are the only remaining items that could need implementation, and they determine whether one more code step precedes P7-C. In parallel, items 1 and 2 (devices and rights documentation) are owner-side and gate everything else. *(2026-11-27: items 3 and 4 are decided, W and W, so no code step precedes P7-C, and plan item 9 in §12 does not apply. Items 1 and 2 are now the next owner actions.)*
